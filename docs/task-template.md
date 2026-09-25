@@ -1,5 +1,5 @@
 Lane: default
-<!-- Only allowed value until open question O1 is decided. -->
+<!-- Only allowed value until the spec defines more lanes. -->
 
 ## Goal
 

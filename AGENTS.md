@@ -8,7 +8,7 @@ Now, it is in bootstrap. We build the kit with a prose-only process.
 - `docs/process.md` - how work is organized. Read it before you start a task.
 - `docs/task-template.md` - the template for a groomed issue
 - `docs/team/` - the role definitions (orchestrator, PM, software engineer, QA engineer)
-- `docs/design/brainstorm-handover.md` - accepted decisions (D1 to D10) and open questions (O1 to O7)
+- `docs/specs/` - the design of the kit
 
 ## Commands
 
@@ -32,7 +32,7 @@ Test command: none yet. If no test suite exists, say so in the issue comment. Ne
 - Specs go to `docs/specs/`. Plans go to `docs/plans/`.
 - These paths override the default paths of the superpowers skills.
 
-### Superpowers (decision D7)
+### Superpowers
 
 Use these skills:
 
@@ -44,7 +44,7 @@ Use these skills:
 
 Do not use these skills: subagent-driven-development, executing-plans.
 
-Reason: these two skills are a second orchestrator. They make their own rulings without asking the human. This conflicts with `docs/process.md`, which defines when to escalate to the owner. The Jev escalation policy (D2) is not defined yet, do not invent it.
+Reason: these two skills are a second orchestrator. They make their own rulings without asking the human. This conflicts with `docs/process.md`, which defines when to escalate to the owner.
 
 If a skill offers one of these two skills as the next step, do not accept. Turn the plan into issues and follow `docs/process.md`. If conflicts repeat, copy the used skills into the kit (fork later, only with evidence).
 
@@ -52,8 +52,3 @@ If a skill offers one of these two skills as the next step, do not accept. Turn 
 
 - Never put secrets in commits, issue bodies, issue comments or reports. `TYPESAFE_API_KEY` and other keys stay in the user environment. Redact sensitive output. Use synthetic examples.
 - Do not commit full third-party articles. `docs/references/local/` is local only.
-
-### Decisions
-
-- The decisions in `docs/design/brainstorm-handover.md` are accepted. Do not change them unless the owner asks.
-- Do not decide the open questions O1 to O7 without the owner.

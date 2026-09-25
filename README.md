@@ -8,7 +8,7 @@ Target architecture:
 - Workers are Claude Code subagents, Codex CLI, and Lovable (MCP).
 - Jev (TypeSafe AI) makes fast, typed decisions at the handoffs between workers.
 
-Current bootstrap: Claude subagents only. The role-to-agent mapping (O1) and the Codex start mechanism (O5) are open questions.
+Current bootstrap: Claude subagents only. Which agent type takes each role, and how the orchestrator starts Codex, are open design questions.
 
 Later, this repo becomes a Claude Code plugin.
 
@@ -22,5 +22,6 @@ The kit builds on the workflow from the DataTalksClub [AI Dev Tools Zoomcamp](ht
 
 ## Design
 
-- Decisions and open questions: [docs/design/brainstorm-handover.md](docs/design/brainstorm-handover.md)
+- Accepted design: [docs/specs/](docs/specs/)
+- Historical input: [docs/archive/](docs/archive/)
 - Development process of this repo: [docs/process.md](docs/process.md)

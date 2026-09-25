@@ -2,7 +2,7 @@
 
 This document tells how work is organized in this repo.
 
-Status: prose only. There are no hooks and no Jev gates yet (decision D10, step 1).
+Status: prose only. There are no hooks and no Jev gates yet. The kit is built with this prose process first.
 
 ## Work rules
 
@@ -24,6 +24,7 @@ A groomed issue uses the template in `docs/task-template.md`.
 - A superpowers plan in `docs/plans/` is turned into GitHub issues.
 - Each plan task becomes one issue in `docs/task-template.md` format.
 - The owner adds the label `ready` to the issues that the loop may work on.
+- Issues with the label `later` are out of scope for the current implementation. Do not work on them.
 
 ## Lifecycle
 
