@@ -12,8 +12,8 @@ This spec is the accepted design of the kit for version 1. Earlier notes in `doc
 
 v1 turns the prose loop PM → Engineer → QA into a graph where:
 
-- hooks guarantee the handoffs (the orchestrator LLM cannot skip or reorder a step),
-- a different vendor (Codex) verifies every result,
+- hooks check every prescribed handoff call and deny it when the issue is not in the right state,
+- a different vendor (Codex) is the default checker of every result (a Claude fallback is a marked exception),
 - frontend work goes to Lovable.
 
 The kit is dogfooded in this repo. The Lovable lane is proven in a demo repo, `paint-math` (a UI where you enter mathematical equations and see them drawn on a canvas; the name can change).
@@ -22,7 +22,7 @@ The kit is dogfooded in this repo. The Lovable lane is proven in a demo repo, `p
 
 | # | Principle |
 |---|---|
-| P1 | **Prose guides, hooks guarantee.** `docs/process.md` and the role files stay the main description of the process. Hooks enforce only the handoffs. |
+| P1 | **Prose guides, hooks check.** `docs/process.md` and the role files stay the main description of the process. Hooks check only the prescribed handoff calls. They are not a security boundary: a call outside the prescribed ones (for example `gh api`, or a comment written by hand) is not checked. |
 | P2 | **Facts only.** v1 hooks check facts: labels, comment markers, SHAs, git status. No LLM or Jev judgment blocks anything. |
 | P3 | **State lives on the issue.** Hooks and scripts read the state with `gh`. Nothing depends on what the orchestrator remembers. |
 | P4 | **Few files.** The kit adds as few agent-facing files as possible. Adopting the kit means merging into existing files, never appending a second set. |
@@ -69,7 +69,7 @@ Each item becomes a GitHub issue with the label `later` during intake. The note 
 | PM | Claude subagent `pm` | subagent launch | the PM, with `gh` |
 | Engineer, lane `default` | Claude subagent `software-engineer` | subagent launch | the engineer, with `gh` |
 | Engineer, lane `frontend` | Claude subagent `frontend-engineer`, which drives Lovable through MCP | subagent launch | the subagent, with `gh` |
-| QA | Codex (`codex exec`) | the script `qa-codex`, through Bash | the script, with `gh` |
+| QA (default checker) | Codex (`codex exec`) | the script `qa-codex`, through Bash | the script, with `gh` |
 | QA fallback | Claude subagent `qa-engineer` | subagent launch, only after `## QA: UNAVAILABLE` | the subagent, with `gh` |
 
 - The orchestrator only launches subagents and the `qa-codex` script. It never calls Lovable or Codex directly.
@@ -88,13 +88,15 @@ A hook runs before each tool call of the orchestrator and of its subagents. It g
 | Subagent launch of `software-engineer` or `frontend-engineer` | engineer |
 | Subagent launch of `qa-engineer` | qa (fallback) |
 | Bash call of `qa-codex` | qa |
-| Bash call of `gh issue close` | close |
+| Bash call of `gh issue close <number>` | close |
 
 All other calls pass. Examples: other subagent types, the Codex review skill, normal Bash commands.
 
 ### 5.2 Launch line
 
-A guarded launch must contain the line `ROLE=<role> ISSUE=<number>` (in the subagent prompt, or as arguments of `qa-codex`). A guarded launch without this line is denied.
+A guarded launch of a role must contain the line `ROLE=<role> ISSUE=<number>` (in the subagent prompt, or as arguments of `qa-codex`). A launch without this line is denied.
+
+Close needs no launch line. The hook reads the issue number from the `gh issue close` command. If the command has no single, clear issue number, the hook denies it. Close posts no launch comment.
 
 ### 5.3 Launch comments and valid results
 
@@ -110,7 +112,9 @@ A result comment is **valid** only if both are true:
 1. Its first line is a result marker of the role (section 5.5).
 2. It was posted after the newest launch comment of that role.
 
-An old result from an earlier attempt is ignored automatically. If a launched role posts no result, no valid result exists, the next step is denied, and the orchestrator escalates.
+An old result from an earlier attempt is ignored automatically.
+
+The issue is **pending** if the newest launch comment has no valid result after it and no `## Owner: RESUME` comment after it. While the issue is pending, every guarded call on it is denied. A late result cannot be mixed up with a newer attempt, because no newer attempt can start. If a launched role ends without a result, the orchestrator escalates. The owner continues with `## Owner: RESUME`.
 
 The **current result** of an issue is the newest valid result of any role, or an `## Owner: RESUME` comment, if that is newer.
 
@@ -118,10 +122,10 @@ The **current result** of an issue is the newest valid result of any role, or an
 
 | # | Launch | Allowed only if |
 |---|---|---|
-| G1 | any guarded call | the launch line exists (5.2) · the working tree is clean · the issue has the label `ready` and not the label `later` |
+| G1 | any guarded call | the launch line exists (5.2; not for close) · the issue is not pending (5.3) · the working tree is clean · the issue is open · it has the label `ready` and not the labels `later` or `needs-owner` |
 | G2 | PM | the issue has no launch comment yet, or the current result is `## Engineer: BLOCKED` or `## Owner: RESUME` |
 | G3 | engineer | the current result is `## PM: GROOMED` or `## QA: FAIL` · the agent matches the lane (`default` → `software-engineer`, `frontend` → `frontend-engineer`) |
-| G4 | qa (`qa-codex`) | the current result is `## Engineer: DONE`, or `## QA: PASS` with a verified SHA not equal to `HEAD` (re-check) |
+| G4 | qa (`qa-codex`) | the current result is `## Engineer: DONE`, or `## QA: PASS` with a verified SHA not equal to `HEAD` (re-check) · a `## Engineer: DONE` comment with a `Commits:` line exists |
 | G5 | qa fallback (`qa-engineer`) | the current result is `## QA: UNAVAILABLE` |
 | G6 | close | the current result is `## QA: PASS` and its verified SHA is equal to `HEAD` |
 | G7 | PM or engineer | fewer than 3 returns (`## QA: FAIL` or `## Engineer: BLOCKED`) after the newest `## Owner: RESUME` comment |
@@ -146,7 +150,7 @@ Notes:
 
 ### 5.6 Failure behavior
 
-- If `gh` or `git` fails (network, auth), the hook denies the call. Unknown facts do not allow a launch.
+- If `gh` or `git` fails (network, auth), or the hook script has any other error, the hook denies the call with an explicit deny response. A crash must never let the call through. Unknown facts do not allow a launch.
 - Each deny message names the check that failed (for example `G3: current result is ## QA: PASS, expected ## PM: GROOMED or ## QA: FAIL`), so the orchestrator knows what is missing.
 
 ### 5.7 Implementation
@@ -157,7 +161,7 @@ Notes:
 
 ### 5.8 Prose changes
 
-- `docs/team/orchestrator.md`: the launch line; the new markers; the hook deny message replaces most hand-written result queries.
+- `docs/team/orchestrator.md` and `AGENTS.md`: the launch line; the new markers; the pending state; the issue list command leaves out `later` and `needs-owner` (`gh issue list --state open --label ready --search "-label:later -label:needs-owner"`); the hook deny message replaces most hand-written result queries.
 - Role files: the launch line is in the prompt; the result must be posted after launch.
 - `docs/process.md`: the hooks enforce the lifecycle; after `## Owner: RESUME` the issue goes back to the PM.
 
@@ -165,14 +169,14 @@ Notes:
 
 ### 6.1 Call and flow
 
-Call: `qa-codex ROLE=qa ISSUE=<n> RANGE=<base>..<head>`. A Python script run with `uv run --script`.
+Call: `qa-codex ROLE=qa ISSUE=<n>`. A Python script run with `uv run --script`.
 
-1. Read the issue body (the acceptance criteria) with `gh`. Do not pass on the engineer's comment.
+1. Read the issue body (the acceptance criteria) with `gh`. Read the range from the `Commits: <base>..<head>` line of the newest `## Engineer: DONE` comment. Do not pass on the rest of the engineer's comment.
 2. Run `codex exec` with:
    - the most restrictive sandbox that still lets QA exercise the behavior (the Codex spike decides which),
    - the prompt: the QA role file, the criteria, and the range,
    - `--output-schema qa-result.schema.json` and `-o <file>` for the final message.
-3. Validate the JSON against the schema, and check that the verified SHA is equal to `HEAD`.
+3. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall verdict from the criterion verdicts: PASS only if every criterion passes.
 4. Render the issue comment from the JSON and post it with `gh`. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
 
 The QA result schema contains: verdict (`pass` or `fail`), one entry per criterion (text, verdict, evidence), the tests (command and result, or "not run" with the reason), and the verified SHA. The rendered comment follows the format in `docs/team/qa-engineer.md`.
@@ -183,12 +187,15 @@ Claude does not skip Codex because of a small problem. Each failure type has its
 
 | Failure | Action |
 |---|---|
-| Transient: network error, server error, short rate limit, crashed process | Retry up to 3 times. Wait 1, 3 and 10 minutes |
+| Transient: network error, server error, short rate limit, crashed process | Retry up to 3 times. Wait 1, 3 and 10 minutes. If all retries fail, post `## QA: INVALID` with the reason → escalate |
 | Timeout (default limit 30 minutes, because QA may start the app) | Retry once. If it times out again, post `## QA: INVALID` with the reason → escalate |
-| Output does not match the schema, or the verified SHA is not `HEAD` | Retry once. Then post `## QA: INVALID` with the reason → escalate |
+| Output does not match the schema, a criterion is missing or duplicated, or the verified SHA is not `HEAD` | Retry once. Then post `## QA: INVALID` with the reason → escalate |
+| Unknown error | Post `## QA: INVALID` with the reason → escalate |
 | Codex not installed, not logged in, or usage limit reached | Post `## QA: UNAVAILABLE` with the reason → the orchestrator launches the Claude `qa-engineer` fallback |
 
-The fallback posts a normal QA comment with the footer `Checker: claude (fallback)`.
+The retry limits apply to one launch. The fallback posts a normal QA comment with the footer `Checker: claude (fallback)`.
+
+If the script cannot post its comment, it exits with an error. The issue stays pending (5.3), and the orchestrator escalates.
 
 How Codex reports each error (exit codes, error text, usage limit vs. network error) is not documented. The Codex spike finds this out before the script is written.
 
@@ -204,7 +211,9 @@ For each criterion, QA:
 
 QA also runs the test command from AGENTS.md as secondary evidence. The engineer writes the tests. QA does not change anything in the repo.
 
-`docs/team/qa-engineer.md` gets this behavior and a note that code checks the result format.
+A criterion without enough evidence cannot pass. If QA cannot verify a criterion for a technical reason (for example, the browser crashes), the result is `## QA: INVALID` → escalate.
+
+`docs/team/qa-engineer.md` gets this behavior and one delivery rule: when run by `qa-codex`, return JSON only and do not post a comment. The Claude fallback posts its comment as before.
 
 ## 8. Codex review skill
 
@@ -216,7 +225,7 @@ QA also runs the test command from AGENTS.md as secondary evidence. The engineer
   2. Writes `docs/reviews/<date>-<topic>-codex-review.md`, always.
 - Findings format: adapted from the Codex plugin's review schema (openai-codex plugin for Claude Code, with credit): verdict (`approve` or `needs-attention`), summary, findings (severity, title, body, file, lines, confidence, recommendation), next steps.
 - The code that runs Codex and captures its output is shared with `qa-codex`.
-- No modes. What happens with the findings is decided in the conversation.
+- Every review ends the same way: each finding gets a decision (taken, partly taken, or rejected, with a short reason), written into the review file. Then the review file is committed. The decisions are made by whoever works on the review: the owner together with Claude, or Claude alone. When Claude works alone, it commits the review file together with the changes it made.
 - `docs/process.md` gets one rule: "Do not read old reviews in `docs/reviews/` unless the owner points to one."
 - For an adversarial review, the owner uses `/codex:adversarial-review` from the Codex plugin. The kit does not wrap it.
 
@@ -238,9 +247,9 @@ Flow:
 
 1. Note the base SHA of the main repo: `git rev-parse HEAD`.
 2. Send Lovable the goal and the acceptance criteria of the issue in plain words. Lovable does not know about issues or git.
-3. Wait until Lovable has finished (detection: see the Lovable spike).
+3. Wait until Lovable has finished and its commit is on GitHub (detection: see the Lovable spike).
 4. If a criterion is not met, send Lovable a follow-up message. Repeat until all criteria are met, within the time budget (default 60 minutes per launch). When the budget runs out, post `## Engineer: BLOCKED` with what is missing.
-5. Update the submodule (`git submodule update --remote frontend`). Check that the new submodule commit contains Lovable's change. Commit the pointer update.
+5. Fetch the submodule and pin it to the exact commit of Lovable's change (how to identify that commit: see the Lovable spike). Do not take the newest commit of the branch without this check. Commit the pointer update.
 6. Run the project test command, if one exists.
 7. Post `## Engineer: DONE` with `Commits: <base>..<head>`.
 
@@ -248,7 +257,9 @@ Lovable cost is not a limit. Time is.
 
 ### 9.3 QA for frontend issues
 
-Codex checks the range, including the submodule content (`git diff --submodule=diff`). Following section 7, QA exercises the UI in a headless browser if the Codex sandbox allows it (Codex spike). If it does not, QA uses build, tests, and code reading, and the QA comment says that the UI was not exercised.
+Codex checks the range, including the submodule content (`git diff --submodule=diff <base>..<head>`, with the submodule commits fetched). Following section 7, QA exercises the UI in a headless browser (for example Playwright).
+
+Browser-based QA is a precondition of the frontend lane. The Codex spike must show that `qa-codex` can run a headless browser. If it cannot, the owner decides before any frontend task starts (for example, a Claude QA with a browser tool for frontend issues, or the lane moves to `later`). Build, tests and code reading alone are not enough evidence for a UI criterion.
 
 ### 9.4 Demo scope
 
@@ -262,7 +273,7 @@ The owner can replace these issue ideas. The issues live in the paint-math repo.
 ## 10. The `later` label
 
 - `docs/process.md` (done in this session): "Issues with the label `later` are out of scope for the current implementation. Do not work on them."
-- The orchestrator lists only issues with `ready`. The PM grooms only the issue it gets.
+- The orchestrator lists only issues with `ready` and without `later` or `needs-owner`. The PM grooms only the issue it gets.
 - Guarantee G1 denies every launch on an issue with `later`, also if it has `ready` by mistake.
 - The PM gives each follow-up issue (out-of-scope item) the label `later`.
 - The owner removes `later` and adds `ready` to start work on an issue.
@@ -282,7 +293,7 @@ The owner can replace these issue ideas. The issues live in the paint-math repo.
 | `docs/team/orchestrator.md`, `pm.md`, `software-engineer.md`, `qa-engineer.md` | Changed (sections 4, 5.8, 7, 9.2, 10) |
 | `docs/process.md` | Changed (sections 5.8, 8, 10) |
 | `docs/task-template.md` | Lane values `default`, `frontend` |
-| `AGENTS.md` | Test command; one line for Codex reviews |
+| `AGENTS.md` | Test command; issue list command; one line for Codex reviews |
 | `README.md` | Set-up section |
 
 The exact paths can change in the plan if a spike shows a reason.
@@ -292,6 +303,7 @@ The exact paths can change in the plan if a spike shows a reason.
 ### 12.1 Tests
 
 - pytest for the hook checks, with synthetic issue JSON and a synthetic git state.
+- pytest for the hook entry point: a failing `gh`, a failing `git`, and an internal error each produce a deny response.
 - pytest for `qa-codex`, with a fake `codex` command for each failure type (retry, timeout, invalid output, unavailable).
 - pytest for the review renderer (JSON → review file).
 - No network in the tests.
@@ -320,6 +332,6 @@ Each spike is a plan task. The output is a short findings file in `docs/research
 
 | # | Spike | Questions | Blocks |
 |---|---|---|---|
-| S1 | Claude Code hooks | Does a hook before a subagent launch see the agent type and the prompt? Can it deny with a reason? Does it work in auto mode? Can a Bash hook reliably match `qa-codex` and `gh issue close`? Do hooks fire for calls inside subagents? Can a hook post a comment (side effect) before the call runs? | Section 5 |
-| S2 | Codex CLI | `--output-schema` and `-o` behavior. What each sandbox mode allows: run tests, run the app, write temp files, run a headless browser. How each error shows (network, rate limit, usage limit, auth, not installed): exit codes, error text. Timeout behavior | Sections 6, 8, 9.3 |
-| S3 | Lovable MCP | How to detect that a Lovable message has finished. When Lovable's commit reaches GitHub. Can the GitHub connection be made through MCP? | Section 9 |
+| S1 | Claude Code hooks | Does a hook before a subagent launch see the agent type and the prompt? Can it deny with a reason? Does it work in auto mode? Can a Bash hook reliably match `qa-codex` and `gh issue close`? Do hooks fire for calls inside subagents? Can a hook post a comment (side effect) before the call runs? Which hook output reliably denies a call (exit code or deny response), and what happens when the hook script crashes or times out? | Section 5 |
+| S2 | Codex CLI | `--output-schema` and `-o` behavior. What each sandbox mode allows: run tests, run the app, write temp files, run a headless browser. Can `qa-codex` run a headless browser (for example Playwright), and with which sandbox setting? How each error shows (network, rate limit, usage limit, auth, not installed): exit codes, error text. Timeout behavior | Sections 6, 8, 9.3 |
+| S3 | Lovable MCP | How to detect that a Lovable message has finished. When Lovable's commit reaches GitHub, and how to identify the exact commit of one Lovable change. Can the GitHub connection be made through MCP? | Section 9 |
