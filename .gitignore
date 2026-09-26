@@ -4,6 +4,9 @@ docs/references/local/
 # Own notes on the articles: local only
 docs/references/summaries/
 
+# Own notes for future ideas
+docs/owner-notes/
+
 # Secrets
 .env
 .env.*
