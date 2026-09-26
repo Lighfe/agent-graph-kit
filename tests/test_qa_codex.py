@@ -688,3 +688,28 @@ def test_failure_text_falls_back_to_stderr():
 def test_base_flags():
     assert codex_exec.BASE_FLAGS[:3] == ["--json", "--ephemeral", "--ignore-user-config"]
     assert "unbounded_connection_retries" in codex_exec.BASE_FLAGS
+
+
+# --- docs/team/qa-engineer.md (spec 7) ---------------------------------------------------
+
+
+def test_qa_role_file_has_spec_7_behavior():
+    text = (ROOT / "docs" / "team" / "qa-engineer.md").read_text()
+    for needle in [
+        "exercise the behavior",
+        "only mirrors the implementation",
+        "A criterion without enough evidence cannot pass",
+        "secondary evidence",
+        "git diff --submodule=diff <base>..<head>",
+        "Do not install anything",
+        "the criterion fails (undeclared dependency)",
+        "PASS, FAIL or INVALID",
+        "It is INVALID if you cannot verify a criterion for a technical reason",
+        "`## QA: INVALID`",
+        "When `scripts/qa-codex` runs you, return only the JSON that the schema asks for. Do not post a comment.",
+        "Give each criterion's number as `id`",
+        "Checker: claude (fallback)",
+        "Start the app and run the browser check in one command",
+    ]:
+        assert needle in text, needle
+    assert text.count("Checker: claude (fallback)") == 2  # the example and the definition of done
