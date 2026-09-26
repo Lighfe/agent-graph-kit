@@ -1,0 +1,391 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Codex QA launcher (spec 6): `scripts/qa-codex ROLE=qa ISSUE=<n>`.
+
+Reads the issue with `gh`, runs `codex exec` in a temporary git worktree at the head of the
+range of the newest valid `## Engineer: DONE`, validates the JSON and posts one QA comment.
+Failure rules: spec 6.2. Exit 0 when a comment was posted, non-zero otherwise.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / ".claude" / "hooks"), str(Path(__file__).resolve().parent)]
+import codex_exec  # noqa: E402
+import issue_state  # noqa: E402
+
+SCHEMA = ROOT / "scripts" / "qa-result.schema.json"
+ROLE_FILE = ROOT / "docs" / "team" / "qa-engineer.md"
+
+# The default model of the installed Codex CLI (0.153.4), written out, because
+# --ignore-user-config also drops the user's model and effort (spec 6.1).
+QA_MODEL = "gpt-6-astra"
+QA_EFFORT = "medium"
+# Localhost-only sandbox profile (S2 Q4; experimental feature network_proxy, spec 6.1).
+QA_SANDBOX = [
+    "--enable", "network_proxy",
+    "-c", 'permissions.qa={extends=":workspace",network={enabled=true,allow_local_binding=true,'
+          'domains={"localhost"="allow","127.0.0.1"="allow"}}}',
+    "-c", 'default_permissions="qa"',
+]
+DEFAULT_TIMEOUT_S = 1800
+DEFAULT_PRESTEP_TIMEOUT_S = 1800
+LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}
+WAITS = (60, 180, 600)
+
+PASS, FAIL, UNAVAILABLE, INVALID = issue_state.PASS, issue_state.FAIL, issue_state.UNAVAILABLE, issue_state.INVALID
+USAGE = "usage: qa-codex ROLE=qa ISSUE=<n>"
+
+_AC_HEADING = re.compile(r"^##\s+Acceptance criteria\s*$", re.IGNORECASE)
+_SECTION_END = re.compile(r"^#{1,2}(?:\s|$)")
+_ITEM = re.compile(r"^- \[[ xX]\](?: (.*))?$")
+_HEADING = re.compile(r"^#{1,6}(?:\s|$)")
+_ERROR_LINE = re.compile(r"(?i)\b(?:error|fatal|err!)")
+
+
+# --- the issue ------------------------------------------------------------------------
+
+
+def parse_criteria(body: str) -> list[str]:
+    """Top-level `- [ ]`, `- [x]` and `- [X]` items under `## Acceptance criteria`, each with
+    its indented continuation lines (nested bullets). The checkbox is not part of the text."""
+    lines = [line.rstrip() for line in body.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    start = next((i for i, line in enumerate(lines) if _AC_HEADING.match(line)), None)
+    if start is None:
+        return []
+    items: list[list[str]] = []
+    current: list[str] | None = None
+    blank = False  # a blank line since the last line of the current item
+    for line in lines[start + 1:]:
+        if _SECTION_END.match(line):
+            break
+        m = _ITEM.match(line)
+        if m:
+            current = [m.group(1) or ""]
+            items.append(current)
+            blank = False
+        elif current is None:
+            continue
+        elif not line.strip():
+            blank = True
+            current.append("")
+        elif line[0] in " \t" or (not blank and not _HEADING.match(line)):
+            current.append(line)  # indented continuation, or a lazy continuation line
+            blank = False
+        else:
+            current = None
+    return ["\n".join(item).strip("\n") for item in items]
+
+
+def build_prompt(criteria: list[str], base: str, head: str) -> str:
+    """The QA role file, the numbered criteria and the range. Nothing else of the issue."""
+    blocks = [f"Criterion {i}:\n- [ ] {text}" for i, text in enumerate(criteria, 1)]
+    return (
+        ROLE_FILE.read_text(encoding="utf-8").strip() + "\n\n---\n\n"
+        "You are run by `scripts/qa-codex`. Your working directory is a checkout of the head of the "
+        "commit range.\n\n"
+        f"Commit range: {base}..{head}\n\n"
+        "Acceptance criteria. Each criterion has a number; give that number as `id`:\n\n"
+        + "\n\n".join(blocks) + "\n\n"
+        "Return only the JSON that the output schema asks for: exactly one entry for each criterion "
+        "above, with its number as `id`, the verdict `pass`, `fail` or `invalid`, and your evidence. "
+        "Set `verified_sha` to the full output of `git rev-parse HEAD`.\n"
+    )
+
+
+# --- validation and rendering ------------------------------------------------------------
+
+
+def _check_keys(obj: dict, required: tuple[str, ...], where: str, errors: list[str]) -> None:
+    errors += [f"{where}: missing property {k}" for k in required if k not in obj]
+    errors += [f"{where}: extra property {k}" for k in sorted(set(obj) - set(required), key=str)]
+
+
+def validate(output: dict, criteria: list[str], head: str) -> list[str]:
+    """The rules of qa-result.schema.json, plus: ids are exactly 1..len(criteria), once each,
+    and verified_sha is the full HEAD. Empty list = valid."""
+    if not isinstance(output, dict):
+        return ["output is not a JSON object"]
+    errors: list[str] = []
+    _check_keys(output, ("verdict", "criteria", "tests", "verified_sha"), "output", errors)
+    if "verdict" in output and output["verdict"] not in ("pass", "fail"):
+        errors.append(f"verdict is {output['verdict']!r}, expected pass or fail")
+    tests = output.get("tests")
+    if "tests" in output:
+        if not isinstance(tests, dict):
+            errors.append("tests is not an object")
+        else:
+            _check_keys(tests, ("command", "result"), "tests", errors)
+            errors += [f"tests.{k} is not a string" for k in ("command", "result")
+                       if k in tests and not isinstance(tests[k], str)]
+    if "verified_sha" in output and output["verified_sha"] != head:
+        errors.append(f"verified_sha is {output['verified_sha']!r}, expected HEAD {head}")
+    items = output.get("criteria")
+    if "criteria" not in output:
+        return errors
+    if not isinstance(items, list):
+        return errors + ["criteria is not an array"]
+    ids: Counter = Counter()
+    for n, item in enumerate(items):
+        where = f"criteria[{n}]"
+        if not isinstance(item, dict):
+            errors.append(f"{where} is not an object")
+            continue
+        _check_keys(item, ("id", "verdict", "evidence"), where, errors)
+        cid = item.get("id")
+        if "id" in item:
+            if isinstance(cid, bool) or not isinstance(cid, int):
+                errors.append(f"{where}.id is {cid!r}, expected an integer")
+            else:
+                ids[cid] += 1
+        if "verdict" in item and item["verdict"] not in ("pass", "fail", "invalid"):
+            errors.append(f"{where}.verdict is {item['verdict']!r}, expected pass, fail or invalid")
+        if "evidence" in item and not isinstance(item["evidence"], str):
+            errors.append(f"{where}.evidence is not a string")
+    expected = range(1, len(criteria) + 1)
+    errors += [f"id {i} appears {ids[i]} times" for i in sorted(ids) if ids[i] > 1]
+    errors += [f"id {i} is missing" for i in expected if i not in ids]
+    errors += [f"id {i} is not a criterion number (1..{len(criteria)})" for i in sorted(ids) if i not in expected]
+    return errors
+
+
+def _tests_line(tests: dict) -> str:
+    command, result = tests["command"].strip(), tests["result"].strip()
+    if not command or command.lower().startswith("not run"):
+        return f"Tests: not run ({result or command or 'no reason given'})"
+    return f"Tests: `{command}`, {result}"
+
+
+def render(output: dict | None, *, criteria: list[str], marker: str, reason: str, head: str,
+           retries: list[str]) -> str:
+    lines = [marker, ""]
+    if reason:
+        lines += [f"Reason: {reason}", ""]
+    if output is not None:
+        by_id = {c["id"]: c for c in output["criteria"]}
+        for i, text in enumerate(criteria, 1):
+            entry = by_id[i]
+            verdict = entry["verdict"]
+            first, *rest = text.split("\n")
+            lines.append(f"- [{'x' if verdict == 'pass' else ' '}] {first} - {verdict.upper()}")
+            lines += rest  # the issue's own text, nested bullets included
+            lines += ["      " + e.strip() for e in entry["evidence"].splitlines() if e.strip()]
+        lines += ["", _tests_line(output["tests"]), f"Verified: {head}"]
+    lines.append("Checker: codex")
+    if retries:
+        lines.append(f"Retries: {len(retries)} ({', '.join(retries)})")
+    return "\n".join(lines) + "\n"
+
+
+# --- processes ---------------------------------------------------------------------------
+
+
+def _git(*args: str, cwd: Path | str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+
+def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
+    """Run one pre-step command in its own process group. None on success, else the error line."""
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+    except OSError as e:
+        return f"{cmd[0]}: {e.strerror or e}"
+    try:
+        stdout, stderr = p.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        codex_exec._kill_group(p)
+        return f"no result after {timeout_s} s"
+    if p.returncode == 0:
+        return None
+    lines = [line.strip() for line in (stderr + "\n" + stdout).splitlines() if line.strip()]
+    line = next((x for x in lines if _ERROR_LINE.search(x)), lines[0] if lines else f"exit code {p.returncode}")
+    return line[:codex_exec.REASON_MAX]
+
+
+def _has_frontend_submodule(worktree: Path) -> bool:
+    if not (worktree / ".gitmodules").is_file():
+        return False
+    p = _git("config", "-f", str(worktree / ".gitmodules"), "--get-regexp", r"^submodule\..*\.path$")
+    return any(line.split(" ", 1)[-1].strip() == "frontend" for line in p.stdout.splitlines())
+
+
+def pre_step(worktree: Path, timeout_s: int) -> str | None:
+    """Spec 6.1 step 3, outside the sandbox. None on success (or no frontend), else the reason."""
+    if not _has_frontend_submodule(worktree):
+        return None
+    frontend = worktree / "frontend"
+    steps = [
+        ("git submodule update --init frontend",
+         ["git", "-C", str(worktree), "submodule", "update", "--init", "--", "frontend"], worktree),
+        ("npm ci", ["npm", "ci"], frontend),
+        ("npx playwright install chromium", ["npx", "playwright", "install", "chromium"], frontend),
+    ]
+    for label, cmd, cwd in steps:
+        error = _run_step(cmd, cwd, timeout_s)
+        if error is not None:
+            return f"pre-step `{label}` failed: {error}"
+    return None
+
+
+def _remove_worktree(repo: Path, worktree: Path) -> None:
+    if _git("worktree", "remove", "--force", "--force", str(worktree), cwd=repo).returncode != 0:
+        shutil.rmtree(worktree, ignore_errors=True)
+        _git("worktree", "prune", cwd=repo)
+
+
+def _reset_worktree(worktree: Path) -> None:
+    """Undo what an attempt wrote before the next attempt (ignored files such as node_modules stay)."""
+    _git("reset", "--hard", "--quiet", cwd=worktree)
+    _git("clean", "-ffdq", cwd=worktree)
+
+
+def _post(issue: int, body: str) -> int:
+    try:
+        p = subprocess.run(["gh", "issue", "comment", str(issue), "--body-file", "-"], input=body,
+                           capture_output=True, text=True)
+    except OSError as e:
+        print(f"qa-codex: cannot post the comment: {e}", file=sys.stderr)
+        return 1
+    if p.returncode != 0:
+        print(f"qa-codex: cannot post the comment: {p.stderr.strip()}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _parse_args(argv: list[str]) -> int | None:
+    if len(argv) != 2 or argv[0] != "ROLE=qa":
+        return None
+    m = re.fullmatch(r"ISSUE=([1-9][0-9]*)", argv[1])
+    return int(m.group(1)) if m else None
+
+
+def _read_issue(number: int) -> issue_state.Issue | None:
+    try:
+        p = subprocess.run(["gh", "issue", "view", str(number), "--json", "number,state,labels,body,comments"],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        print(f"qa-codex: cannot read issue #{number}: {e}", file=sys.stderr)
+        return None
+    if p.returncode != 0:
+        print(f"qa-codex: cannot read issue #{number}: {p.stderr.strip()}", file=sys.stderr)
+        return None
+    try:
+        return issue_state.parse_issue(json.loads(p.stdout))
+    except (ValueError, KeyError, TypeError) as e:
+        print(f"qa-codex: cannot parse issue #{number}: {e}", file=sys.stderr)
+        return None
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "")
+    return int(value) if value.strip() else default
+
+
+# --- main --------------------------------------------------------------------------------
+
+
+def main(argv: list[str], sleep=time.sleep) -> int:
+    number = _parse_args(argv)
+    if number is None:
+        print(USAGE, file=sys.stderr)
+        return 2
+    try:
+        timeout = _env_int("QA_CODEX_TIMEOUT", DEFAULT_TIMEOUT_S)
+        prestep_timeout = _env_int("QA_PRESTEP_TIMEOUT", DEFAULT_PRESTEP_TIMEOUT_S)
+    except ValueError as e:
+        print(f"qa-codex: bad timeout setting: {e}", file=sys.stderr)
+        return 2
+    top = _git("rev-parse", "--show-toplevel")
+    head_p = _git("rev-parse", "HEAD")
+    if top.returncode != 0 or head_p.returncode != 0:
+        print(f"qa-codex: not in a git repo with a HEAD: {(top.stderr or head_p.stderr).strip()}", file=sys.stderr)
+        return 1
+    repo, head = Path(top.stdout.strip()), head_p.stdout.strip()
+    issue = _read_issue(number)
+    if issue is None:
+        return 1
+
+    criteria = parse_criteria(issue.body)
+
+    def post(marker: str, reason: str, output: dict | None = None, retries: list[str] = ()) -> int:
+        return _post(number, render(output, criteria=criteria, marker=marker, reason=reason, head=head,
+                                    retries=list(retries)))
+
+    if not criteria:
+        return post(INVALID, "the issue has no acceptance criteria "
+                             "(no `- [ ]` items under `## Acceptance criteria`)")
+    done = issue_state.newest_done(issue)
+    if done is None:
+        return post(INVALID, f"no valid `{issue_state.DONE}` comment (one after an engineer launch)")
+    rng = issue_state.commits_range(done)
+    if rng is None:
+        return post(INVALID, f"the newest `{issue_state.DONE}` comment has no `Commits: <base>..<head>` line")
+    base, range_head = rng
+    resolved = _git("rev-parse", "--verify", "--quiet", "--end-of-options", f"{range_head}^{{commit}}", cwd=repo)
+    resolved_sha = resolved.stdout.strip() if resolved.returncode == 0 else ""
+    if resolved_sha != head:
+        return post(INVALID, f"the range head {range_head} resolves to {resolved_sha or 'no commit'}, "
+                             f"expected HEAD {head} of the main working tree")
+
+    tmp = Path(tempfile.mkdtemp(prefix="qa-codex-"))
+    worktree = tmp / "worktree"
+    try:
+        added = _git("worktree", "add", "--detach", "--quiet", str(worktree), head, cwd=repo)
+        if added.returncode != 0:
+            return post(INVALID, f"cannot create the worktree: {added.stderr.strip()[:codex_exec.REASON_MAX]}")
+        error = pre_step(worktree, prestep_timeout)
+        if error is not None:
+            return post(UNAVAILABLE, error)
+        prompt = build_prompt(criteria, base, head)
+        used: Counter = Counter()
+        retries: list[str] = []
+        while True:
+            run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox_args=QA_SANDBOX, model=QA_MODEL,
+                                       effort=QA_EFFORT, timeout_s=timeout, cwd=worktree)
+            status, reason = run.status, run.reason
+            if status == "ok":
+                errors = validate(run.output, criteria, head)
+                if not errors:
+                    break
+                status, reason = "invalid_output", "output does not match the schema: " + "; ".join(errors)
+            if status == "unavailable":
+                return post(UNAVAILABLE, reason, retries=retries)
+            if status not in LIMITS or used[status] >= LIMITS[status]:
+                return post(INVALID, reason, retries=retries)
+            if status == "transient":
+                sleep(WAITS[used["transient"]])
+            used[status] += 1
+            retries.append(status)
+            _reset_worktree(worktree)
+    finally:
+        if worktree.exists() or _git("worktree", "list", cwd=repo).stdout.count(str(worktree)):
+            _remove_worktree(repo, worktree)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    entries = run.output["criteria"]
+    invalid = [c for c in sorted(entries, key=lambda c: c["id"]) if c["verdict"] == "invalid"]
+    if invalid:
+        reason = "; ".join(f"criterion {c['id']} could not be verified: {' '.join(c['evidence'].split())}"
+                           for c in invalid)
+        return post(INVALID, reason, run.output, retries)
+    marker = PASS if all(c["verdict"] == "pass" for c in entries) else FAIL
+    return post(marker, "", run.output, retries)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
