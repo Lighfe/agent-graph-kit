@@ -33,7 +33,7 @@ How does `codex exec` behave for `qa-codex` (#6) and `codex-review` (#8), and ca
 | Q5 | Every error ends with exit 1, except "not installed" (exit 127 from a shell, `FileNotFoundError` from `subprocess.Popen`). The text is the last `ERROR: …` line on stderr (printed twice) in normal mode; with `--json` it is only on stdout, as `{"type":"turn.failed","error":{"message":…}}`, and stderr has only log lines. Codex retries by itself first: 500, other 5xx and 401 answers (up to 5 stream retries, each with up to 4 request retries), in-stream rate limits (5 retries) and connection errors; an overloaded 503 gets only the 4 request retries; a plain HTTP 429, the usage limit and the quota error are not retried. A network outage never ends by default ("Reconnecting... waiting for network", feature `unbounded_connection_retries`, on by default); with `--disable unbounded_connection_retries` it ends after about 4 minutes. Details in the Q5 evidence table | Experiment; server error, rate limit and usage limit simulated with a stub server; retry rules also from the source |
 | Q6 | Yes in the sandboxed modes. After `killpg(<codex pgid>, SIGKILL)`, all children were gone after 3 s: the sandbox helper, `bwrap`, the shell, the dev server, `node` and all Chromium processes. Several children run in their own session and process group (the sandbox helper, `bwrap --new-session`, the command inside, Chromium), but `bwrap --die-with-parent` and the PID namespace take them down. In `danger-full-access` (no sandbox) the dev server, `node` and Chromium **survived** the kill (Chromium runs in its own session; the others were reparented to `systemd --user`) | Experiment (`ps -eo pid,ppid,pgid,sid,cmd` before and after) |
 | Q7 | Yes, both. `codex exec --output-schema` accepted the exact `scripts/qa-result.schema.json` from #6 (including `enum` fields without `type`) and a draft `review.schema.json` built as in #8 step 3. Both returned valid JSON. No change needed | Experiment (real API) |
-| Q8 | Loaded from the working directory: `AGENTS.md` (and `AGENTS.override.md`) from the git root down to the working directory; project skills in `.agents/skills/`; and, only if the project is trusted in the user config, `.codex/config.toml` and `.codex/hooks.json`. Loaded from `$CODEX_HOME`: `config.toml` (plugins, MCP servers, model, trust list), `AGENTS.md`/`AGENTS.override.md`, `skills/`, `hooks.json` (hooks run only with persisted hook trust or `--dangerously-bypass-hook-trust`), `.rules` files, and the ChatGPT apps connector. Switches: `--ignore-user-config` (user `config.toml`), `-c project_doc_max_bytes=0` (project `AGENTS.md`), `-c skills.include_instructions=false` (all skills), `--disable hooks` (all hooks), `--disable apps` (apps connector tools), `--ignore-rules` (rules). No switch removes `$CODEX_HOME/AGENTS.md`; the owner's `$HOME/.codex` has none today. A run whose sandbox can write the working directory writes `trust_level = "trusted"` for the repo into `$CODEX_HOME/config.toml`, also with `--ignore-user-config` | Experiment (prompt rendering, stub request bodies, two real runs); `--ignore-rules` from the help text only (reason in the evidence); that no switch removes `$CODEX_HOME/AGENTS.md` was seen in every experiment and matches the source (`SRC:codex-home/src/instructions/mod.rs`) and AGENTSMD |
+| Q8 | Loaded from the working directory: `AGENTS.md` (and `AGENTS.override.md`) from the git root down to the working directory; project skills in `.agents/skills/`; and, only if the project is trusted in the user config, `.codex/config.toml` and `.codex/hooks.json`. Loaded from `$CODEX_HOME`: `config.toml` (plugins, MCP servers, model, trust list), `AGENTS.md`/`AGENTS.override.md`, `skills/`, `hooks.json` (hooks run only with persisted hook trust or `--dangerously-bypass-hook-trust`), `.rules` files, and the ChatGPT apps connector. Switches: `--ignore-user-config` (user `config.toml`, and with it the trust list: the project counts as not in the trust list, so its `.codex/config.toml` and `.codex/hooks.json` are not loaded either; there is no separate flag for the project config), `-c project_doc_max_bytes=0` (project `AGENTS.md`), `-c skills.include_instructions=false` (all skills), `--disable hooks` (all hooks), `--disable apps` (apps connector tools), `--ignore-rules` (rules). No switch removes `$CODEX_HOME/AGENTS.md`; the owner's `$HOME/.codex` has none today. A run whose sandbox can write the working directory writes `trust_level = "trusted"` for the repo into `$CODEX_HOME/config.toml`, also with `--ignore-user-config` | Experiment (prompt rendering, stub request bodies, two real runs); `--ignore-rules` from the help text only (reason in the evidence); that `--ignore-user-config` drops the project config also from the source (`SRC:config/src/loader/mod.rs`); that no switch removes `$CODEX_HOME/AGENTS.md` was seen in every experiment and matches the source (`SRC:codex-home/src/instructions/mod.rs`) and AGENTSMD |
 | Q9 | (a) Yes: in both Q4 settings Codex can create and change files in the working tree. It cannot write `.git`, so it cannot commit or move `HEAD` (`fatal: Unable to create '…/.git/index.lock': Read-only file system`). (b) With the localhost-only profile: no, the proxy blocks `api.github.com`. With `workspace-write` + network: yes, `gh auth status` succeeded with the owner's login from the keyring. Nothing in the sandbox limits it. Hiding the login through `-c 'shell_environment_policy.set={GH_CONFIG_DIR="/nonexistent-s2-gh", DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent-s2-bus"}'` made `gh auth status` fail, but the model can undo environment variables, so this is not a boundary | Experiment |
 
 ## Evidence
@@ -303,6 +303,18 @@ Hooks (stub server, `SessionStart` hooks in `q8home/hooks.json` and `q8/.codex/h
 | project trusted + `--dangerously-bypass-hook-trust --disable hooks` | none |
 | project trusted, no bypass | none |
 
+Project config of a trusted project (added after the QA review of issue #2; stub server, no model run). `CODEX_HOME=$SCRATCH/q8home`, whose `config.toml` holds the `MARKER-UC` line and `[projects."$SCRATCH/q8"] trust_level = "trusted"`; user and project `SessionStart` hooks as above. Script `q8pc.sh`: `echo hi | codex exec -s read-only --ephemeral -C $SCRATCH/q8 -c model_provider=stub -c 'model_providers.stub={…}' -m stub-model <flags> -`, markers from the saved request body, hooks from the files they touch:
+
+| Flags | Exit | Markers | Hooks that ran |
+|---|---|---|---|
+| none | 0 | A, HS, **PC**, S, U | none |
+| `--ignore-user-config` | 0 | A, HS, S, U | none |
+| `--dangerously-bypass-hook-trust` | 0 | A, HS, **PC**, S, U | user and project hook |
+| `--dangerously-bypass-hook-trust --ignore-user-config` | 0 | A, HS, S, U | user hook |
+| `--ignore-user-config --disable hooks --disable apps -c project_doc_max_bytes=0 -c skills.include_instructions=false` (the #6 flags) | 0 | U | none |
+
+So `--ignore-user-config` switches off the project `.codex/config.toml` and `.codex/hooks.json` of a trusted project: the trust list lives in the user `config.toml`, and without it the project counts as not in the trust list. `AGENTS.md` (A) still loads, as in the default row of the first table; only an explicit `untrusted` entry drops it. Source: `load_user_config_layer` returns an empty layer when `ignore_user_config` is set, and the project layers are added only when `project_trust_context` finds the project trusted in the merged config (`SRC:config/src/loader/mod.rs`). There is no separate flag: the loader has an `ignore_project_config` override (`SRC:config/src/state.rs`), but `codex exec` does not expose it. A trust entry in the system config `/etc/codex/config.toml` would still count, because `--ignore-user-config` drops only the user layer (source only; this machine has no `/etc/codex`).
+
 What the owner's home adds (stub server, `-C $SCRATCH/proj`, names from the request body):
 
 | Flags | Skills listed | Tools |
@@ -351,7 +363,7 @@ For `classify_failure` in `scripts/codex_exec.py` (#6). Apply the rows in this o
 
 | Row | Error | Status (#6) | Exit code | Example error line | Regex |
 |---|---|---|---|---|---|
-| E1 | not installed | `unavailable` | 127 | `sh: 1: codex: not found` | `codex: (?:command )?not found\|No such file or directory: 'codex'` |
+| E1 | not installed | `unavailable` | 127 | `sh: 1: codex: not found` | `codex'?: (?:(?:command )?not found\|No such file or directory)\|No such file or directory: 'codex'` |
 | E2 | not logged in | `unavailable` | 1 | `ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: <redacted>, request id: <redacted>` | `^(?:ERROR: )?(?:unexpected status 401 Unauthorized\|Not logged in$)` |
 | E3 | usage limit (also quota, spend cap, credits, plan) | `unavailable` | 1 | `ERROR: You've hit your usage limit. Try again at Sep 27th, 2026 11:06 AM.` | `^(?:ERROR: )?(?:You've hit your usage limit\|You hit your spend cap\|Your workspace is out of credits\|Quota exceeded\. Check your plan\|To use Codex with your ChatGPT plan)` |
 | E4 | rate limit (HTTP 429) | `transient` | 1 | `ERROR: exceeded retry limit, last status: 429 Too Many Requests` | `^(?:ERROR: )?exceeded retry limit, last status: 429` |
@@ -366,13 +378,13 @@ For `classify_failure` in `scripts/codex_exec.py` (#6). Apply the rows in this o
 
 ### Regex check
 
-`regex_check.py` (in `$SCRATCH`) holds the table above as a Python list and classifies each example line, first match wins. It also checks four real noise lines that must match no row.
+`regex_check.py` (in `$SCRATCH`) holds the table above as a Python list and classifies each example line, first match wins. It also checks other "not installed" forms (the `env` and Python forms from Q5, and the `bash` form), which must match E1, and four real noise lines that must match no row.
 
 ```python
 import re
 TABLE = [  # (row, status, exit code, example line, regex) in table order
     ("E1 not installed", "unavailable", 127, "sh: 1: codex: not found",
-     r"codex: (?:command )?not found|No such file or directory: 'codex'"),
+     r"codex'?: (?:(?:command )?not found|No such file or directory)|No such file or directory: 'codex'"),
     ("E2 not logged in", "unavailable", 1, "ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: <redacted>, request id: <redacted>",
      r"^(?:ERROR: )?(?:unexpected status 401 Unauthorized|Not logged in$)"),
     ("E3 usage limit", "unavailable", 1, "ERROR: You've hit your usage limit. Try again at Sep 27th, 2026 11:06 AM.",
@@ -391,6 +403,11 @@ TABLE = [  # (row, status, exit code, example line, regex) in table order
      r"^(?:ERROR: )?(?:Connection failed: |stream disconnected before completion: )"),
     ("E10 anything else", "unknown", 1, 'ERROR: {"type": "error", "error": {"type": "invalid_request_error", "code": "invalid_json_schema"}}',
      None),
+]
+E1_FORMS = [  # other "not installed" forms (env and Python from Q5, plus bash), must match E1
+    "env: 'codex': No such file or directory",
+    "bash: codex: command not found",
+    "[Errno 2] No such file or directory: 'codex'",
 ]
 NOISE = [  # lines from real output that must match no row
     "ERROR: Reconnecting... 2/5",
@@ -412,6 +429,11 @@ for row, status, code, line, _ in TABLE:
     good = (got_row, got_status) == (row, status)
     ok &= good
     print(f"{'OK  ' if good else 'FAIL'} {row:28} -> {got_row:28} {got_status}")
+for line in E1_FORMS:
+    got_row, got_status = classify(line)
+    good = got_row == "E1 not installed"
+    ok &= good
+    print(f"{'OK  ' if good else 'FAIL'} E1 form: {line[:58]:58} -> {got_row}")
 for line in NOISE:
     got_row, got_status = classify(line)
     good = got_status == "unknown"
@@ -432,6 +454,9 @@ OK   E7 server overloaded (503)   -> E7 server overloaded (503)   transient
 OK   E8 other 5xx                 -> E8 other 5xx                 transient
 OK   E9 network error             -> E9 network error             transient
 OK   E10 anything else            -> E10 anything else            unknown
+OK   E1 form: env: 'codex': No such file or directory                    -> E1 not installed
+OK   E1 form: bash: codex: command not found                             -> E1 not installed
+OK   E1 form: [Errno 2] No such file or directory: 'codex'               -> E1 not installed
 OK   noise: ERROR: Reconnecting... 2/5                                   -> unknown
 OK   noise: Reconnecting... 1/5 (unexpected status 502 Bad Gateway: synt -> unknown
 OK   noise: 2026-09-26T13:12:14.490070Z ERROR codex_api::endpoint::respo -> unknown
@@ -496,7 +521,7 @@ Changes needed:
      -C <repo> --output-schema scripts/qa-result.schema.json -o <tmp>/last.json -
    ```
 
-   `--ignore-user-config`, `-c project_doc_max_bytes=0`, `-c skills.include_instructions=false`, `--disable hooks` and `--disable apps` keep this repo's `AGENTS.md` (orchestrator commands), the project and user skills, hooks, plugins, MCP servers and the apps connector out of the QA run (Q8). `$CODEX_HOME/AGENTS.md` cannot be switched off; the owner's home has none. The QA role file goes into the prompt, as planned.
+   `--ignore-user-config`, `-c project_doc_max_bytes=0`, `-c skills.include_instructions=false`, `--disable hooks` and `--disable apps` keep this repo's `AGENTS.md` (orchestrator commands), the project and user skills, hooks, plugins, MCP servers and the apps connector out of the QA run (Q8). `--ignore-user-config` also keeps out a repo's `.codex/config.toml` and `.codex/hooks.json` when the repo is trusted in `$HOME/.codex/config.toml` (this repo is trusted there but has no `.codex/` today): the flag drops the trust list (Q8, "Project config of a trusted project"). `$CODEX_HOME/AGENTS.md` cannot be switched off; the owner's home has none. The QA role file goes into the prompt, as planned.
 3. **A network outage never ends by default** (Q5). Without `--disable unbounded_connection_retries` it shows up only as the 30-minute timeout. With the flag, it ends after about 4 minutes as E9 (`transient`).
 4. **Classify from `--json`, not from stderr.** Take the message of the last `turn.failed` event on stdout; if there is none, use stderr. Reasons: in normal mode stderr starts with the banner, so the planned `_first_line(err)` gives `OpenAI Codex v0.153.4` as the reason; and stderr echoes the prompt, which contains the issue text. The regexes of the error table work on both forms. The fake `codex` of #6 prints these events on stdout for `--json`, and the E1 line with exit 127 for "not installed".
 5. **Optional pre-check:** `codex login status` (exit 1, `Not logged in`) finds "not logged in" at once. Without it, the 401 path takes about 16 s (E2).
@@ -515,7 +540,7 @@ Holds:
 - The draft `review.schema.json` built as in step 3 is accepted as is (Q7).
 - "On a Codex failure, write no file": failed runs leave no new output (Q1).
 
-Changes needed: only the shared runner changes of #6: `sandbox_args=["-s", "read-only"]` instead of `sandbox="read-only"`, `--json` for the error text, `--disable unbounded_connection_retries`, and the same flags that keep `AGENTS.md`, skills, hooks and apps out of the prompt. A read-only run does not write the trust entry (Q8).
+Changes needed: only the shared runner changes of #6: `sandbox_args=["-s", "read-only"]` instead of `sandbox="read-only"`, `--json` for the error text, `--disable unbounded_connection_retries`, and the same flags that keep `AGENTS.md`, project config, skills, hooks and apps out of the prompt. A read-only run does not write the trust entry (Q8).
 
 Owner decision needed: no
 
