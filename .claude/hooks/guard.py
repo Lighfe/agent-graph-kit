@@ -14,14 +14,18 @@ allowed call prints nothing, so the normal permission check stays on.
 Any error denies: a failing `gh` or `git`, broken input, a crash, and the
 overall deadline (GUARD_DEADLINE seconds, default 60). Stdlib only.
 
-Known limits by design (P1, hooks are not a security boundary): a command
-run from a string or a variable (`bash -c`, `eval`, `xargs`, `sudo`,
-`$GH issue close 5`, aliases, functions) is not recognized.
+Bash commands are not parsed for guarded calls (spec 5.1). A command that
+mentions the words `gh` and `close`, or the text `qa-codex`, is triggered.
+A triggered command is a guarded call only if its whole text is one of two
+exact forms (CLOSE_FORM, QA_FORM). Any other triggered command is denied,
+also when it runs no guarded call (`cat scripts/qa-codex`); these false
+denies are accepted. The shell tokenizer below serves G8 only.
 
-To stay safe where the tokenizer and bash may differ, the guard also denies
-some commands that run no guarded call: `echo gh issue close 5` (a close
-after another command word), and a later line that is a guarded call on its
-own, also inside a here-document or a quoted string (see _line_check).
+Known limits by design (P1, hooks are not a security boundary): a text that
+does not literally contain the trigger is not recognized, for example
+variables (`$GH issue close 5`), `$'…'` escapes, brace expansion, globs,
+quotes or backslashes inside a word, and other letter case. Calls outside
+the prescribed ones (`gh api`, `gh issue edit --state closed`) are not checked.
 """
 
 from __future__ import annotations
@@ -50,14 +54,19 @@ CALL_TIMEOUT_S = 20  # per gh/git call
 STDERR_MAX = 200  # P5: first stderr line, cut to 200 characters
 LOCK_NAME = "agent-graph-kit-guard.lock"
 
-CLOSE_REASONS = {"completed", "not planned"}
-# Shell words that may stand before a command. A guarded call behind one of them is denied.
-# Commands that run the command after them. With an option argument (`timeout 5 gh …`),
-# the guarded call is searched in the rest of the words.
-WRAPPERS = {"exec", "command", "env", "builtin", "nohup", "coproc", "nice", "timeout", "stdbuf", "setsid"}
-PREFIX_WORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"} | WRAPPERS
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
-RUNNERS = re.compile(r"uv|python(3(\.[0-9]+)?)?")
+# Bash trigger rule (spec 5.1): the trigger words, and the only two forms a triggered command may have.
+GH_WORD = re.compile(r"\bgh\b", re.ASCII)
+CLOSE_WORD = re.compile(r"\bclose\b", re.ASCII)
+CLOSE_FORM = re.compile(
+    r"""gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?""")
+QA_FORM = re.compile(r"scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?")
+TRIGGER_DENY = (
+    "G1: the command mentions gh and close, or qa-codex, but is not one of the two exact forms: "
+    "gh issue close <n> (optionally --reason completed or --reason 'not planned'), or "
+    "scripts/qa-codex ROLE=qa ISSUE=<n>, as the whole command. Ways around: write a commit message "
+    "to a file and use git commit -F <file>; write a comment body to a file and use gh … --body-file <file>; "
+    "use the Read or Grep tool instead of Bash to read or search; use a path without the trigger word "
+    "(git add scripts/); run qa-codex with the Bash tool's run_in_background option instead of &")
 
 # G8 (spec 5.9)
 SETTINGS_NAME = re.compile(r"settings[^/\s]*\.json", re.IGNORECASE)
@@ -72,22 +81,17 @@ class Deny(Exception):
 
 # --- shell tokenizer ------------------------------------------------------------------
 #
-# A small bash-like tokenizer. It knows quotes ('…', "…", $'…', $"…"), backslashes,
+# A small bash-like tokenizer for G8 (spec 5.9). It is not used to find guarded calls.
+# It knows quotes ('…', "…", $'…', $"…"), backslashes,
 # line continuations, $name, ${…}, $(…), <(…), >(…), backticks, arithmetic ((…)),
 # $((…)), $[…] and subscripts a[…], operators, redirections (also with {fd}),
 # here-documents, comments and the patterns of `case`. As in bash, `#` starts a
-# comment only at the start of a word, so `echo x#; gh issue close 5` has two commands.
+# comment only at the start of a word, so `echo x#; ls` has two commands.
 #
-# Tokens: ("w", value, subs, bare) a word, quotes removed, `subs` the texts inside
-# $(…), <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double
-# quotes), `bare` the word without its expansions; ("op", op) a command separator,
-# also "((" before an arithmetic command; ("redir", op) a redirection; ("body", "",
-# subs) the substitutions in an unquoted here-document body.
-#
-# Where the tokenizer is not sure how bash reads a text, it reads it so that more
-# text is checked as a command: the text inside arithmetic and subscripts is also
-# checked as a command of its own, and each line is also read on its own
-# (_line_check), because bash goes on with the next line after a syntax error.
+# Tokens: ("w", value, subs) a word, quotes removed, `subs` the texts inside $(…),
+# <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double quotes);
+# ("op", op) a command separator, also "((" before an arithmetic command; ("redir", op)
+# a redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
 
 _OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", ">>", ">|", "<>", "<&", ">&",
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
@@ -98,11 +102,6 @@ _JOINABLE = (*_OPS, "<(", ">(", "((", "))", "$'", '$"', "${", "$(", "$((", "$[",
 _MAX_NESTING = 100  # deeper $…, <(…) and >(…) nesting cannot be parsed
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9!@#?$*-]")  # $name, $1, $!, $$ …
-# An expansion ($x, ${…}, $(…), `…`) in a word is kept between these two marks while the
-# lexer runs. The word's value drops the marks; its "bare" form drops the whole expansion,
-# which is what bash runs when the expansion is empty (`$(true)gh` runs gh).
-_X0, _X1 = "\ue000", "\ue001"
-_EXPANDED = re.compile(f"{_X0}[^{_X1}]*{_X1}")
 _NAMED_FD = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")  # {fd}>file: bash puts the new fd number in $fd
 _ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
          "\\": "\\", "'": "'", '"': '"', "?": "?"}
@@ -114,10 +113,9 @@ class _Lexer:
     # ahead of the current position. So every loop reads self.t and self.n again, and a
     # position returned by a nested call is a position in the new text.
 
-    def __init__(self, text: str, one_line: bool = False):
+    def __init__(self, text: str):
         self.t = text
         self.n = len(text)
-        self.one_line = one_line  # stop at the first newline outside quotes and $(…)
         self.level = 0  # nesting of $…, <(…) and >(…)
 
     def join(self, i: int) -> None:
@@ -146,17 +144,16 @@ class _Lexer:
         start = True  # at the start of a command, where `esac` is a reserved word
         # Open `case` commands: [state, at the first word of a pattern]. A plain word `case`
         # followed by a word and a plain `in` starts one wherever it stands. Seeing too many
-        # is safe: the `)` of a pattern then does not end a $(, and the text stays inside it.
+        # only keeps more text inside a $(, and G8 denies a settings name with a substitution.
         cases: list[list] = []
 
         def end():
             nonlocal buf, subs, word, quoted, start
             if word:
-                marked = "".join(buf)
-                value = marked.replace(_X0, "").replace(_X1, "")
+                value = "".join(buf)
                 if toks and toks[-1] in (("redir", "<<"), ("redir", "<<-")):
                     heredocs.append((value, toks[-1][1] == "<<-", quoted))
-                toks.append(("w", value, tuple(subs), _EXPANDED.sub("", marked)))
+                toks.append(("w", value, tuple(subs)))
                 plain = not quoted and not subs
                 state = cases[-1][0] if cases else None
                 if state == "word":  # case WORD
@@ -192,7 +189,7 @@ class _Lexer:
                     j, inner, inner_subs = arith
                     end()
                     toks.append(("op", "(("))
-                    toks.append(("w", self.t[i:j], (*inner_subs, inner), self.t[i:j]))
+                    toks.append(("w", self.t[i:j], (*inner_subs, inner)))
                     start = False
                     i = j
                     continue
@@ -207,8 +204,6 @@ class _Lexer:
                 i = n if j < 0 else j
             elif c == "\n":
                 end()
-                if self.one_line and not sub:
-                    return toks, i
                 toks.append(("op", "\n"))
                 start = True
                 i += 1
@@ -276,9 +271,9 @@ class _Lexer:
                     sub_end := self.arith(i + 1, "]")):
                 # A subscript, as in `a[1<<2]=x`, `a[1<<2]` as the first word or `a=( [1<<2]=x )`, is one unit:
                 # `<<` in it is no here-document. Bash reads an argument `a[…]` as a unit only in some
-                # places. Reading it as a unit everywhere is safe, because the text inside is checked
-                # as a command of its own. It is checked with a letter before it: in bash, a `#` after
-                # the `[` is inside a word and starts no comment.
+                # places. Reading it as a unit everywhere is safe for G8: the text inside counts as a
+                # substitution, so a settings name next to it is denied. It is kept with a letter before
+                # it: in bash, a `#` after the `[` is inside a word and starts no comment.
                 j, inner, inner_subs = sub_end
                 buf.append(self.t[i:j])
                 subs.extend((*inner_subs, "x" + inner))
@@ -295,7 +290,7 @@ class _Lexer:
 
     def dollar(self, i: int, buf: list[str], subs: list[str], dq: bool = False) -> tuple[int, bool]:
         """What starts with `$` at i: the quotes $'…' and $"…", or an expansion $name, $1, $$, ${…},
-        $(…), $((…)), $[…] (appended between the marks _X0 and _X1), or a plain `$`.
+        $(…), $((…)), $[…], or a plain `$`.
         Returns (index after it, whether it is a quote)."""
         self.level += 1
         try:
@@ -323,7 +318,7 @@ class _Lexer:
         if not part:
             buf.append("$")
             return i + 1, False
-        buf.append(_X0 + "".join(part) + _X1)
+        buf.append("".join(part))
         return j, False
 
     def expression(self, i: int, buf: list[str], subs: list[str]) -> int:
@@ -339,7 +334,7 @@ class _Lexer:
             arith = None
         else:
             return i
-        if arith:  # the text inside is also checked as a command: $((…) ) may be a $( (…) )
+        if arith:  # the text inside is also kept as a substitution: $((…) ) may be a $( (…) )
             j, inner, inner_subs = arith
             subs.extend((*inner_subs, inner))
         else:
@@ -500,7 +495,7 @@ class _Lexer:
             raise ValueError("unterminated backtick")
         # bash removes the backslash before ` $ \ inside backticks before it runs the text
         subs.append(re.sub(r"\\([`$\\])", r"\1", t[i + 1:j]))
-        buf.append(_X0 + t[i:j + 1] + _X1)
+        buf.append(t[i:j + 1])
         return j + 1
 
     def heredoc(self, i: int, delim: str, strip: bool, joined: bool) -> tuple[int, str]:
@@ -527,12 +522,10 @@ class _Lexer:
         return n, t[start:]
 
 
-def _lex(command: str, start: int = 0, one_line: bool = False) -> list[tuple]:
-    """Tokens of the command from `start`. Raises ValueError if it cannot be parsed."""
-    if _X0 in command or _X1 in command:
-        raise ValueError("the command contains a private-use character the tokenizer uses")
+def _lex(command: str) -> list[tuple]:
+    """Tokens of the command. Raises ValueError if it cannot be parsed."""
     try:
-        return _Lexer(command, one_line).script(start, sub=False)[0]
+        return _Lexer(command).script(0, sub=False)[0]
     except RecursionError:
         raise ValueError("the command is nested too deeply") from None
 
@@ -550,19 +543,6 @@ def _simple_commands(toks: list[tuple]) -> tuple[list[list[tuple]], int]:
             cur.append(tok)
     cmds.append(cur)
     return [c for c in cmds if c], ops
-
-
-def split_command(command: str) -> tuple[list[list[str]], int]:
-    """(simple commands, number of operators). A simple command lists its words
-    (quotes removed) and its redirection operators. Raises ValueError."""
-    cmds, ops = _simple_commands(_lex(command))
-    out = [[tok[1] for tok in cmd if tok[0] != "body"] for cmd in cmds]
-    return [c for c in out if c], ops
-
-
-def substitutions(token: str) -> list[str]:
-    """Texts inside $(…) and backticks in `token`. Raises ValueError if unbalanced."""
-    return [s for tok in _lex(token) if tok[0] in ("w", "body") for s in tok[2]]
 
 
 # --- classification -------------------------------------------------------------------
@@ -604,206 +584,8 @@ def _classify_send(tool_input: dict) -> Call:
     return Call(role=role, agent=to, issue=number, continued=True)
 
 
-def _words(cmd: list[tuple], bare: bool = False) -> list[str]:
-    """The words of a simple command, without its redirections and their targets.
-    bare=True: each word without its expansions ($x, ${…}, $(…), `…`)."""
-    words, target = [], False
-    for tok in cmd:
-        if tok[0] == "redir":
-            target = True
-        elif tok[0] == "w":
-            if not target:
-                words.append(tok[3] if bare else tok[1])
-            target = False
-    return words
-
-
-def _gh_close(words: list[str], k: int) -> int | None:
-    """Index of `close` if words[k:] is `gh … issue … close` with only options between, else None."""
-    seen_issue = False
-    for m in range(k + 1, len(words)):
-        w = words[m]
-        if w == "close" and seen_issue:
-            return m
-        if w == "issue" and not seen_issue:
-            seen_issue = True
-        elif not (w.startswith("-") or (m - 1 > k and words[m - 1].startswith("-"))):
-            return None
-    return None
-
-
-def _call_at(words: list[str], k: int) -> tuple[str, int] | None:
-    """("close" | "qa-codex", index of the last command word) if a guarded call starts at words[k]."""
-    name = words[k].rsplit("/", 1)[-1]
-    if name == "gh":
-        m = _gh_close(words, k)
-        return ("close", m) if m is not None else None
-    if words[k].endswith("qa-codex"):
-        return "qa-codex", k
-    if RUNNERS.fullmatch(name):
-        for m in range(k + 1, len(words)):
-            if words[m].endswith("qa-codex"):
-                return "qa-codex", m
-    return None
-
-
-def _find_guarded(cmd: list[tuple], anywhere: bool = True) -> tuple[list[str], int, str, int] | None:
-    """(bare words, index of the first command word, "close" | "qa-codex", index of the last command word) or None.
-    Redirections do not count as words, wherever they stand. The search uses the words without their
-    expansions, because an empty expansion vanishes: `$(true)gh` and `${x}gh` run gh.
-    anywhere=False: after an unknown command word, do not look further (for prose lines)."""
-    words = _words(cmd, bare=True)
-    i, after_prefix = 0, False
-    while i < len(words):
-        value = words[i]
-        if value in PREFIX_WORDS:
-            after_prefix = True
-        elif value == "function":  # `function NAME { …; }`: the name is no command
-            after_prefix = True
-            i += 1
-        elif not ASSIGNMENT.match(value) and not (after_prefix and value.startswith("-")):
-            break
-        i += 1
-    if i >= len(words):
-        return None
-    found = _call_at(words, i)
-    if found:
-        return words, i, *found
-    # A command may run the words after it: `timeout 5 gh …`, `ionice -c 3 gh …`, `find -exec gh …`.
-    # So a `gh … issue close` later in the words counts too. A qa-codex word later counts after a
-    # known wrapper, or when its launch arguments follow, so `cat scripts/qa-codex` still passes.
-    wrapped = any(w in WRAPPERS for w in words[:i])
-    if not (anywhere or wrapped):
-        return None
-    for k in range(i + 1, len(words)):
-        found = _call_at(words, k)
-        if not found:
-            continue
-        after = words[found[1] + 1] if found[1] + 1 < len(words) else ""
-        if wrapped or found[0] == "close" or after.startswith(("ROLE=", "ISSUE=")):
-            return words, k, *found
-    return None
-
-
-def _close_number(args: list[str]) -> int:
-    number = None
-    reason = False
-    j = 0
-    while j < len(args):
-        value = args[j]
-        if value in ("--reason", "-r") or value.startswith("--reason="):
-            if value.startswith("--reason="):
-                given, j = value.split("=", 1)[1], j + 1
-            else:
-                given = args[j + 1] if j + 1 < len(args) else None
-                j += 2
-            if reason or given not in CLOSE_REASONS:
-                raise Deny(f"G1: gh issue close reason is {given or 'missing'}, "
-                           "expected one --reason completed or --reason 'not planned'")
-            reason = True
-            continue
-        if not (value.isascii() and value.isdigit()):
-            raise Deny(f"G1: gh issue close has the argument {value}, "
-                       "expected one issue number made of digits and optionally --reason")
-        if number is not None:
-            raise Deny("G1: gh issue close has two issue numbers, expected exactly one")
-        number = int(value)
-        j += 1
-    if number is None:
-        raise Deny("G1: gh issue close has no issue number, expected exactly one")
-    return number
-
-
-def _qa_codex_issue(args: list[str]) -> int:
-    m = re.fullmatch(r"ISSUE=([0-9]+)", args[1]) if len(args) == 2 else None
-    if args[:1] != ["ROLE=qa"] or not m:
-        raise Deny("G1: qa-codex arguments are not ROLE=qa ISSUE=<number>, "
-                   "expected exactly these two arguments in this order")
-    return int(m.group(1))
-
-
-def _mentions_guarded(text: str) -> bool:
-    return "gh" in text or "qa-codex" in text
-
-
-def _classify_text(text: str) -> Call | None:
-    """Classify one shell text (a command, or the text inside a substitution)."""
-    try:
-        toks = _lex(text)
-    except ValueError as e:
-        if _mentions_guarded(text):
-            raise Deny(f"G1: the command cannot be parsed ({e}) and mentions gh or qa-codex, "
-                       "expected a command that parses") from None
-        return None
-    cmds, ops = _simple_commands(toks)
-    for cmd in cmds:
-        for tok in cmd:
-            for inner in (tok[2] if tok[0] in ("w", "body") else ()):
-                try:
-                    inside = _classify_text(inner) is not None
-                except Deny:
-                    inside = True
-                if inside:
-                    raise Deny("G1: a guarded call (gh issue close or qa-codex) is inside $(…) or backticks, "
-                               "expected it as a simple command of its own")
-    guarded = [(cmd, g) for cmd in cmds if (g := _find_guarded(cmd))]
-    if not guarded:
-        return None
-    if ops or len(cmds) != 1:
-        raise Deny("G1: a guarded call (gh issue close or qa-codex) is part of a command with shell operators, "
-                   "expected one simple command without ; && || | & newline ( )")
-    cmd, (bare, first, kind, last) = guarded[0]
-    words = _words(cmd)
-    if words[first:last + 1] != bare[first:last + 1]:
-        raise Deny(f"G1: a guarded call ({kind}) has an expansion ($…, `…`) in {' '.join(words[first:last + 1])}, "
-                   "expected plain command words")
-    if first:
-        raise Deny(f"G1: a guarded call ({kind}) has {words[0]} before it, "
-                   "expected the call at the start of the command")
-    redirection = next((tok[1] or "<<" for tok in cmd if tok[0] in ("redir", "body")), None)
-    if redirection:
-        raise Deny(f"G1: a guarded call ({kind}) has the redirection {redirection}, expected no redirection")
-    args = words[last + 1:]
-    if kind == "close":
-        if words[1:last] != ["issue"]:
-            raise Deny(f"G1: gh issue close has {' '.join(words[1:last])} between gh and close, "
-                       "expected gh issue close <number>")
-        return Call(role="close", agent="", issue=_close_number(args))
-    return Call(role="qa", agent="qa-codex", issue=_qa_codex_issue(args))
-
-
-def _has_guarded(text: str, start: int = 0, one_line: bool = False) -> bool:
-    """True if `text` from `start`, read as a command on its own, has a guarded call at the start of
-    a simple command, also behind prefixes and known wrappers, or inside a substitution. A text that
-    cannot be parsed has none. one_line: read only up to the end of the first line, which may go on
-    over more lines inside quotes and $(…)."""
-    try:
-        toks = _lex(text, start, one_line)
-    except ValueError:
-        return False
-    for cmd in _simple_commands(toks)[0]:
-        if _find_guarded(cmd, anywhere=False):
-            return True
-        if any(_has_guarded(inner) for tok in cmd if tok[0] in ("w", "body") for inner in tok[2]):
-            return True
-    return False
-
-
-def _line_check(command: str) -> str | None:
-    """Deny reason if a later line of the command is a guarded call when it is read on its own.
-
-    After a syntax error, bash drops the rest of that line and parses the next line fresh. So a
-    line that is data to the tokenizer (a here-document body, a quoted string) may run, when bash
-    finds a syntax error the tokenizer does not know. Each line is read on its own; a line that
-    goes on over more lines (an open quote) is read together with them. The lines after that
-    are checked on their own too."""
-    starts = [m.end() for m in re.finditer("\n", command)]
-    for number, k in enumerate(starts, start=1):
-        if _has_guarded(command, k, one_line=True):
-            return (f"G1: line {number + 1} of the command is a guarded call (gh issue close or qa-codex) when "
-                    "bash reads it on its own, as it does after a syntax error; expected no such line "
-                    "(put long text in a file: git commit -F, gh --body-file)")
-    return None
+def _triggered(text: str) -> bool:
+    return bool(GH_WORD.search(text) and CLOSE_WORD.search(text)) or "qa-codex" in text
 
 
 def g8(command: str) -> str | None:
@@ -838,11 +620,13 @@ def _classify_bash(tool_input: dict) -> Call | None:
     reason = g8(command)  # first, and without any gh call
     if reason:
         raise Deny(reason)
-    call = _classify_text(command)
-    reason = _line_check(command)
-    if reason:
-        raise Deny(reason)
-    return call
+    if not (_triggered(command) or _triggered(command.replace("\\\n", ""))):
+        return None
+    if m := CLOSE_FORM.fullmatch(command):  # always the original text, never the copy
+        return Call(role="close", agent="", issue=int(m.group(1)))
+    if m := QA_FORM.fullmatch(command):
+        return Call(role="qa", agent="qa-codex", issue=int(m.group(1)))
+    raise Deny(TRIGGER_DENY)
 
 
 def classify(event: dict) -> Call | None:
