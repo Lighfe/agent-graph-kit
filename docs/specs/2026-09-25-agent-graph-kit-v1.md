@@ -3,6 +3,7 @@
 - Date: 2026-09-25
 - Status: draft, for owner review
 - Source: design session with the owner on 2026-09-25. Research inputs: `docs/research/`.
+- Updated 2026-09-26 with the owner decisions on the spike findings S1–S3 (section 13).
 
 This spec is the accepted design of the kit for version 1. Earlier notes in `docs/archive/` are historical input only.
 
@@ -87,14 +88,16 @@ A hook runs before each tool call of the orchestrator and of its subagents. It g
 | Subagent launch of `pm` | pm |
 | Subagent launch of `software-engineer` or `frontend-engineer` | engineer |
 | Subagent launch of `qa-engineer` | qa (fallback) |
+| `SendMessage` that continues a role agent | the role in its launch line |
 | Bash call of `qa-codex` | qa |
 | Bash call of `gh issue close <number>` | close |
+| Bash command that writes to `.claude/settings*.json` | – (always denied, G8) |
 
 All other calls pass. Examples: other subagent types, the Codex review skill, normal Bash commands.
 
 ### 5.2 Launch line
 
-A guarded launch of a role must contain the line `ROLE=<role> ISSUE=<number>` (in the subagent prompt, or as arguments of `qa-codex`). A launch without this line is denied.
+A guarded launch of a role must contain the line `ROLE=<role> ISSUE=<number>` (in the subagent prompt, in the `SendMessage` message, or as arguments of `qa-codex`). A launch without this line is denied. A `SendMessage` without this line is denied too.
 
 Close needs no launch line. The hook reads the issue number from the `gh issue close` command. If the command has no single, clear issue number, the hook denies it. Close posts no launch comment.
 
@@ -106,6 +109,8 @@ When the hook allows a launch, it posts a launch comment on the issue before the
 ## Launch: engineer (attempt 3)
 Agent: software-engineer
 ```
+
+**Continuation.** The orchestrator may continue a role agent with `SendMessage` instead of a new launch, for example to give the same engineer the QA feedback with its own context. The message carries the same launch line. The hook runs the same checks as for a launch of that role and posts a launch comment of the form `## Launch: <role> (continued, round <n>)`. For validity, pending and returns, a continued comment counts as a launch comment. The `SendMessage` input names the target agent, not its type, so the agent part of G3 applies only to a new launch.
 
 A result comment is **valid** only if both are true:
 
@@ -129,6 +134,7 @@ The **current result** of an issue is the newest valid result of any role, or an
 | G5 | qa fallback (`qa-engineer`) | the current result is `## QA: UNAVAILABLE` |
 | G6 | close | the current result is `## QA: PASS` and its verified SHA is equal to `HEAD` |
 | G7 | PM or engineer | fewer than 3 returns (`## QA: FAIL` or `## Engineer: BLOCKED`) after the newest `## Owner: RESUME` comment |
+| G8 | any Bash call | the command does not write to `.claude/settings*.json` (5.9). This check reads no issue state. When in doubt, it denies |
 
 Notes:
 
@@ -144,13 +150,15 @@ Notes:
 | Engineer | `## Engineer: DONE`, `## Engineer: BLOCKED` |
 | QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID` |
 | Owner | `## Owner: RESUME` |
-| Hook | `## Launch: <role> (attempt <n>)` |
+| Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)` |
 
 `## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates.
 
 ### 5.6 Failure behavior
 
-- If `gh` or `git` fails (network, auth), or the hook script has any other error, the hook denies the call with an explicit deny response. A crash must never let the call through. Unknown facts do not allow a launch.
+- If `gh` or `git` fails (network, auth), or the hook script has any other error, the hook denies the call with an explicit deny response. A crash must never let the call through, except when Claude Code kills the hook at its timeout. Unknown facts do not allow a launch.
+- Timeout (S1): a hook that Claude Code kills at its settings `timeout` lets the call through, and a command wrapper cannot catch this. So the guard has one overall deadline (about 60 s) for all its work, including the wait for the lock (5.7). At the deadline, it denies. The settings `timeout` is higher (about 120 s). Only a hung machine can cause a fail-open.
+- The guard never outputs "allow". An allowed call produces no output, so the normal permission check stays on.
 - Each deny message names the check that failed (for example `G3: current result is ## QA: PASS, expected ## PM: GROOMED or ## QA: FAIL`), so the orchestrator knows what is missing.
 
 ### 5.7 Implementation
@@ -158,12 +166,36 @@ Notes:
 - Python scripts run with `uv run --script` (inline dependencies, PEP 723), in `.claude/hooks/`, registered in `.claude/settings.json`.
 - One shared module reads the issue state (labels, comments with timestamps) with one `gh` call. Each check is a small function.
 - The launch comments are the receipts. There is no separate log.
+- Hooks of two calls in one message can run at the same time (S1). The guard holds an exclusive file lock from reading the facts until the launch comment is posted, so the second call sees the first launch comment and is denied as pending.
+- Matcher: `Agent|Bash|SendMessage`. The command wrapper is POSIX `sh` and turns a crash or a missing `uv` into a deny (`… || { echo '…' >&2; exit 2; }`).
 
 ### 5.8 Prose changes
 
 - `docs/team/orchestrator.md` and `AGENTS.md`: the launch line; the new markers; the pending state; the issue list command leaves out `later` and `needs-owner` (`gh issue list --state open --label ready --search "-label:later -label:needs-owner"`); the hook deny message replaces most hand-written result queries.
 - Role files: the launch line is in the prompt; the result must be posted after launch.
 - `docs/process.md`: the hooks enforce the lifecycle; after `## Owner: RESUME` the issue goes back to the PM.
+- `docs/team/orchestrator.md`: continue a role with `SendMessage` only with the launch line in the message.
+
+### 5.9 Activation, settings protection and acceptance test
+
+Project hooks are not a session-start snapshot (S1). An edit of `.claude/settings.json` applies at the next tool call of every running session in the repo, also the session that wires the hooks.
+
+**Activation.**
+
+1. Before the hook wiring task starts, the owner puts `{"disableAllHooks": true}` into `.claude/settings.local.json` (not committed; the file is in `.gitignore`).
+2. The hook wiring task runs and is closed under the old process.
+3. The owner deletes the file. The hooks apply from the next tool call.
+
+No warning shows when `disableAllHooks` is still present. If the owner forgets step 3, all guards stay off.
+
+**Settings protection.** Any agent that can write files can put `disableAllHooks` into the local settings file, and the change applies at the next tool call. So:
+
+- `permissions.deny` rules for `Edit` and `Write` on `.claude/settings*.json`.
+- The guard denies `Bash` commands that write to `.claude/settings*.json`.
+
+**Allow rules.** The guard posts the launch comment before the permission check. If a prompt or a missing allow rule then stops the call, the issue stays pending without a real problem. So the project settings allow `Bash(scripts/qa-codex ROLE=qa ISSUE=*)` and `Bash(gh issue close *)`. Claude Code then does not ask the owner before these two calls. The guard still runs first, and its deny still stops the call. Project allow rules apply only after the folder is trusted.
+
+**Acceptance test.** After the owner has deleted `disableAllHooks`, and before the next real issue gets `ready`, the owner runs a checklist (`docs/checks/hook-activation.md`) in an interactive session in the VS Code extension (the surface of the loop), on a throwaway issue. The owner types the prompts and checks each result. An agent does not test its own gates. If a step fails, the loop does not start. The checklist covers: the guard is listed in `/hooks`; a launch without a launch line is denied; a `SendMessage` continuation with and without the line (and whether the extension has `SendMessage` at all); writes of `disableAllHooks` with `Edit` and with `Bash` are denied; a guarded `qa-codex` call shows no permission prompt; whether `disableAllHooks` in the local file also stops user-level hooks. If the extension blocks `SendMessage`, the owner runs the loop with `claude` in the VS Code integrated terminal.
 
 ## 6. Codex QA launcher (`qa-codex`)
 
@@ -172,12 +204,15 @@ Notes:
 Call: `qa-codex ROLE=qa ISSUE=<n>`. A Python script run with `uv run --script`.
 
 1. Read the issue body (the acceptance criteria) with `gh`. Read the range from the `Commits: <base>..<head>` line of the newest `## Engineer: DONE` comment. Do not pass on the rest of the engineer's comment.
-2. Run `codex exec` with:
-   - the most restrictive sandbox that still lets QA exercise the behavior (the Codex spike decides which),
+2. Create a temporary `git worktree` at the commit under test. Codex can write files in the working tree in every sandbox. In the main tree this would make G1 deny the next launch, and a PASS could apply to code that is not in `HEAD`. The worktree is deleted after the run.
+3. Pre-step, outside the sandbox, with fixed commands and no LLM decision: in a repo with a frontend, fetch the submodule commits into the worktree, run `npm ci`, then install the Playwright browser. If the pre-step fails, the result is `## QA: UNAVAILABLE`. (`codex exec` cannot pause for an install, and the sandbox cannot reach the npm registry or write `$HOME`.)
+4. Run `codex exec` in the worktree with:
+   - the localhost-only sandbox profile (S2: `--enable network_proxy` and a permissions profile `qa` that allows only `localhost` and `127.0.0.1`). QA tests the checked-out code and needs no GitHub. Codex runs outside the Claude Code hooks, so the sandbox is its only limit. `network_proxy` is experimental; check it after each Codex update,
+   - the flags from S2 that keep the user config, `AGENTS.md`, skills, hooks and apps out of the run (`--ignore-user-config` and others). Because `--ignore-user-config` also removes the user's model and effort, the model and the reasoning effort are set explicitly. v1 starts with `medium` for all runs and records the results,
    - the prompt: the QA role file, the criteria, and the range,
    - `--output-schema qa-result.schema.json` and `-o <file>` for the final message.
-3. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall verdict from the criterion verdicts: PASS only if every criterion passes.
-4. Render the issue comment from the JSON and post it with `gh`. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
+5. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall verdict from the criterion verdicts: PASS only if every criterion passes.
+6. Render the issue comment from the JSON and post it with `gh`. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
 
 The QA result schema contains: verdict (`pass` or `fail`), one entry per criterion (text, verdict, evidence), the tests (command and result, or "not run" with the reason), and the verified SHA. The rendered comment follows the format in `docs/team/qa-engineer.md`.
 
@@ -192,12 +227,15 @@ Claude does not skip Codex because of a small problem. Each failure type has its
 | Output does not match the schema, a criterion is missing or duplicated, or the verified SHA is not `HEAD` | Retry once. Then post `## QA: INVALID` with the reason → escalate |
 | Unknown error | Post `## QA: INVALID` with the reason → escalate |
 | Codex not installed, not logged in, or usage limit reached | Post `## QA: UNAVAILABLE` with the reason → the orchestrator launches the Claude `qa-engineer` fallback |
+| The pre-step (6.1 step 3) fails | Post `## QA: UNAVAILABLE` with the reason → the fallback, as above |
 
 The retry limits apply to one launch. The fallback posts a normal QA comment with the footer `Checker: claude (fallback)`.
 
 If the script cannot post its comment, it exits with an error. The issue stays pending (5.3), and the orchestrator escalates.
 
-How Codex reports each error (exit codes, error text, usage limit vs. network error) is not documented. The Codex spike finds this out before the script is written.
+How Codex reports each error (exit codes, error text, usage limit vs. network error) is in the S2 error table (`docs/research/spike-codex-cli.md`).
+
+**Trust entry.** Each Codex run with a writable sandbox writes `trust_level = "trusted"` for a repo without an entry into `$HOME/.codex/config.toml`. No flag stops this. The set-up adds the entry up front (12.4), so Codex writes nothing during the loop. QA runs are not affected, because `--ignore-user-config` ignores the trust list. Remaining risk: a manual `codex` session in a trusted repo loads the repo's `.codex/config.toml` and `.codex/hooks.json`. A new `.codex/` folder in a diff is a review item.
 
 ## 7. QA behavior
 
@@ -213,6 +251,8 @@ QA also runs the test command from AGENTS.md as secondary evidence. The engineer
 
 A criterion without enough evidence cannot pass. If QA cannot verify a criterion for a technical reason (for example, the browser crashes), the result is `## QA: INVALID` → escalate.
 
+If QA needs a tool that is not in the lockfile or the set-up, the result is `## QA: FAIL` back to the engineer (undeclared dependency). QA does not install anything and does not escalate for an install.
+
 `docs/team/qa-engineer.md` gets this behavior and one delivery rule: when run by `qa-codex`, return JSON only and do not post a comment. The Claude fallback posts its comment as before.
 
 ## 8. Codex review skill
@@ -221,7 +261,7 @@ A criterion without enough evidence cannot pass. If QA cannot verify a criterion
 - Trigger: the owner, in natural language ("let Codex review the spec") or with `/codex-review`. Claude derives the target from the conversation: a file, a folder, or a commit range. The skill does not start by itself in the loop.
 - AGENTS.md gets one line: "When the owner asks for a Codex review, use the `codex-review` skill."
 - What it does:
-  1. Runs `codex exec` read-only with a normal review prompt (not adversarial) and a findings schema.
+  1. Runs `codex exec` read-only with a normal review prompt (not adversarial) and a findings schema. The model and the reasoning effort are set explicitly (start with `medium`, as for QA).
   2. Writes `docs/reviews/<date>-<topic>-codex-review.md`, always.
 - Findings format: adapted from the Codex plugin's review schema (openai-codex plugin for Claude Code, with credit): verdict (`approve` or `needs-attention`), summary, findings (severity, title, body, file, lines, confidence, recommendation), next steps.
 - The code that runs Codex and captures its output is shared with `qa-codex`.
@@ -235,7 +275,8 @@ A criterion without enough evidence cannot pass. If QA cannot verify a criterion
 
 - `paint-math` is a new GitHub repo. The kit is copied in with the README set-up instructions.
 - `frontend/` is a git submodule. It points to the repo that Lovable manages.
-- The owner creates the Lovable project and connects it to GitHub. This is a manual step unless the Lovable spike shows it works through MCP.
+- The owner creates the Lovable project, connects it to GitHub and makes the Lovable repo public. No MCP tool can make the GitHub connection (S3). A public repo needs no read access for the loop machine, the engineer fetch or the QA pre-step.
+- The submodule tracks the branch that Lovable syncs (the default branch, `main`).
 - Nobody edits `frontend/` locally. All frontend changes go through Lovable.
 
 ### 9.2 `frontend-engineer`
@@ -247,9 +288,9 @@ Flow:
 
 1. Note the base SHA of the main repo: `git rev-parse HEAD`.
 2. Send Lovable the goal and the acceptance criteria of the issue in plain words. Lovable does not know about issues or git.
-3. Wait until Lovable has finished and its commit is on GitHub (detection: see the Lovable spike).
+3. Wait until Lovable has finished and its commit is on GitHub (detection: the method in the S3 findings).
 4. If a criterion is not met, send Lovable a follow-up message. Repeat until all criteria are met, within the time budget (default 60 minutes per launch). When the budget runs out, post `## Engineer: BLOCKED` with what is missing.
-5. Fetch the submodule and pin it to the exact commit of Lovable's change (how to identify that commit: see the Lovable spike). Do not take the newest commit of the branch without this check. Commit the pointer update.
+5. Fetch the submodule and pin it to the exact commit of Lovable's change (the merge commit whose `X-Lovable-Edit-ID` trailer matches the edit id; the method is in the S3 findings). Do not take the newest commit of the branch without this check. Commit the pointer update.
 6. Run the project test command, if one exists.
 7. Post `## Engineer: DONE` with `Commits: <base>..<head>`.
 
@@ -257,9 +298,11 @@ Lovable cost is not a limit. Time is.
 
 ### 9.3 QA for frontend issues
 
-Codex checks the range, including the submodule content (`git diff --submodule=diff <base>..<head>`, with the submodule commits fetched). Following section 7, QA exercises the UI in a headless browser (for example Playwright).
+Codex checks the range, including the submodule content (`git diff --submodule=diff <base>..<head>`, with the submodule commits fetched). Following section 7, QA exercises the UI in a headless browser (Playwright). The dependencies and the browser are installed by the `qa-codex` pre-step (6.1). Codex starts the app and runs the browser check in one command, because a background process does not survive into the next Codex command (S2).
 
-Browser-based QA is a precondition of the frontend lane. The Codex spike must show that `qa-codex` can run a headless browser. If it cannot, the owner decides before any frontend task starts (for example, a Claude QA with a browser tool for frontend issues, or the lane moves to `later`). Build, tests and code reading alone are not enough evidence for a UI criterion.
+Browser-based QA is a precondition of the frontend lane. S2 showed that `qa-codex` can run Playwright with headless Chromium in the localhost-only profile. Build, tests and code reading alone are not enough evidence for a UI criterion.
+
+Open point: S3 found that `git diff --submodule=diff` needs no network only in the clone where the engineer fetched the `frontend/` commits. A new QA worktree may not have the submodule objects. The pre-step fetches them (outside the sandbox, no credentials needed for the public Lovable repo). The plan checks how the worktree gets them.
 
 ### 9.4 Demo scope
 
@@ -283,7 +326,8 @@ The owner can replace these issue ideas. The issues live in the paint-math repo.
 | File | Change |
 |---|---|
 | `.claude/hooks/` | New: guard hook, issue-state module |
-| `.claude/settings.json` | New: hook registration |
+| `.claude/settings.json` | New: hook registration, allow and deny rules (5.9) |
+| `docs/checks/hook-activation.md` | New: acceptance test checklist (5.9) |
 | `.claude/agents/frontend-engineer.md` | New |
 | `.claude/agents/qa-engineer.md` | Unchanged pointer; now the fallback |
 | `scripts/qa-codex` (Python) + QA result schema | New |
@@ -320,8 +364,11 @@ The exact paths can change in the plan if a spike shows a reason.
 
 ### 12.4 README set-up section
 
-- Prerequisites: `gh` (logged in), `uv`, Codex CLI (logged in), Lovable MCP plugin (frontend lane only).
-- Files to copy: AGENTS.md, CLAUDE.md, `docs/process.md`, `docs/team/`, `docs/task-template.md`, `.claude/agents/`, `.claude/hooks/`, the hooks block of `.claude/settings.json`, `scripts/qa-codex` and its schema, `.agents/skills/codex-review/`, the symlink `.claude/skills` → `.agents/skills`.
+- Prerequisites: `gh` (logged in), `uv`, Codex CLI (logged in), the Claude Code plugin `lovable` (frontend lane only; the tool names in `frontend-engineer.md` depend on it).
+- Codex trust entry: add `trust_level = "trusted"` for the project to `$HOME/.codex/config.toml` (6.2), so Codex writes nothing during the loop.
+- Frontend lane only: create the Lovable project, connect it to GitHub by hand, and make the Lovable repo public (9.1).
+- Hook activation and the acceptance test (5.9).
+- Files to copy: AGENTS.md, CLAUDE.md, `docs/process.md`, `docs/team/`, `docs/task-template.md`, `.claude/agents/`, `.claude/hooks/`, the hooks and permissions blocks of `.claude/settings.json`, `docs/checks/`, `scripts/qa-codex` and its schema, `.agents/skills/codex-review/`, the symlink `.claude/skills` → `.agents/skills`.
 - Files to adjust: the project description and test command in AGENTS.md; the `frontend/` submodule and the `frontend` lane (Lovable only).
 - Labels to create: `ready`, `needs-owner`, `later`.
 - The paint-math task checks these instructions. Missing steps are fixed in the README.
@@ -329,6 +376,8 @@ The exact paths can change in the plan if a spike shows a reason.
 ## 13. Spikes
 
 Each spike is a plan task. The output is a short findings file in `docs/research/`. If a finding changes this design, the owner decides before the dependent tasks start.
+
+Status 2026-09-26: all three spikes are done (`spike-claude-code-hooks.md`, `spike-codex-cli.md`, `spike-lovable-mcp.md`). The owner decisions on their consequences are merged into sections 5, 6, 7, 8, 9 and 12. Nothing from S1–S3 is open, except the submodule objects in the QA worktree (9.3).
 
 | # | Spike | Questions | Blocks |
 |---|---|---|---|

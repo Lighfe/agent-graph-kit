@@ -19,7 +19,8 @@ Execution is deferred. In a later session, convert these tasks to issues using d
 - No keys in commits, issues, comments or reviews. Examples are synthetic (P5).
 - Python scripts run with `uv run --script` and a PEP 723 header. Plan decision: stdlib only (`dependencies = []`), so the test command below can import every module.
 - Test command: `uv run --with pytest pytest`. No network in tests.
-- Any hook error (failing `gh`, failing `git`, crash) produces a deny. A crash never lets a call through.
+- Any hook error (failing `gh`, failing `git`, crash) produces a deny. A crash never lets a call through, except when Claude Code kills the hook at its settings `timeout` (spec 5.6; owner decision 2026-09-26).
+- Codex may write its trust entry for a repo into `$HOME/.codex/config.toml` (spec 6.2). Do not change anything else in `$HOME/.codex/`.
 - Each deny message names the failed check, for example `G3: current result is ## QA: PASS, expected ## PM: GROOMED or ## QA: FAIL`.
 - Result markers are the exact first lines in spec 5.5. The launch line is exactly `ROLE=<role> ISSUE=<number>`.
 - `qa-codex`: default timeout 30 minutes. Transient retries wait 1, 3 and 10 minutes. Frontend engineer: time budget 60 minutes per launch.
@@ -47,6 +48,7 @@ Execution is deferred. In a later session, convert these tasks to issues using d
   2. paint-math is two tasks. The owner runs the demo loop in paint-math (Tasks 11 and 12).
   3. A result without a launch comment of its role is not valid.
   4. Section 5.8 needs no role-file change. The launch line is only in the orchestrator's prompt template.
+- **Owner decisions of 2026-09-26** on the S1–S3 findings are merged into the spec (sections 5.6, 5.7, 5.9, 6, 7, 8, 9, 12.4) and into Tasks 5–11 below. History: `docs/archive/2026-09-26-s1-3-owner-decisions.md`. Where a task below and the spec differ, the spec wins.
 - **Plan decisions** (no spec change):
   - The hook module, the guard and `qa-codex` are built before the hooks are wired (Task 7). If the hooks were wired earlier, QA would deadlock: G4 needs `qa-codex`, and G5 needs `## QA: UNAVAILABLE`.
   - The shared Codex runner is `scripts/codex_exec.py`.
@@ -72,7 +74,8 @@ Execution is deferred. In a later session, convert these tasks to issues using d
 | `scripts/codex_exec.py` | 6 | Run `codex exec` and classify failures (shared) |
 | `scripts/qa-codex`, `scripts/qa-result.schema.json` | 6 | Codex QA launcher and result schema |
 | `tests/test_qa_codex.py`, `tests/fakes/codex` | 6 | Tests for each failure type |
-| `.claude/settings.json` | 7 | Hook registration |
+| `.claude/settings.json` | 7 | Hook registration, allow and deny rules |
+| `docs/checks/hook-activation.md` | 7 | Owner's acceptance test after activation |
 | `.agents/skills/codex-review/SKILL.md`, `review.py`, `review.schema.json` | 8 | Codex review skill |
 | `tests/test_codex_review.py` | 8 | Renderer test |
 | `.claude/agents/frontend-engineer.md` | 9 | Frontend lane subagent |
@@ -241,6 +244,7 @@ A stdlib module computes the state of an issue from its `gh` JSON (valid results
 - [ ] G7 counts only `## QA: FAIL` and `## Engineer: BLOCKED` comments after the newest `## Owner: RESUME` that have a launch of their role before them. The launch is denied at 3
 - [ ] A first line with `\r` or trailing spaces still matches. `## QA: PASS (re-check)` does not match
 - [ ] G6 compares the full 40-character `Verified:` SHA with `HEAD`. A short SHA is not equal
+- [ ] `## Launch: <role> (continued, round <n>)` counts as a launch comment of its role for validity, pending, G7 and the launch number (spec 5.3). For a continued call, G3 checks the result but not the agent
 - [ ] Each deny message starts with the check id (`G1:` … `G7:`) and names what was found and what was expected. (The launch line itself is checked by the guard in Task 5, also as `G1:`)
 - [ ] AGENTS.md shows the test command `uv run --with pytest pytest`, and `.github/workflows/ci.yml` runs exactly this command on push and pull request
 
@@ -283,8 +287,9 @@ class Facts:
 @dataclass(frozen=True)
 class Call:
     role: str                          # "pm" | "engineer" | "qa" | "close"
-    agent: str                         # "pm", "software-engineer", "frontend-engineer", "qa-engineer", "qa-codex"; "" for close
+    agent: str                         # "pm", "software-engineer", "frontend-engineer", "qa-engineer", "qa-codex"; "" for close; the SendMessage target for a continuation
     issue: int
+    continued: bool = False            # a SendMessage continuation (spec 5.3)
 
 def parse_issue(data: dict) -> Issue            # from `gh issue view N --json number,state,labels,body,comments`
 def first_line(body: str) -> str
@@ -295,8 +300,8 @@ def lane(issue: Issue) -> str | None            # value of the first `Lane: <val
 def verified_sha(body: str) -> str | None       # `Verified: <sha>`
 def commits_range(body: str) -> tuple[str, str] | None   # `Commits: <base>..<head>`
 def newest_done(issue: Issue) -> str | None     # body of the newest valid `## Engineer: DONE`
-def attempt(issue: Issue, role: str) -> int     # launches of that role + 1
-def launch_comment(call: Call, attempt: int) -> str
+def attempt(issue: Issue, role: str) -> int     # launches of that role (attempt and continued) + 1
+def launch_comment(call: Call, attempt: int) -> str   # "(continued, round <n>)" if call.continued
 def check(call: Call, facts: Facts) -> str | None   # None = allow, else the deny message
 ```
 
@@ -378,12 +383,13 @@ def check(call: Call, facts: Facts) -> str | None   # None = allow, else the den
    - G3: the lane does not match the agent, the Lane line is missing
    - G4: after DONE; re-check after PASS with an old SHA (allowed); PASS with SHA = HEAD (denied); DONE without a `Commits:` line (denied)
    - G5: only after UNAVAILABLE
+   - continued: a `(continued, round 2)` comment makes the issue pending, makes a following result valid, and counts for `attempt`; a continued engineer call after `## QA: FAIL` passes G3 with any agent name
 
 4. Run `uv run --with pytest pytest tests/test_issue_state.py -v`. Expected: FAIL (`ModuleNotFoundError: issue_state`).
 5. Implement `issue_state.py`. The core of validity and pending:
 
    ```python
-   LAUNCH = re.compile(r"^## Launch: (pm|engineer|qa) \(attempt (\d+)\)$")
+   LAUNCH = re.compile(r"^## Launch: (pm|engineer|qa) \((?:attempt|continued, round) (\d+)\)$")
 
    def first_line(body: str) -> str:
        return body.split("\n", 1)[0].rstrip()
@@ -455,6 +461,10 @@ Lane: default
 - [ ] `gh issue close` is allowed only with exactly one issue number made of digits. `-R`/`--repo`, unknown options, leading `VAR=value` assignments and a missing or second number are denied
 - [ ] `qa-codex` is allowed only with exactly the arguments `ROLE=qa ISSUE=<n>`
 - [ ] When allowed, a launch posts `## Launch: <role> (attempt <n>)` with the line `Agent: <agent>` before the call runs. Close posts nothing
+- [ ] A `SendMessage` call is guarded like a launch: it needs exactly one launch line in its message, otherwise `G1:`. When allowed, it posts `## Launch: <role> (continued, round <n>)` with `Agent: <target>`
+- [ ] A Bash command that writes to `.claude/settings*.json` is denied with `G8:`. Cases: `echo '{"disableAllHooks": true}' > .claude/settings.local.json`, `cd .claude && tee settings.local.json`, `cp x .claude/settings.json`, `mv`, `sed -i`, `python -c "…settings.local.json…"`. `cat .claude/settings.json` and `jq . .claude/settings.json` pass. When unsure, deny
+- [ ] The guard has one overall deadline (default 60 s) for all its work, including the lock wait. When it is reached, the guard denies with a message that names the deadline. Tests set a short deadline through the environment
+- [ ] The guard holds an exclusive file lock (in the git dir) from reading the facts until the launch comment is posted. A test runs two guards for launches on the same issue at the same time: exactly one launch comment is posted, and the other guard denies with `G1:` (pending)
 - [ ] A failing `gh`, a failing `git`, a failing comment post, and an internal error each produce the deny JSON on stdout with exit code 0 (tests run the script as a subprocess with fake `gh`/`git` on `PATH`)
 - [ ] An allowed call produces no output (the normal permission flow stays on)
 - [ ] `uv run --with pytest pytest` passes
@@ -465,8 +475,10 @@ Lane: default
 
 #### Constraints
 
-- Depends on S1 (Task 1): the tool name, the input field names and the deny format come from the findings. If the S1 findings change the design, the owner decides before this task starts.
-- Uses `issue_state` (Task 4). Stdlib only. Each `gh`/`git` call has a timeout of 20 seconds.
+- Depends on S1 (Task 1): the tool name, the input field names and the deny format come from the findings (`docs/research/spike-claude-code-hooks.md`, Q1, Q2, Q7, Q9, Q10).
+- The `SendMessage` input fields are not confirmed yet (expected: `to`, `message`, `summary`). Confirm them with a logging hook in a scratch repo, as in S1, before you implement the `SendMessage` branch.
+- Uses `issue_state` (Task 4). Stdlib only. Each `gh`/`git` call has a timeout of 20 seconds, and all calls together stay within the overall deadline (spec 5.6). The settings `timeout` (Task 7) is 120 s.
+- Never output `"allow"` (S1 Q10: it skips the normal permission check).
 - The deny reason contains at most the first line of an error's stderr, cut to 200 characters (P5).
 
 **Files:**
@@ -562,7 +574,8 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int          # always returns 0
    # requires-python = ">=3.11"
    # dependencies = []
    # ///
-   SUBAGENT_TOOLS = {"Agent", "Task"}           # per S1 findings
+   SUBAGENT_TOOLS = {"Agent", "Task"}           # per S1 findings; SendMessage is a continuation (spec 5.3)
+   DEADLINE_S = int(os.environ.get("GUARD_DEADLINE", "60"))   # spec 5.6
    AGENT_ROLE = {"pm": "pm", "software-engineer": "engineer",
                  "frontend-engineer": "engineer", "qa-engineer": "qa"}
    OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
@@ -631,6 +644,10 @@ Lane: default
 - [ ] After retries, the footer has `Retries: <n> (<reasons>)`
 - [ ] If the comment cannot be posted, the script exits with a non-zero code
 - [ ] Codex receives the QA role file, the criteria and the range only. It does not receive the rest of the engineer comment
+- [ ] Codex runs in a temporary `git worktree` at the head of the range, and the worktree is removed after the run, also after a failure. A fake `codex` that writes a file leaves the main working tree clean
+- [ ] If the worktree has a `frontend/` submodule, a pre-step runs before Codex, outside the sandbox: fetch the submodule commits, `npm ci` in `frontend/`, then the Playwright browser install. If a pre-step command fails, the result is `## QA: UNAVAILABLE` with the command and its first error line. Without `frontend/`, no pre-step runs
+- [ ] The `codex exec` command line has the localhost-only profile, the isolation flags, and an explicit model and reasoning effort (`medium`), as listed in Constraints
+- [ ] The failure reason comes from the message of the last `turn.failed` event on stdout (`--json`), or from stderr if there is none. It never contains the Codex banner or the prompt text
 - [ ] `docs/team/qa-engineer.md` contains the spec 7 behavior, the INVALID result, the delivery rule for `qa-codex` (JSON only, no comment), and the fallback footer `Checker: claude (fallback)`
 - [ ] `uv run --with pytest pytest` passes. The tests use fake `codex` and `gh` and no network
 
@@ -641,13 +658,28 @@ Lane: default
 
 #### Constraints
 
-- Depends on S2 (Task 2): the flags, the sandbox mode, and the error regexes come from the findings. If the S2 findings change the design, the owner decides before this task starts.
+- Depends on S2 (Task 2): the flags and the error regexes come from `docs/research/spike-codex-cli.md` (error table, and "Consequences for the plan", #6).
+- Owner decisions (spec 6.1, 6.2, 7): localhost-only sandbox; temporary worktree; frontend pre-step outside the sandbox; model and effort set explicitly, `medium` for now.
+- The command line, from S2 (`QA_MODEL` is the current default model of the installed Codex CLI, written out; `QA_EFFORT = "medium"`):
+
+  ```text
+  codex exec --json --ephemeral --ignore-user-config \
+    --disable hooks --disable apps --disable unbounded_connection_retries \
+    -c project_doc_max_bytes=0 -c skills.include_instructions=false \
+    -m <QA_MODEL> -c model_reasoning_effort="medium" \
+    --enable network_proxy \
+    -c 'permissions.qa={extends=":workspace",network={enabled=true,allow_local_binding=true,domains={"localhost"="allow","127.0.0.1"="allow"}}}' \
+    -c 'default_permissions="qa"' \
+    -C <worktree> --output-schema scripts/qa-result.schema.json -o <tmp>/last.json -
+  ```
+
+- Open point (spec 9.3): a new worktree may not have the `frontend/` submodule objects. Find out how the pre-step gets them into the worktree (for example `git -C <worktree> submodule update --init frontend`; the Lovable repo is public). Record the method in the `## Engineer: DONE` comment.
 - Uses `issue_state.parse_issue`, `newest_done` and `commits_range` from Task 4.
 - Stdlib only. The schema is still passed to `codex exec --output-schema`. The script checks the same rules in Python.
 - Settings that tests can override through the environment: `QA_CODEX_TIMEOUT` (seconds, default 1800). `main()` takes a `sleep` argument, so tests do not wait.
 
 **Files:**
-- Create: `scripts/codex_exec.py`, `scripts/qa-codex` (executable, no extension), `scripts/qa-result.schema.json`, `tests/test_qa_codex.py`, `tests/fakes/codex`
+- Create: `scripts/codex_exec.py`, `scripts/qa-codex` (executable, no extension), `scripts/qa-result.schema.json`, `tests/test_qa_codex.py`, `tests/fakes/codex`, `tests/fakes/npm`, `tests/fakes/npx`
 - Modify: `docs/team/qa-engineer.md`, `tests/fakes/gh` (if it needs a new mode)
 
 **Interfaces (produced, used by Task 8):**
@@ -660,8 +692,11 @@ class CodexRun:
     output: dict | None
     reason: str
 
-def run_codex(prompt: str, *, schema: Path, sandbox: str, timeout_s: int, cwd: Path) -> CodexRun
-def classify_failure(returncode: int, stderr: str) -> str   # "transient" | "unavailable" | "unknown"
+BASE_FLAGS: list[str]    # --json --ephemeral --ignore-user-config and the other isolation flags (S2)
+def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str, effort: str,
+              timeout_s: int, cwd: Path) -> CodexRun
+def failure_text(stdout: str, stderr: str) -> str           # message of the last turn.failed event, else stderr
+def classify_failure(returncode: int, text: str) -> str     # "transient" | "unavailable" | "unknown"
 ```
 
 ```python
@@ -729,8 +764,11 @@ Retries: 1 (timeout)
    - `missing`: leaves out one id.
    - `duplicate`: repeats one id.
    - `short_sha`: writes a short verified SHA.
-   - `transient`, `unavailable`, `unknown`: print the error text of that type from the S2 error table to stderr and exit with its code.
+   - `transient`, `unavailable`, `unknown`: print a `turn.failed` event with the error text of that type from the S2 error table on stdout (the `--json` form), a banner and the prompt on stderr, and exit with its code. For "not installed", the test removes `codex` from `PATH`.
    - `timeout`: runs `sleep 30`.
+   - `write`: like `ok`, but first writes a file into its working directory.
+
+   `tests/fakes/npm` and `tests/fakes/npx` record their calls and exit 1 when `FAKE_NPM_FAIL=1`.
 2. Write failing tests in `tests/test_qa_codex.py`. A fixture `qa_env` does the set-up: it creates a temporary git repo with one commit, writes a synthetic issue JSON (a body with two criteria, the second with a nested bullet list, and a launch plus a `## Engineer: DONE` comment with `Commits:`) for the fake `gh`, and sets `PATH`, `FAKE_CODEX_MODES`, `FAKE_CODEX_N=2`, `FAKE_GH_LOG` and `QA_CODEX_TIMEOUT=1`. Its `run(modes)` returns the posted comment and the recorded sleeps. Each test runs `main([...], sleep=recorded.append)` in a temporary git repo with fake `gh` and `codex` on `PATH`, and reads the posted comment from `FAKE_GH_LOG`:
 
    ```python
@@ -761,24 +799,30 @@ Retries: 1 (timeout)
    - the prompt contains the criteria and the range, but not the text of the engineer summary
    - `QA_CODEX_TIMEOUT=1` for the timeout cases
    - the prompt contains the nested bullets of the second criterion, and `parse_criteria` returns 2 items for that body
+   - mode `write`: the main working tree is still clean, and no worktree is left (`git worktree list`)
+   - a repo with a `frontend/` folder: `npm ci` and the Playwright install are called before `codex`; with `FAKE_NPM_FAIL=1` the result is `## QA: UNAVAILABLE` and `codex` is not called
+   - the recorded `codex` arguments contain the model, `model_reasoning_effort="medium"` and `default_permissions="qa"`
+   - the reason of a `transient` failure is the `turn.failed` message, not the banner
 3. Run `uv run --with pytest pytest tests/test_qa_codex.py -v`. Expected: FAIL.
 4. Implement `scripts/codex_exec.py`:
 
    ```python
-   def run_codex(prompt, *, schema, sandbox, timeout_s, cwd):
-       out = Path(tempfile.mkdtemp(prefix="codex-")) / "last.json"
-       cmd = ["codex", "exec", "--sandbox", sandbox, "--output-schema", str(schema), "-o", str(out), "-"]  # flags per S2
+   def run_codex(prompt, *, schema, sandbox_args, model, effort, timeout_s, cwd):
+       out = Path(tempfile.mkdtemp(prefix="codex-")) / "last.json"   # fresh path per run (S2 Q1)
+       cmd = ["codex", "exec", *BASE_FLAGS, "-m", model, "-c", f'model_reasoning_effort="{effort}"',
+              *sandbox_args, "-C", str(cwd), "--output-schema", str(schema), "-o", str(out), "-"]
        try:
            p = subprocess.Popen(cmd, cwd=cwd, stdin=PIPE, stdout=PIPE, stderr=PIPE, text=True, start_new_session=True)
        except FileNotFoundError:
            return CodexRun("unavailable", None, "codex is not installed")
        try:
-           _, err = p.communicate(prompt, timeout=timeout_s)
+           stdout, err = p.communicate(prompt, timeout=timeout_s)
        except subprocess.TimeoutExpired:
            os.killpg(p.pid, signal.SIGKILL); p.wait()
            return CodexRun("timeout", None, f"no result after {timeout_s // 60} min")
        if p.returncode != 0:
-           return CodexRun(classify_failure(p.returncode, err), None, _first_line(err))
+           text = failure_text(stdout, err)
+           return CodexRun(classify_failure(p.returncode, text), None, _first_line(text))
        try:
            return CodexRun("ok", json.loads(out.read_text()), "")
        except (OSError, ValueError) as e:
@@ -789,14 +833,15 @@ Retries: 1 (timeout)
 5. Implement `scripts/qa-codex`:
    - Header: `#!/usr/bin/env -S uv run --script` with PEP 723 `requires-python = ">=3.11"`, `dependencies = []`.
    - Import: insert `Path(__file__).resolve().parents[1] / ".claude" / "hooks"` into `sys.path`, then import `issue_state`. Import `codex_exec` from the script folder.
-   - Flow: read the issue, `HEAD`, the criteria and the range. Build the prompt from the role file, the numbered criteria ("copy each text exactly into `criteria[].text`"), and the range. Number the criteria from 1 in the prompt and ask for the number as `id`. Then run the retry loop:
+   - Flow: read the issue, `HEAD`, the criteria and the range. Create the temporary worktree at the head of the range (`git worktree add --detach <tmp> <head>`), remove it in a `finally` block (`git worktree remove --force`). Run the frontend pre-step if the worktree has `frontend/`. Build the prompt from the role file, the numbered criteria ("copy each text exactly into `criteria[].text`"), and the range. Number the criteria from 1 in the prompt and ask for the number as `id`. Then run the retry loop:
 
    ```python
    LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}
    WAITS = (60, 180, 600)
    used, retries = Counter(), []
    while True:
-       run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox=QA_SANDBOX, timeout_s=timeout, cwd=repo)
+       run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox_args=QA_SANDBOX, model=QA_MODEL,
+                                  effort=QA_EFFORT, timeout_s=timeout, cwd=worktree)
        status, reason = run.status, run.reason
        if status == "ok":
            errors = validate(run.output, criteria, head)
@@ -817,7 +862,7 @@ Retries: 1 (timeout)
    return post(render(run.output, criteria=criteria, marker=marker, reason="", head=head, retries=retries))
    ```
 
-   `post` returns 0 on success and 1 if `gh issue comment` fails. `QA_SANDBOX` is the mode from the S2 findings (Q4). Make the file executable: `chmod +x scripts/qa-codex`.
+   `post` returns 0 on success and 1 if `gh issue comment` fails. `QA_SANDBOX` is the list of localhost-only profile flags from Constraints (`--enable network_proxy` and the two `-c` values). Make the file executable: `chmod +x scripts/qa-codex`.
 6. Change `docs/team/qa-engineer.md`, as little as possible. Replace the bullet list with:
 
    ```markdown
@@ -833,6 +878,8 @@ Retries: 1 (timeout)
    - Add `## QA: INVALID` to the allowed first lines.
    - Add `Checker: claude (fallback)` to the example and to the definition of done.
    - Add the delivery rule: "When `scripts/qa-codex` runs you, return only the JSON that the schema asks for. Do not post a comment. Give each criterion's number as `id`."
+   - Add: "Do not install anything. If you need a tool that is not in the lockfile or the set-up, the criterion fails (undeclared dependency)."
+   - Add: "Start the app and run the browser check in one command. A background process does not survive into your next command."
 7. Run `uv run --with pytest pytest -v`. Expected: all tests PASS.
 8. Commit: `git add scripts tests docs/team/qa-engineer.md && git commit -m "Add qa-codex launcher with failure rules and QA behavior"`
 
@@ -844,18 +891,21 @@ Lane: default
 
 #### Goal
 
-The guard hook is registered for this repo. The prose tells the orchestrator how to launch roles under the hooks. After this issue is closed and a new session starts, all later tasks run with the hooks on.
+The guard hook is registered for this repo, with the settings protection and the allow rules. The prose tells the orchestrator how to launch roles under the hooks. After this issue is closed, the owner activates the hooks and runs the acceptance test (spec 5.9). All later tasks run with the hooks on.
 
 #### Acceptance criteria
 
-- [ ] `.claude/settings.json` registers `guard.py` as a `PreToolUse` hook for the subagent tool and `Bash`. The command turns any launch failure into a deny (`|| { …; exit 2; }`, or what S1 found)
+- [ ] `.claude/settings.json` registers `guard.py` as a `PreToolUse` hook with the matcher `Agent|Bash|SendMessage` and `timeout` 120. The command is POSIX `sh` and turns any launch failure into a deny (`|| { …; exit 2; }`)
+- [ ] `.claude/settings.json` has `permissions.allow` rules `Bash(scripts/qa-codex ROLE=qa ISSUE=*)` and `Bash(gh issue close *)`, and `permissions.deny` rules for `Edit` and `Write` on `.claude/settings*.json` (spec 5.9)
+- [ ] `docs/checks/hook-activation.md` has the owner's acceptance test (spec 5.9) with ready-to-paste prompts, one step per check: `/hooks` lists the guard; a launch without a launch line is denied; a `SendMessage` continuation without the line is denied and with the line runs and posts a continued comment (record the input field names and whether the extension has `SendMessage`); writing `disableAllHooks` with `Edit` and with a `Bash` `echo` is denied; a guarded `qa-codex` call shows no permission prompt; `disableAllHooks` put in by hand: check whether user-level hooks also stop, then delete it
 - [ ] Smoke check: the settings hook command, run with a subagent event without a launch line on stdin, prints a deny with `G1:`. With a `ls` Bash event, it prints nothing and exits 0. With `PATH` without `uv`, it exits 2. No `gh` call is needed for these three cases
-- [ ] A test in `tests/test_settings.py` checks the matcher and that the command contains `guard.py` and the failure wrapper
+- [ ] A test in `tests/test_settings.py` checks the matcher, the timeout, the allow and deny rules, and that the command contains `guard.py` and the failure wrapper
 - [ ] `docs/team/orchestrator.md`:
   - has the launch line in the prompt template and the markers `## QA: UNAVAILABLE`, `## QA: INVALID`
   - explains the pending state and what to do with a deny message
   - launches QA as `scripts/qa-codex ROLE=qa ISSUE=<n>` in the background, and the fallback `qa-engineer` only after `## QA: UNAVAILABLE`
   - uses the issue list command with `-label:later -label:needs-owner`
+  - allows continuing a role with `SendMessage`, only with the launch line in the message
   - no longer contains the hand-written return-count query or the manual SHA comparison
 - [ ] `AGENTS.md`: the issue list command excludes `later` and `needs-owner`, and the bootstrap sentence no longer says "prose-only"
 - [ ] `docs/process.md`: the status line says the hooks enforce the lifecycle, and after `## Owner: RESUME` the issue goes back to the PM
@@ -870,13 +920,14 @@ The guard hook is registered for this repo. The prose tells the orchestrator how
 
 #### Constraints
 
-- Depends on S1 (Task 1), Task 4, Task 5 and Task 6. If the S1 findings change the design, the owner decides before this task starts.
+- Depends on S1 (Task 1), Task 4, Task 5 and Task 6.
+- Activation (spec 5.9; S1 found that hooks apply at the next tool call, not at session start): before this issue gets `ready`, the owner puts `{"disableAllHooks": true}` into `.claude/settings.local.json`. After the close, the owner deletes it and runs `docs/checks/hook-activation.md`. Do not delete or change `.claude/settings.local.json` in this task.
 - This issue is verified and closed with the process that was in force when it started: the Claude `qa-engineer` with the range from `## Engineer: DONE`, the manual `Verified:` SHA check, and `gh issue close`. Do not use `qa-codex` or the new orchestrator prose for this issue. Its comments have no launch receipts, so `qa-codex` would find no valid `## Engineer: DONE`. The new rules start with the next issue in a new session (Task 8).
-- Close this issue before the hooks become active. If S1 found that hooks are a session-start snapshot, the owner starts a new session after the close. If S1 found that they apply at once, the owner activates them after the close.
+- `codex-review` (Task 8) reviews the protection built here. Its focus: ways around the `G8` Bash check (`cd .claude` first, variables, `python -c`, `tee`, `cp`, `mv`) and how the allow rules match compound commands (`… ISSUE=1 && rm …`).
 - Keep each prose change as small as possible (P4). Do not copy check logic into prose. The deny message is the source of truth.
 
 **Files:**
-- Create: `.claude/settings.json`, `tests/test_settings.py`
+- Create: `.claude/settings.json`, `tests/test_settings.py`, `docs/checks/hook-activation.md`
 - Modify: `docs/team/orchestrator.md`, `AGENTS.md`, `docs/process.md`, `docs/team/pm.md`
 
 **Steps:**
@@ -887,25 +938,34 @@ The guard hook is registered for this repo. The prose tells the orchestrator how
    def test_guard_is_registered():
        s = json.loads((ROOT / ".claude" / "settings.json").read_text())
        entry = s["hooks"]["PreToolUse"][0]
-       assert "Bash" in entry["matcher"] and "Agent" in entry["matcher"]   # tool name per S1
-       cmd = entry["hooks"][0]["command"]
-       assert "guard.py" in cmd and "exit 2" in cmd
+       assert set(entry["matcher"].split("|")) >= {"Agent", "Bash", "SendMessage"}
+       hook = entry["hooks"][0]
+       assert "guard.py" in hook["command"] and "exit 2" in hook["command"] and hook["timeout"] == 120
+       assert "Bash(scripts/qa-codex ROLE=qa ISSUE=*)" in s["permissions"]["allow"]
+       assert "Bash(gh issue close *)" in s["permissions"]["allow"]
+       assert {"Edit(.claude/settings*.json)", "Write(.claude/settings*.json)"} <= set(s["permissions"]["deny"])
    ```
 
+   Check the exact permission-rule syntax for file paths in the current Claude Code docs, and adjust the rule strings and the test if needed.
+
 2. Run `uv run --with pytest pytest tests/test_settings.py -v`. Expected: FAIL (file missing).
-3. Create `.claude/settings.json` (adjust the matcher and the wrapper to the S1 findings):
+3. Create `.claude/settings.json`:
 
    ```json
    {
+     "permissions": {
+       "allow": ["Bash(scripts/qa-codex ROLE=qa ISSUE=*)", "Bash(gh issue close *)"],
+       "deny": ["Edit(.claude/settings*.json)", "Write(.claude/settings*.json)"]
+     },
      "hooks": {
        "PreToolUse": [
          {
-           "matcher": "Agent|Task|Bash",
+           "matcher": "Agent|Bash|SendMessage",
            "hooks": [
              {
                "type": "command",
                "command": "uv run --script \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" || { echo 'guard hook failed: call denied' >&2; exit 2; }",
-               "timeout": 90
+               "timeout": 120
              }
            ]
          }
@@ -930,6 +990,7 @@ The guard hook is registered for this repo. The prose tells the orchestrator how
 5. Change `docs/team/orchestrator.md`:
    - "Launch a subagent" table: Verify → Bash `scripts/qa-codex ROLE=qa ISSUE=<number>`. Run it in the background, because it can run longer than the Bash time limit. Wait until it ends. Verify (fallback) → `qa-engineer`, only after `## QA: UNAVAILABLE`, with the range from the newest `## Engineer: DONE`.
    - Prompt template: add the first line `ROLE=<pm|engineer|qa> ISSUE=<number>`.
+   - Replace "Do not reuse a subagent from an earlier step" with: "You may continue a role agent with `SendMessage`, for example the engineer after `## QA: FAIL`. Put the same `ROLE=… ISSUE=…` line first in the message. Without it, the hook denies the call."
    - "Read the result" table: add `## QA: UNAVAILABLE` and `## QA: INVALID`.
    - Add a section "Hooks":
 
@@ -957,7 +1018,8 @@ The guard hook is registered for this repo. The prose tells the orchestrator how
    - In Escalation, add: "After `## Owner: RESUME`, the issue goes back to the PM."
 8. Change `docs/team/pm.md`: "File a follow-up issue" becomes "File a follow-up issue with the label `later`".
 9. Run `uv run --with pytest pytest`. Expected: PASS.
-10. Commit: `git add .claude/settings.json tests/test_settings.py docs AGENTS.md && git commit -m "Wire guard hook and switch prose to hook-checked launches"`
+10. Write `docs/checks/hook-activation.md` from the acceptance criterion above: a short intro (who runs it, when, and that the loop does not start if a step fails), then one numbered step per check with the prompt to paste and the expected result.
+11. Commit: `git add .claude/settings.json tests/test_settings.py docs AGENTS.md && git commit -m "Wire guard hook and switch prose to hook-checked launches"`
 
 ---
 
@@ -973,7 +1035,7 @@ When the owner asks for a Codex review, the `codex-review` skill runs Codex read
 
 - [ ] `.agents/skills/codex-review/SKILL.md` has the name `codex-review`. Its description says that it runs only when the owner asks for a Codex review or types `/codex-review`
 - [ ] The skill tells Claude to derive the target (file, folder, or commit range) from the conversation, run `review.py`, give each finding a decision (taken, partly taken, rejected, with a short reason), and commit the review file. When Claude works alone, it commits the review file with its changes
-- [ ] `review.py` runs Codex through `codex_exec.run_codex` with the read-only sandbox, a normal (not adversarial) review prompt and `review.schema.json`
+- [ ] `review.py` runs Codex through `codex_exec.run_codex` with `sandbox_args=["-s", "read-only"]`, the same model and reasoning effort as QA (`medium`), a normal (not adversarial) review prompt and `review.schema.json`
 - [ ] The review file has the verdict (`approve` or `needs-attention`), the summary, each finding (severity, title, body, file, lines, confidence, recommendation, and `Decision: open`) and the next steps
 - [ ] If Codex fails, `review.py` writes no file, exits non-zero and prints the reason
 - [ ] The schema credits the openai-codex plugin for Claude Code as its source
@@ -981,6 +1043,7 @@ When the owner asks for a Codex review, the `codex-review` skill runs Codex read
 - [ ] `docs/process.md` has the rule "Do not read old reviews in `docs/reviews/` unless the owner points to one."
 - [ ] A pytest test renders a synthetic review JSON to the expected markdown, and `uv run --with pytest pytest` passes
 - [ ] This issue has launch comments for pm, engineer and qa (the first task that runs with the hooks on, spec 12.3)
+- [ ] A committed review file exists for the settings protection and allow rules of Task 7 (`.claude/settings.json`, the `G8` check in `guard.py`), made with the new skill. Its focus: ways around the `G8` Bash check (`cd .claude` first, variables, `python -c`, `tee`, `cp`, `mv`) and how the allow rules match compound commands (`… ISSUE=1 && rm …`). Each finding has a decision. A finding that is taken becomes a follow-up issue, not a change in this task
 
 #### Out of scope
 
@@ -989,7 +1052,7 @@ When the owner asks for a Codex review, the `codex-review` skill runs Codex read
 
 #### Constraints
 
-- Depends on S2 (Task 2) and Task 6 (`codex_exec`). If the S2 findings change the design, the owner decides before this task starts.
+- Depends on S2 (Task 2) and Task 6 (`codex_exec`). A read-only run does not write the Codex trust entry (S2 Q8).
 - `review.py` imports `codex_exec` from `scripts/`. Insert `Path(__file__).resolve().parents[3] / "scripts"` into `sys.path`.
 
 **Files:**
@@ -1044,7 +1107,7 @@ When the owner asks for a Codex review, the `codex-review` skill runs Codex read
 4. Implement `review.py`:
    - Arguments: `--target`, `--topic`.
    - Prompt: "Review <target> for correctness, gaps and risks. For a commit range, run `git diff <range>`. Report findings in the schema."
-   - Call `run_codex(..., sandbox="read-only", timeout_s=1800)`. If the status is not `ok`, print the reason and exit 1.
+   - Call `run_codex(..., sandbox_args=["-s", "read-only"], model=QA_MODEL, effort="medium", timeout_s=1800)`. If the status is not `ok`, print the reason and exit 1.
    - Otherwise write `docs/reviews/<YYYY-MM-DD>-<topic>-codex-review.md` from `render_review` and print its path.
 5. Write `SKILL.md` (frontmatter `name: codex-review` and the description from the criteria) with these steps:
    1. Derive the target and a short topic slug.
@@ -1055,6 +1118,7 @@ When the owner asks for a Codex review, the `codex-review` skill runs Codex read
 6. Add the AGENTS.md line under "Skills and subagents" and the process.md rule under "Work rules".
 7. Run `uv run --with pytest pytest`. Expected: PASS.
 8. Commit: `git add .agents/skills/codex-review tests/test_codex_review.py AGENTS.md docs/process.md && git commit -m "Add codex-review skill"`
+9. Run the skill on the Task 7 settings protection with the focus from the criteria. Give each finding a decision, file a follow-up issue for each taken finding, and commit the review file.
 
 ---
 
@@ -1081,7 +1145,8 @@ An issue with `Lane: frontend` is implemented by the subagent `frontend-engineer
 
 #### Constraints
 
-- Depends on S3 (Task 3). It also depends on S2 (Task 2) Q4: if Codex cannot run a headless browser, the owner decides before this task starts (spec 9.3). If the S2 or S3 findings change the design, the owner decides before this task starts.
+- Depends on S3 (Task 3) for the method and the tool names (`docs/research/spike-lovable-mcp.md`, "Consequences for the plan"). S2 Q4 showed that Codex can run headless Chromium, so the precondition of spec 9.3 holds.
+- `tools:` gets `Read, Grep, Glob, Bash` and the six Lovable tools: `mcp__plugin_lovable_lovable__send_message`, `…__get_message`, `…__list_messages`, `…__list_edits`, `…__get_diff`, `…__get_project`. In the S3 session these tools were deferred and needed `ToolSearch`. Check in a real `frontend-engineer` launch (a scratch project, no real issue) that the tools are reachable, and add `ToolSearch` to `tools:` if they are not.
 - The frontend lane is a section in the engineer role file, not a new role file (P4).
 
 **Files:**
@@ -1097,7 +1162,7 @@ An issue with `Lane: frontend` is implemented by the subagent `frontend-engineer
    ---
    name: frontend-engineer
    description: Use this agent to implement one groomed GitHub issue with Lane frontend, through Lovable.
-   tools: Read, Grep, Glob, Bash, <Lovable MCP tool names from the S3 findings>
+   tools: Read, Grep, Glob, Bash, mcp__plugin_lovable_lovable__send_message, mcp__plugin_lovable_lovable__get_message, mcp__plugin_lovable_lovable__list_messages, mcp__plugin_lovable_lovable__list_edits, mcp__plugin_lovable_lovable__get_diff, mcp__plugin_lovable_lovable__get_project
    ---
 
    Read your role definition from the section "Lane `frontend`" in docs/team/software-engineer.md before any other action.
@@ -1113,9 +1178,13 @@ An issue with `Lane: frontend` is implemented by the subagent `frontend-engineer
 
    1. Note the base SHA: `git rev-parse HEAD`
    2. Send Lovable the goal and the acceptance criteria in plain words
-   3. Wait until Lovable has finished and its commit is on GitHub (<method from S3>)
+   3. Wait until Lovable has finished and its commit is on GitHub:
+      - Send with `send_message` (`wait=true`, `timeout_seconds=600`). Keep `message_id` and `thread_id`
+      - If the result is still in progress, poll `get_message` until `response.status` is terminal. Read `response.status`, never the top-level `status`
+      - `completed`: take `edit_id` and `commit_sha`. `awaiting_input`: only a human can answer in the Lovable editor, so post `## Engineer: BLOCKED` with the reason. `stopped` or `error`: send a follow-up message within the budget, otherwise `## Engineer: BLOCKED`
+      - Run `git -C frontend fetch origin` until `git -C frontend merge-base --is-ancestor <commit_sha> origin/main` succeeds. After 5 minutes, post `## Engineer: BLOCKED`
    4. If a criterion is not met, send a follow-up message. Repeat within 60 minutes per launch. When the time runs out, post `## Engineer: BLOCKED` with what is missing
-   5. Fetch the submodule and pin it to the exact commit of Lovable's change (<method from S3>). Do not take the newest commit of the branch without this check. Commit the pointer update
+   5. Pin the submodule to `<commit_sha>` of the last message of this launch (a merge commit). Check first that `git -C frontend log -1 --format=%B <commit_sha>` contains `X-Lovable-Edit-ID: <edit_id>`. Never pin a "Changes" commit or the branch tip without this check. Check `git -C frontend diff <old pointer> <commit_sha> --stat` for changes that Lovable did not make in this launch. Commit the pointer update
    6. Run the test command in AGENTS.md, if one exists
    7. Post `## Engineer: DONE` with `Commits: <base>..<head>`
    ```
@@ -1137,17 +1206,20 @@ The README tells a new project how to set up the kit (spec 12.4), and the status
 
 #### Acceptance criteria
 
-- [ ] The prerequisites are listed: `gh` (logged in), `uv`, Codex CLI (logged in), Lovable MCP plugin (frontend lane only)
+- [ ] The prerequisites are listed: `gh` (logged in), `uv`, Codex CLI (logged in), the Claude Code plugin `lovable` (frontend lane only; the tool names in `frontend-engineer.md` depend on it)
+- [ ] A set-up step adds the Codex trust entry for the project to `$HOME/.codex/config.toml` (spec 6.2), with the exact lines
+- [ ] Frontend lane only: the steps to create the Lovable project, connect the workspace to GitHub (one time), connect the project (Project settings → Git → GitHub → Connect), make the new repo public, and add it as the `frontend/` submodule tracking `main`
+- [ ] `docs/checks/` is in the list of files to copy
 - [ ] Each file to copy is listed, with its path:
   - AGENTS.md, CLAUDE.md
   - `docs/process.md`, `docs/team/`, `docs/task-template.md`
-  - `.claude/agents/`, `.claude/hooks/`, the hooks block of `.claude/settings.json`
+  - `.claude/agents/`, `.claude/hooks/`, the hooks and permissions blocks of `.claude/settings.json`, `docs/checks/`
   - `scripts/qa-codex`, `scripts/codex_exec.py`, `scripts/qa-result.schema.json`
   - `.agents/skills/codex-review/`
   - the symlink `.claude/skills` → `.agents/skills`
 - [ ] The files to adjust are listed: the project description and the test command in AGENTS.md; the `frontend/` submodule and the `frontend` lane (Lovable only)
 - [ ] The label commands are listed: `gh label create ready`, `gh label create needs-owner`, `gh label create later`
-- [ ] A final step says: start a new Claude session so that the hooks load
+- [ ] A final step says: run the acceptance test in `docs/checks/hook-activation.md` before the first issue gets `ready`
 - [ ] The paragraphs "Current bootstrap …" and "Status" describe v1 (hooks, Codex QA, Lovable lane) without the words "prose only" or "not usable yet"
 
 #### Out of scope
@@ -1196,11 +1268,14 @@ The demo repo `paint-math` exists, set up only from the README instructions, wit
 
 #### Constraints
 
-- Depends on S3 (Task 3), Task 9 and Task 10. If the S3 findings change the design, the owner decides before this task starts.
-- Owner steps before this issue gets `ready`:
-  1. Create the empty GitHub repo `paint-math`.
-  2. Create the Lovable project and connect it to GitHub (unless S3 showed that MCP can do it; then the engineer does it).
-  3. Add the URL of the Lovable repo to this issue as a comment.
+- Depends on S3 (Task 3), Task 9 and Task 10.
+- Owner step before this issue gets `ready`: create the empty GitHub repo `paint-math`.
+- The Lovable project is made by the owner during this task (spec 9.1; no MCP tool can connect it to GitHub). At the exact point in the set-up where the project must exist, post `## Engineer: BLOCKED` and stop. The comment names that point and gives the owner:
+  1. An initial Lovable prompt to create the project (the canvas app of spec 9.4, without the equation feature).
+  2. The manual steps: connect the workspace to GitHub (one time), Project settings → Git → GitHub → Connect, make the new repo public, then answer with `## Owner: RESUME` and the repo URL.
+
+  The next engineer launch continues from that point.
+- Add the Codex trust entry for `paint-math` with the README step.
 - Follow only the README. Do not use knowledge from this repo that the README does not give. Each place where you need such knowledge is a README gap.
 - Work in a sibling folder (`../paint-math`). This repo's working tree stays clean except for the README fixes.
 - The owner may replace the two issue ideas (spec 9.4).
@@ -1210,7 +1285,7 @@ The demo repo `paint-math` exists, set up only from the README instructions, wit
 **Steps:**
 
 1. Clone `paint-math` next to this repo. Follow the README set-up section step by step, and note each gap.
-2. `git submodule add <Lovable repo URL> frontend`, commit, and push `paint-math`.
+2. At the point where the Lovable project is needed, post `## Engineer: BLOCKED` as in Constraints. After the owner's `## Owner: RESUME` with the repo URL: `git submodule add -b main <Lovable repo URL> frontend`, commit, and push `paint-math`.
 3. Create the labels with the README commands.
 4. Run the smoke check from Task 7 in `paint-math`.
 5. File the two issues with `gh issue create -R <owner>/paint-math --body-file <file>`.
@@ -1241,7 +1316,7 @@ Both demo issues in `paint-math` went through PM → engineer → Codex QA → c
 
 #### Constraints
 
-- Depends on Task 11. It also depends on S2 (Task 2) Q4 (browser QA). If a finding blocks browser QA, the owner decides before this task starts.
+- Depends on Task 11. S2 Q4 showed that browser QA works with the localhost-only profile.
 - Owner steps before this issue gets `ready`:
   1. Add `ready` to both `paint-math` issues.
   2. Start a new Claude session in `paint-math` and run the loop (`/goal`) until both issues are closed or escalated.
