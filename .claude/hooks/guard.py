@@ -68,14 +68,15 @@ class Deny(Exception):
 # --- shell tokenizer ------------------------------------------------------------------
 #
 # A small bash-like tokenizer. It knows quotes ('…', "…", $'…', $"…"), backslashes,
-# ${…}, $(…), backticks, operators, redirections, here-documents, comments and
-# the patterns of `case`. As in bash, `#` starts a comment only at the start of a
+# line continuations, ${…}, $(…), backticks, arithmetic ((…)), $((…)) and $[…],
+# operators, redirections (also with {fd}), here-documents, comments and the
+# patterns of `case`. As in bash, `#` starts a comment only at the start of a
 # word, so `echo x#; gh issue close 5` has two commands.
 #
 # Tokens: ("w", value, subs) a word, quotes removed, `subs` the texts inside
-# $(…) and backticks (unquoted or in double quotes); ("op", op) a command
-# separator; ("redir", op) a redirection; ("body", "", subs) the substitutions
-# in an unquoted here-document body.
+# $(…), backticks and arithmetic (unquoted or in double quotes); ("op", op) a
+# command separator, also "((" before an arithmetic command; ("redir", op) a
+# redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
 
 _OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", "<(", ">(", ">>", ">|", "<>", "<&", ">&",
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
@@ -83,27 +84,48 @@ _REDIRECTS = {"<", ">", ">>", ">|", "<>", "<&", ">&", "&>", "&>>", "<<", "<<-", 
 _OPEN = {"(", "<(", ">("}
 _CASE_NEXT = {";;", ";&", ";;&"}  # end a case branch; a pattern follows
 _COMMAND_FOLLOWS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_NAMED_FD = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")  # {fd}>file: bash puts the new fd number in $fd
 _ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
          "\\": "\\", "'": "'", '"': '"', "?": "?"}
 _ANSI_NUMBER = {"x": (16, 2), "u": (16, 4), "U": (16, 8)}
 
 
 class _Lexer:
+    # The text self.t can get shorter while the lexer runs: `join` removes line continuations
+    # ahead of the current position. So every loop reads self.t and self.n again, and a
+    # position returned by a nested call is a position in the new text.
+
     def __init__(self, text: str):
         self.t = text
         self.n = len(text)
 
+    def join(self, i: int, k: int = 2) -> None:
+        """Remove the line continuations (backslash-newline) in the k characters after i.
+        Bash removes them before it reads a token, so `$\\<newline>'` is `$'` and `<\\<newline><` is `<<`."""
+        j = i + 1
+        while j < min(self.n, i + 1 + k):
+            if self.t.startswith("\\\n", j):
+                self.t = self.t[:j] + self.t[j + 2:]
+                self.n -= 2
+            elif self.t[j] == "\\":
+                break
+            else:
+                j += 1
+
     def script(self, i: int, sub: bool) -> tuple[list[tuple], int]:
         """Tokens from i to the end, or (sub=True) to the `)` that closes a $(."""
-        t, n = self.t, self.n
         toks: list[tuple] = []
         heredocs: list[tuple[str, bool, bool]] = []
         depth = 0
         buf: list[str] = []
         subs: list[str] = []
         word = quoted = False
-        start = True  # at the start of a command, where `case` and `esac` are reserved words
-        cases: list[list] = []  # open `case` commands: [state, at the first word of a pattern]
+        start = True  # at the start of a command, where `esac` is a reserved word
+        # Open `case` commands: [state, at the first word of a pattern]. A plain word `case`
+        # followed by a word and a plain `in` starts one wherever it stands. Seeing too many
+        # is safe: the `)` of a pattern then does not end a $(, and the text stays inside it.
+        cases: list[list] = []
 
         def end():
             nonlocal buf, subs, word, quoted, start
@@ -117,24 +139,43 @@ class _Lexer:
                 if state == "word":  # case WORD
                     cases[-1][0] = "in"
                 elif state == "in":  # case WORD in
-                    cases[-1] = ["pattern", True]
+                    if plain and value == "in":
+                        cases[-1] = ["pattern", True]
+                    else:
+                        cases.pop()
                 elif state == "pattern":
                     if cases[-1][1] and plain and value == "esac":
                         cases.pop()
                     else:
                         cases[-1][1] = False
-                elif start and plain and value == "case":
-                    cases.append(["word", False])
                 elif state == "body" and start and plain and value == "esac":
                     cases.pop()
+                elif plain and value == "case":
+                    cases.append(["word", False])
                 start = plain and value in _COMMAND_FOLLOWS
             buf, subs, word, quoted = [], [], False, False
 
-        while i < n:
+        while i < self.n:
+            t, n = self.t, self.n
             c = t[i]
+            if c in "$<>&|;(":
+                self.join(i)
+                t, n = self.t, self.n
+            state = cases[-1][0] if cases else None
+            if c in "()" and state != "pattern":
+                # `((` at the start of a word is an arithmetic command, as in `(( x = 1 << 2 ))`
+                arith = self.arith(i + 2, "))") if t.startswith("((", i) and not word else None
+                if arith:
+                    j, inner, inner_subs = arith
+                    end()
+                    toks.append(("op", "(("))
+                    toks.append(("w", self.t[i:j], (*inner_subs, inner)))
+                    start = False
+                    i = j
+                    continue
             if c in "()":
                 end()  # the word before may be `esac`
-            state = cases[-1][0] if cases else None
+                state = cases[-1][0] if cases else None
             if c in " \t":
                 end()
                 i += 1
@@ -147,7 +188,7 @@ class _Lexer:
                 start = True
                 i += 1
                 for delim, strip, q in heredocs:
-                    i, body = self.heredoc(i, delim, strip)
+                    i, body = self.heredoc(i, delim, strip, joined=not q)
                     if not q:
                         body_subs: list[str] = []
                         _Lexer(body).double(0, [], body_subs, None)
@@ -173,22 +214,10 @@ class _Lexer:
             elif c == "`":
                 i = self.backtick(i, buf, subs)
                 word = True
-            elif t.startswith("$$", i):  # the process id, so a quote after it is a plain quote
-                buf.append("$$")
+            elif c == "$" and t.startswith(("$'", '$"', "${", "$(", "$[", "$$"), i):
+                i, is_quoted = self.dollar(i, buf, subs)
                 word = True
-                i += 2
-            elif t.startswith("$'", i):
-                i = self.ansi(i + 2, buf)
-                word = quoted = True
-            elif t.startswith('$"', i):
-                i = self.double(i + 2, buf, subs, '"')
-                word = quoted = True
-            elif t.startswith("${", i):
-                i = self.brace(i, buf, subs, dq=False)
-                word = True
-            elif t.startswith("$(", i):
-                i = self.dollar(i, buf, subs)
-                word = True
+                quoted = quoted or is_quoted
             elif c in "()" and state == "pattern":  # `(` before and `)` after a case pattern
                 toks.append(("op", c))
                 if c == ")":
@@ -200,8 +229,10 @@ class _Lexer:
                     end()
                     return toks, i + 1
                 op = next(o for o in _OPS if t.startswith(o, i))
-                if op in _REDIRECTS and word and not quoted and "".join(buf).isascii() and "".join(buf).isdigit():
-                    buf, word = [], False  # a file descriptor number, as in 2>&1
+                if op in _REDIRECTS and word and not quoted and not subs:
+                    text = "".join(buf)
+                    if (text.isascii() and text.isdigit()) or _NAMED_FD.fullmatch(text):
+                        buf, word = [], False  # a file descriptor, as in 2>&1 or {fd}>file
                 end()
                 if op in _OPEN:
                     depth += 1
@@ -213,6 +244,14 @@ class _Lexer:
                     start = True
                 toks.append(("redir" if op in _REDIRECTS else "op", op))
                 i += len(op)
+            elif c == "[" and not quoted and not subs and (not word or _NAME.fullmatch("".join(buf))) and (
+                    sub_end := self.subscript(i)):
+                # the subscript of an array assignment, `a[1<<2]=x` or `a=( [1<<2]=x )`, is arithmetic
+                j, inner, inner_subs = sub_end
+                buf.append(self.t[i:j])
+                subs.extend((*inner_subs, inner))
+                word = True
+                i = j
             else:
                 buf.append(c)
                 word = True
@@ -222,10 +261,88 @@ class _Lexer:
         end()
         return toks, i
 
+    def dollar(self, i: int, buf: list[str], subs: list[str], dq: bool = False) -> tuple[int, bool]:
+        """An expansion or quote that starts with `$` at i: $'…', $"…", ${…}, $(…), $((…)), $[…], $$.
+        Returns (index after it, whether it is a quote)."""
+        self.join(i)
+        t = self.t
+        if t.startswith("$$", i):  # the process id, so a quote after it is a plain quote
+            buf.append("$$")
+            return i + 2, False
+        if t.startswith("$'", i) and not dq:
+            return self.ansi(i + 2, buf), True
+        if t.startswith('$"', i) and not dq:
+            return self.double(i + 2, buf, subs, '"'), True
+        if t.startswith("${", i):
+            return self.brace(i, buf, subs, dq), False
+        if t.startswith("$[", i):
+            arith = self.arith(i + 2, "]")
+            if not arith:
+                raise ValueError("unterminated $[")
+        elif t.startswith("$((", i):
+            arith = self.arith(i + 3, "))")
+        elif t.startswith("$(", i):
+            arith = None
+        else:
+            buf.append("$")
+            return i + 1, False
+        if arith:  # the text inside is also checked as a command: $((…) ) may be a $( (…) )
+            j, inner, inner_subs = arith
+            subs.extend((*inner_subs, inner))
+        else:
+            _, j = self.script(i + 2, sub=True)
+            subs.append(self.t[i + 2:j - 1])
+        buf.append(self.t[i:j])
+        return j, False
+
+    def subscript(self, i: int) -> tuple[int, str, list[str]] | None:
+        """`[…]` at i if `=` or `+=` follows it, as in an array assignment, else None."""
+        arith = self.arith(i + 1, "]")
+        if arith and self.t.startswith(("=", "+="), arith[0]):
+            return arith
+        return None
+
+    def arith(self, i: int, close: str) -> tuple[int, str, list[str]] | None:
+        """Arithmetic from i to `close` ("))" or "]"): (index after it, the text inside, the
+        substitutions in it). None if there is no matching close."""
+        depth, j, subs = 0, i, []
+        opening = "(" if close == "))" else "["
+        while j < self.n:
+            t = self.t
+            c = t[j]
+            if c == "\\":
+                j += 2
+            elif c == "'":
+                k = t.find("'", j + 1)
+                if k < 0:
+                    return None
+                j = k + 1
+            elif c == '"':
+                j = self.double(j + 1, [], subs, '"')
+            elif c == "`":
+                j = self.backtick(j, [], subs)
+            elif c == "$":
+                j, _ = self.dollar(j, [], subs)
+            elif c == opening:
+                depth += 1
+                j += 1
+            elif c == close[0]:
+                self.join(j, 1)
+                if depth:
+                    depth -= 1
+                    j += 1
+                elif self.t.startswith(close, j):
+                    return j + len(close), self.t[i:j], subs
+                else:
+                    return None
+            else:
+                j += 1
+        return None
+
     def double(self, i: int, buf: list[str], subs: list[str], stop: str | None) -> int:
         """Text in double quotes from i (stop='"'), or a here-document body (stop=None)."""
-        t, n = self.t, self.n
-        while i < n:
+        while i < self.n:
+            t, n = self.t, self.n
             c = t[i]
             if stop is not None and c == stop:
                 return i + 1
@@ -236,10 +353,8 @@ class _Lexer:
                 i += 2
             elif c == "`":
                 i = self.backtick(i, buf, subs)
-            elif t.startswith("${", i):
-                i = self.brace(i, buf, subs, dq=True)
-            elif t.startswith("$(", i):
-                i = self.dollar(i, buf, subs)
+            elif c == "$":
+                i, _ = self.dollar(i, buf, subs, dq=True)
             else:
                 buf.append(c)
                 i += 1
@@ -248,45 +363,50 @@ class _Lexer:
         return i
 
     def ansi(self, i: int, buf: list[str]) -> int:
-        """Text in $'…' from i (after the quote), with its backslash escapes decoded."""
-        t, n = self.t, self.n
-        while i < n:
-            c = t[i]
-            if c == "'":
-                return i + 1
-            if c != "\\" or i + 1 >= n:
+        """Text in $'…' from i (after the quote), with its backslash escapes decoded.
+        As in bash, a backslash always takes the next character, so `$'\\c'` ends at its second quote."""
+        t, j = self.t, i
+        while j < self.n and t[j] != "'":
+            j += 2 if t[j] == "\\" else 1
+        if j >= self.n:
+            raise ValueError("unterminated $' quote")
+        text, k = t[i:j], 0
+        while k < len(text):
+            c = text[k]
+            nxt = text[k + 1] if k + 1 < len(text) else ""
+            if c != "\\" or not nxt:
                 buf.append(c)
-                i += 1
-                continue
-            nxt = t[i + 1]
-            if nxt in _ANSI:
+                k += 1
+            elif nxt in _ANSI:
                 buf.append(_ANSI[nxt])
-                i += 2
+                k += 2
             elif nxt in "01234567":
-                digits = re.match(r"[0-7]{1,3}", t[i + 1:]).group()
+                digits = re.match(r"[0-7]{1,3}", text[k + 1:]).group()
                 buf.append(chr(int(digits, 8) & 0xFF))
-                i += 1 + len(digits)
+                k += 1 + len(digits)
             elif nxt in _ANSI_NUMBER:
                 base, most = _ANSI_NUMBER[nxt]
-                m = re.match(r"[0-9A-Fa-f]{1,%d}" % most, t[i + 2:])
+                m = re.match(r"[0-9A-Fa-f]{1,%d}" % most, text[k + 2:])
                 if m:
                     buf.append(chr(int(m.group(), base)))
-                    i += 2 + len(m.group())
+                    k += 2 + len(m.group())
                 else:
                     buf.append(c + nxt)
-                    i += 2
-            elif nxt == "c" and i + 2 < n:
-                buf.append(chr(ord(t[i + 2]) & 0x1F))
-                i += 3
+                    k += 2
+            elif nxt == "c" and k + 2 < len(text):
+                ctrl = text[k + 2]
+                buf.append(chr(ord(ctrl) & 0x1F))
+                k += 4 if text.startswith("\\\\", k + 2) else 3  # $'\c\\' is one control character
             else:
                 buf.append(c + nxt)
-                i += 2
-        raise ValueError("unterminated $' quote")
+                k += 2
+        return j + 1
 
     def brace(self, i: int, buf: list[str], subs: list[str], dq: bool) -> int:
         """${…} from i. Spaces and `#` inside belong to it. Returns the index after the `}`."""
-        t, n, j = self.t, self.n, i + 2
-        while j < n:
+        j = i + 2
+        while j < self.n:
+            t = self.t
             c = t[j]
             if c == "}":
                 buf.append(t[i:j + 1])
@@ -298,25 +418,15 @@ class _Lexer:
                 if k < 0:
                     raise ValueError("unterminated single quote")
                 j = k + 1
-            elif t.startswith("$'", j) and not dq:
-                j = self.ansi(j + 2, [])
             elif c == '"':
                 j = self.double(j + 1, [], subs, '"')
             elif c == "`":
                 j = self.backtick(j, [], subs)
-            elif t.startswith("${", j):
-                j = self.brace(j, [], subs, dq)
-            elif t.startswith("$(", j):
-                j = self.dollar(j, [], subs)
+            elif c == "$":
+                j, _ = self.dollar(j, [], subs, dq=dq)
             else:
                 j += 1
         raise ValueError("unterminated ${")
-
-    def dollar(self, i: int, buf: list[str], subs: list[str]) -> int:
-        _, j = self.script(i + 2, sub=True)
-        subs.append(self.t[i + 2:j - 1])
-        buf.append(self.t[i:j])
-        return j
 
     def backtick(self, i: int, buf: list[str], subs: list[str]) -> int:
         t, j = self.t, i + 1
@@ -329,16 +439,27 @@ class _Lexer:
         buf.append(t[i:j + 1])
         return j + 1
 
-    def heredoc(self, i: int, delim: str, strip: bool) -> tuple[int, str]:
-        """Skip a here-document body. Returns (index after the delimiter line, body)."""
+    def heredoc(self, i: int, delim: str, strip: bool, joined: bool) -> tuple[int, str]:
+        """Skip a here-document body. Returns (index after the delimiter line, body).
+        In an unquoted body (joined=True), a backslash-newline joins two lines, also for the delimiter."""
         t, n, start = self.t, self.n, i
         while i < n:
-            j = t.find("\n", i)
-            j = n if j < 0 else j
-            line = t[i:j]
+            j, parts = i, []
+            while True:
+                k = t.find("\n", j)
+                k = n if k < 0 else k
+                part = t[j:k]
+                trailing = len(part) - len(part.rstrip("\\"))
+                if joined and trailing % 2 and k < n:
+                    parts.append(part[:-1])
+                    j = k + 1
+                    continue
+                parts.append(part)
+                break
+            line = "".join(parts)
             if (line.lstrip("\t") if strip else line) == delim:
-                return min(j + 1, n), t[start:i]
-            i = j + 1
+                return min(k + 1, n), t[start:i]
+            i = k + 1
         return n, t[start:]
 
 
@@ -464,6 +585,9 @@ def _find_guarded(cmd: list[tuple]) -> tuple[list[str], int, str, int] | None:
         value = words[i]
         if value in PREFIX_WORDS:
             after_prefix = True
+        elif value == "function":  # `function NAME { …; }`: the name is no command
+            after_prefix = True
+            i += 1
         elif not ASSIGNMENT.match(value) and not (after_prefix and value.startswith("-")):
             break
         i += 1
@@ -472,10 +596,17 @@ def _find_guarded(cmd: list[tuple]) -> tuple[list[str], int, str, int] | None:
     found = _call_at(words, i)
     if found:
         return words, i, *found
-    if any(w in WRAPPERS for w in words[:i]):  # a wrapper option with an argument, as in `timeout 5 gh …`
-        for k in range(i + 1, len(words)):
-            if found := _call_at(words, k):
-                return words, k, *found
+    # A command may run the words after it: `timeout 5 gh …`, `ionice -c 3 gh …`, `find -exec gh …`.
+    # So a `gh … issue close` later in the words counts too. A qa-codex word later counts after a
+    # known wrapper, or when its launch arguments follow, so `cat scripts/qa-codex` still passes.
+    wrapped = any(w in WRAPPERS for w in words[:i])
+    for k in range(i + 1, len(words)):
+        found = _call_at(words, k)
+        if not found:
+            continue
+        after = words[found[1] + 1] if found[1] + 1 < len(words) else ""
+        if wrapped or found[0] == "close" or after.startswith(("ROLE=", "ISSUE=")):
+            return words, k, *found
     return None
 
 

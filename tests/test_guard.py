@@ -256,6 +256,30 @@ HIDDEN_CLOSE = [
     "timeout 5 gh issue close 5", "env -u X gh issue close 5", "exec -a name gh issue close 5",
     # the repo option between `issue` and `close` (QA observation)
     "gh issue -R o/r close 5", "gh issue --repo o/r close 5", "gh issue --repo=o/r close 5",
+    # --- second QA round ---
+    # a named file descriptor redirection ({name}>) is a redirection, not a word
+    "gh {fd}>/dev/null issue close 5", "gh {x}<&0 issue close 5", "{fd}>/dev/null gh issue close 5",
+    "timeout 5 gh {fd}>/dev/null issue close 5",
+    # `<<` in arithmetic is a shift, not a here-document
+    "(( 1<<2 ))\ngh issue close 5", "echo $[1<<2]\ngh issue close 5",
+    "for (( i=1<<0; i<2; i++ ))\ndo gh issue close 5\ndone", "(( $(echo 1)<<2 ))\ngh issue close 5",
+    # `\c` in $'…' does not take the closing quote
+    "echo $'\\c'; gh issue close 5 #'", "echo $'\\c'\ngh issue close 5 #'", "echo $'\\c\\\\' ; gh issue close 5 #'",
+    # the function keyword
+    "function f { gh issue close 5; }\nf", "function f\n{ gh issue close 5; }\nf",
+    # `case` after words the lexer does not know as command starts
+    "echo $(time -p case x in x) gh issue close 5;; esac)", "echo $(coproc case x in x) gh issue close 5;; esac)",
+    "echo $(time -p -- case x in x) gh issue close 5;; esac)",
+    "echo $(function f case x in x) gh issue close 5;; esac; f)",
+    # a line continuation inside $' or ${
+    "echo $\\\n'\\'' ; gh issue close 5 #'", "echo $\\\n{x:- #} ; gh issue close 5",
+    # `<<` in an array subscript of an assignment is a shift
+    "a[1<<2]=x\ngh issue close 5", "a=( [1<<2]=x )\ngh issue close 5",
+    # a line continuation in an unquoted here-document body can form the delimiter
+    "cat <<EOF\nx\nEO\\\nF\ngh issue close 5\nEOF",
+    # a command that runs the words after it, also one the guard does not know by name
+    "ionice gh issue close 5", "ionice -c 3 gh issue close 5", "flock lockfile gh issue close 5",
+    "find . -maxdepth 0 -exec gh issue close 5 \\;",
 ]
 
 
@@ -281,6 +305,8 @@ def test_bash_runs_the_hidden_close(cmd, tmp_path):
     "python3 >/dev/null scripts/qa-codex ROLE=qa ISSUE=5", "uv run 2>/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
     "scripts/qa-codex 2>&1 ROLE=qa ISSUE=5", "scripts/qa-codex ROLE=qa >out ISSUE=5",
     "python3 scripts/qa-codex ROLE=qa ISSUE=5 # it's\ngh issue close 5",
+    "{fd}>/dev/null scripts/qa-codex ROLE=qa ISSUE=5", "scripts/qa-codex {fd}>/dev/null ROLE=qa ISSUE=5",
+    "python3 {fd}>/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
 ])
 def test_qa_codex_with_redirection_anywhere_is_denied(cmd):
     assert denied(bash(cmd)).startswith("G1:")
@@ -304,6 +330,36 @@ def test_comments_ansi_quotes_and_case_that_run_no_guarded_call_pass(cmd):
     assert classify(bash(cmd)) is None
 
 
+@pytest.mark.parametrize("cmd", [
+    "(( i++ ))", "echo $((1<<2))", "echo $[1<<2]", "for (( i=0; i<3; i++ )); do echo $i; done",
+    'echo "$((1<<2)) $[2<<1]"', "exec {fd}>/dev/null", "echo $'\\c'", "echo $'a\\cb'",
+    "echo $(grep -c case f)", "x=$(echo case x in y)", "for case in a b; do echo $case; done",
+    "function f { echo hi; }", "echo a \\\n  b", "ls &&\\\n ls", "echo $\\\n{HOME}",
+    "git commit -m \"$(cat <<'EOF'\nHandle case x in y) in gh issue close (see #7)\nEOF\n)\"",
+])
+def test_arithmetic_named_fds_and_keywords_that_run_no_guarded_call_pass(cmd):
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", ["ionice scripts/qa-codex ROLE=qa ISSUE=5", "nice python3 scripts/qa-codex ROLE=qa ISSUE=5",
+                                 "flock l scripts/qa-codex ISSUE=5 ROLE=qa"])
+def test_qa_codex_behind_any_command_is_denied(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add scripts/qa-codex", "chmod +x scripts/qa-codex", "cp scripts/qa-codex /tmp/x", "which gh",
+    "echo gh issue list", "a[0]=x", "echo a[1]", "[ -f x ]", "[[ a == b ]]", "x[i+1]+=y",
+])
+def test_words_after_the_command_name_that_run_no_guarded_call_pass(cmd):
+    assert classify(bash(cmd)) is None
+
+
+def test_close_with_line_continuations_and_arithmetic_is_parsed():
+    assert classify(bash("gh issue \\\nclose 5")) == Call(role="close", agent="", issue=5)
+    assert classify(bash("gh issue close $\\\n'5'")) == Call(role="close", agent="", issue=5)
+
+
 @pytest.mark.parametrize("cmd", ["cp x .claude/settings.js$'o'n", "cp x .claude/settings.{json,bak}",
                                  "cp x .claude/{settings.json,y}"])
 def test_g8_sees_ansi_quotes_and_brace_expansion(cmd):
@@ -315,6 +371,18 @@ def test_split_command_skips_comments_and_decodes_ansi_quotes():
     assert split_command("echo $'a\\'b\\tc' $\"d\"") == ([["echo", "a'b\tc", "d"]], 0)
     assert split_command("echo ${x:- #} y") == ([["echo", "${x:- #}", "y"]], 0)
     assert substitutions("$(case x in x) gh issue close 5;; esac)") == ["case x in x) gh issue close 5;; esac"]
+
+
+def test_split_command_reads_named_fds_arithmetic_and_ansi_c():
+    assert split_command("gh {fd}>/dev/null issue") == ([["gh", ">", "/dev/null", "issue"]], 0)
+    assert split_command("echo {fd}x") == ([["echo", "{fd}x"]], 0)
+    assert split_command("(( 1<<2 ))\nls")[0][-1] == ["ls"]
+    assert split_command("echo $[1<<2]\nls")[0][-1] == ["ls"]
+    assert split_command("echo $'\\c'; ls") == ([["echo", "\\c"], ["ls"]], 1)
+    assert "gh issue close 5" in substitutions("$((1 + $(gh issue close 5)))")
+    assert split_command("(( 1 )\\\n)\nls") == ([["(( 1 ))"], ["ls"]], 2)
+    assert split_command("a[1<<2]=x b") == ([["a[1<<2]=x", "b"]], 0)
+    assert split_command("cat <<EOF\nEO\\\nF\nls") == ([["cat", "<<", "EOF"], ["ls"]], 1)
 
 
 def test_comment_with_apostrophe_denies_end_to_end(env):
