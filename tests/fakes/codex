@@ -21,10 +21,13 @@ Modes:
   nologin      turn.failed with the 401 text, exit 1
   unknown      turn.failed with an invalid-schema error, exit 1
   timeout      starts a child `sleep 30`, writes its PID, waits for it
+  crash        prints the banner and the prompt on stderr, then kills itself with SIGSEGV
+  panic        prints a Rust panic on stderr after the banner and the prompt, exit 101
 The error modes print a banner and the prompt on stderr, as the real CLI does.
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 
@@ -65,6 +68,24 @@ if mode in ERRORS:
                   {"type": "error", "message": msg}, {"type": "turn.failed", "error": {"message": msg}}):
         print(json.dumps(event))
     sys.exit(1)
+
+BANNER = ("OpenAI Codex v0.153.4 (fake)\n--------\nworkdir: " + os.getcwd() + "\n--------\nuser\n"
+          + prompt + "\n")
+
+if mode == "crash":
+    sys.stderr.write(BANNER)
+    sys.stderr.flush()
+    try:  # no core dump: an apport or systemd-coredump handler takes about 1 s (Linux PR_SET_DUMPABLE)
+        import ctypes
+        ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)
+    except (OSError, AttributeError):
+        pass
+    os.kill(os.getpid(), signal.SIGSEGV)
+
+if mode == "panic":
+    sys.stderr.write(BANNER + "\nthread 'main' panicked at codex-rs/core/src/synthetic.rs:12:5:\n"
+                     "synthetic panic\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n")
+    sys.exit(101)
 
 if mode == "timeout":
     child = subprocess.Popen(["sleep", "30"])

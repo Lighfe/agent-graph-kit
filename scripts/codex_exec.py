@@ -46,6 +46,12 @@ FAILURE_PATTERNS: list[tuple[str, re.Pattern]] = [(status, re.compile(rx, re.MUL
     ("transient", r"^(?:ERROR: )?(?:Connection failed: |stream disconnected before completion: )"),
 ]]
 
+# Spec 6.2 lists a crashed process as transient. The S2 table has no crash row, so a crash is
+# checked after the table: a death by signal (the npm wrapper `codex.js` re-raises the signal of
+# the native binary, so Popen sees a negative code; a shell reports 128 + n), or a Rust panic line.
+PANIC_PATTERN = re.compile(r"^thread '[^'\n]*' panicked at.*$", re.MULTILINE)
+SIGNAL_MAX = 64
+
 REASON_MAX = 500
 
 
@@ -70,12 +76,52 @@ def failure_text(stdout: str, stderr: str) -> str:
     return message if message is not None else stderr
 
 
-def classify_failure(returncode: int, text: str) -> str:
-    """"transient" | "unavailable" | "unknown", by the S2 error table."""
+def _table_status(text: str) -> str | None:
     for status, pattern in FAILURE_PATTERNS:
         if pattern.search(text):
             return status
-    return "unknown"
+    return None
+
+
+def _signal_number(returncode: int) -> int | None:
+    if returncode < 0:
+        return -returncode
+    if 128 < returncode <= 128 + SIGNAL_MAX:
+        return returncode - 128
+    return None
+
+
+def _crash(returncode: int, text: str) -> str | None:
+    """"codex crashed (panic): <panic line>" or "codex crashed (signal <NAME>)", or None."""
+    panic = PANIC_PATTERN.search(text)
+    if panic:
+        return "codex crashed (panic): " + _one_line(panic.group(0))
+    number = _signal_number(returncode)
+    if number is None:
+        return None
+    try:
+        name = signal.Signals(number).name
+    except ValueError:
+        name = str(number)
+    return f"codex crashed (signal {name})"
+
+
+def classify_failure(returncode: int, text: str) -> str:
+    """"transient" | "unavailable" | "unknown": the S2 error table first (first match wins), then a
+    crashed process (spec 6.2: transient), else unknown."""
+    status = _table_status(text)
+    if status is not None:
+        return status
+    return "transient" if _crash(returncode, text) else "unknown"
+
+
+def crash_reason(returncode: int, stdout: str, stderr: str) -> str | None:
+    """The reason for a crashed process, or None if the failure is not a crash (or a table row
+    matches). Never the banner or the prompt: only the signal name or the panic line."""
+    text = failure_text(stdout, stderr)
+    if _table_status(text) is not None:
+        return None
+    return _crash(returncode, text)
 
 
 def _one_line(text: str) -> str:
@@ -119,7 +165,8 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
             return CodexRun("timeout", None, f"no result after {_duration(timeout_s)}")
         if p.returncode != 0:
             text = failure_text(stdout, stderr)
-            return CodexRun(classify_failure(p.returncode, text), None, failure_reason(stdout, stderr))
+            reason = crash_reason(p.returncode, stdout, stderr) or failure_reason(stdout, stderr)
+            return CodexRun(classify_failure(p.returncode, text), None, reason)
         try:
             data = json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:

@@ -155,6 +155,10 @@ def qa_env(tmp_path, monkeypatch):
     (["invalid"], "## QA: INVALID", []),
     (["transient", "ok"], "## QA: PASS", [60]),
     (["transient"] * 4, "## QA: INVALID", [60, 180, 600]),
+    (["crash", "ok"], "## QA: PASS", [60]),
+    (["crash"] * 4, "## QA: INVALID", [60, 180, 600]),
+    (["panic", "ok"], "## QA: PASS", [60]),
+    (["panic"] * 4, "## QA: INVALID", [60, 180, 600]),
     (["timeout", "ok"], "## QA: PASS", []),
     (["timeout", "timeout"], "## QA: INVALID", []),
     (["missing", "ok"], "## QA: PASS", []),
@@ -262,6 +266,27 @@ def test_transient_reason_is_the_turn_failed_message(qa_env):
     assert "OpenAI Codex" not in comment
     assert "Acceptance criteria" not in comment
     assert CRIT_1 not in comment  # no prompt text
+
+
+def test_crash_is_transient_and_names_the_signal(qa_env):
+    comment, slept = qa_env.run(["crash", "transient", "ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert "Retries: 2 (transient, transient)" in comment.splitlines()
+    assert slept == [60, 180]
+    comment, _ = qa_env.run(["crash"] * 4)
+    assert "Reason: codex crashed (signal SIGSEGV)" in comment.splitlines()
+    assert "OpenAI Codex" not in comment
+    assert CRIT_1 not in comment  # no prompt text
+
+
+def test_panic_reason_is_the_panic_line(qa_env):
+    comment, _ = qa_env.run(["panic"] * 4)
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    reason = [line for line in comment.splitlines() if line.startswith("Reason:")]
+    assert reason == ["Reason: codex crashed (panic): thread 'main' panicked at "
+                      "codex-rs/core/src/synthetic.rs:12:5:"]
+    assert "OpenAI Codex" not in comment
+    assert CRIT_1 not in comment
 
 
 def test_unavailable_reason(qa_env):
@@ -670,6 +695,40 @@ def test_render_without_output():
 ])
 def test_classify_failure(line, status):
     assert codex_exec.classify_failure(1, line) == status
+
+
+@pytest.mark.parametrize("returncode,text,status", [
+    (-11, "", "transient"),                                     # killed by SIGSEGV
+    (-6, "", "transient"),                                      # SIGABRT (panic = abort)
+    (-9, "OpenAI Codex v0.153.4\nuser\nprompt", "transient"),  # SIGKILL, e.g. the OOM killer
+    (139, "", "transient"),                                     # 128 + SIGSEGV, as a shell reports it
+    (101, "thread 'main' panicked at src/x.rs:1:1:\nboom", "transient"),
+    (1, "thread 'tokio-runtime-worker' panicked at src/x.rs:1:1:", "transient"),
+    (-11, "ERROR: You've hit your usage limit. Try again later.", "unavailable"),  # the table wins
+    (1, "", "unknown"),
+    (1, "ERROR: invalid_json_schema", "unknown"),
+    (2, "error: unexpected argument '--bad' found", "unknown"),
+    (127, "", "unknown"),
+    (128, "", "unknown"),
+    (101, "boom", "unknown"),                                    # exit 101 without a panic line
+])
+def test_classify_failure_crashed_process(returncode, text, status):
+    assert codex_exec.classify_failure(returncode, text) == status
+
+
+@pytest.mark.parametrize("returncode,stderr,reason", [
+    (-11, "", "codex crashed (signal SIGSEGV)"),
+    (137, "OpenAI Codex v0.153.4\nuser\nprompt text", "codex crashed (signal SIGKILL)"),
+    (101, "OpenAI Codex v0.153.4\nuser\nprompt text\nthread 'main' panicked at a.rs:1:1:\nboom\nnote: x",
+     "codex crashed (panic): thread 'main' panicked at a.rs:1:1:"),
+])
+def test_crash_reason(returncode, stderr, reason):
+    assert codex_exec.crash_reason(returncode, "", stderr) == reason
+
+
+def test_crash_reason_is_none_without_a_crash():
+    assert codex_exec.crash_reason(1, "", "ERROR: something") is None
+    assert codex_exec.crash_reason(-11, "", "ERROR: You've hit your usage limit.") is None
 
 
 def test_failure_text_prefers_last_turn_failed():
