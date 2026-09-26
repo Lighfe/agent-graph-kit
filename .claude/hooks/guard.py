@@ -47,8 +47,10 @@ LOCK_NAME = "agent-graph-kit-guard.lock"
 
 CLOSE_REASONS = {"completed", "not planned"}
 # Shell words that may stand before a command. A guarded call behind one of them is denied.
-PREFIX_WORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until",
-                "time", "exec", "command", "env", "builtin", "nohup"}
+# Commands that run the command after them. With an option argument (`timeout 5 gh …`),
+# the guarded call is searched in the rest of the words.
+WRAPPERS = {"exec", "command", "env", "builtin", "nohup", "coproc", "nice", "timeout", "stdbuf", "setsid"}
+PREFIX_WORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until", "time"} | WRAPPERS
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 RUNNERS = re.compile(r"uv|python(3(\.[0-9]+)?)?")
 
@@ -56,6 +58,7 @@ RUNNERS = re.compile(r"uv|python(3(\.[0-9]+)?)?")
 SETTINGS_NAME = re.compile(r"settings[^/\s]*\.json", re.IGNORECASE)
 CLAUDE_GLOB = re.compile(r"\.claude/[^\s'\"]*[*?\[]")
 READ_ONLY = {"cat", "jq", "head", "tail", "grep", "wc", "ls"}
+_NO_BRACES = str.maketrans("", "", "{},")
 
 
 class Deny(Exception):
@@ -64,9 +67,10 @@ class Deny(Exception):
 
 # --- shell tokenizer ------------------------------------------------------------------
 #
-# A small bash-like tokenizer. It knows quotes, backslashes, $(…), backticks,
-# operators, redirections and here-documents. `#` never starts a comment, so a
-# comment that mentions a guarded call is a false deny, which is safe.
+# A small bash-like tokenizer. It knows quotes ('…', "…", $'…', $"…"), backslashes,
+# ${…}, $(…), backticks, operators, redirections, here-documents, comments and
+# the patterns of `case`. As in bash, `#` starts a comment only at the start of a
+# word, so `echo x#; gh issue close 5` has two commands.
 #
 # Tokens: ("w", value, subs) a word, quotes removed, `subs` the texts inside
 # $(…) and backticks (unquoted or in double quotes); ("op", op) a command
@@ -77,6 +81,11 @@ _OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", "<(", ">(", ">
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
 _REDIRECTS = {"<", ">", ">>", ">|", "<>", "<&", ">&", "&>", "&>>", "<<", "<<-", "<<<"}
 _OPEN = {"(", "<(", ">("}
+_CASE_NEXT = {";;", ";&", ";;&"}  # end a case branch; a pattern follows
+_COMMAND_FOLLOWS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
+_ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+         "\\": "\\", "'": "'", '"': '"', "?": "?"}
+_ANSI_NUMBER = {"x": (16, 2), "u": (16, 4), "U": (16, 8)}
 
 
 class _Lexer:
@@ -93,24 +102,49 @@ class _Lexer:
         buf: list[str] = []
         subs: list[str] = []
         word = quoted = False
+        start = True  # at the start of a command, where `case` and `esac` are reserved words
+        cases: list[list] = []  # open `case` commands: [state, at the first word of a pattern]
 
         def end():
-            nonlocal buf, subs, word, quoted
+            nonlocal buf, subs, word, quoted, start
             if word:
                 value = "".join(buf)
                 if toks and toks[-1] in (("redir", "<<"), ("redir", "<<-")):
                     heredocs.append((value, toks[-1][1] == "<<-", quoted))
                 toks.append(("w", value, tuple(subs)))
+                plain = not quoted and not subs
+                state = cases[-1][0] if cases else None
+                if state == "word":  # case WORD
+                    cases[-1][0] = "in"
+                elif state == "in":  # case WORD in
+                    cases[-1] = ["pattern", True]
+                elif state == "pattern":
+                    if cases[-1][1] and plain and value == "esac":
+                        cases.pop()
+                    else:
+                        cases[-1][1] = False
+                elif start and plain and value == "case":
+                    cases.append(["word", False])
+                elif state == "body" and start and plain and value == "esac":
+                    cases.pop()
+                start = plain and value in _COMMAND_FOLLOWS
             buf, subs, word, quoted = [], [], False, False
 
         while i < n:
             c = t[i]
+            if c in "()":
+                end()  # the word before may be `esac`
+            state = cases[-1][0] if cases else None
             if c in " \t":
                 end()
                 i += 1
+            elif c == "#" and not word:  # a comment, up to the end of the line
+                j = t.find("\n", i)
+                i = n if j < 0 else j
             elif c == "\n":
                 end()
                 toks.append(("op", "\n"))
+                start = True
                 i += 1
                 for delim, strip, q in heredocs:
                     i, body = self.heredoc(i, delim, strip)
@@ -139,9 +173,28 @@ class _Lexer:
             elif c == "`":
                 i = self.backtick(i, buf, subs)
                 word = True
+            elif t.startswith("$$", i):  # the process id, so a quote after it is a plain quote
+                buf.append("$$")
+                word = True
+                i += 2
+            elif t.startswith("$'", i):
+                i = self.ansi(i + 2, buf)
+                word = quoted = True
+            elif t.startswith('$"', i):
+                i = self.double(i + 2, buf, subs, '"')
+                word = quoted = True
+            elif t.startswith("${", i):
+                i = self.brace(i, buf, subs, dq=False)
+                word = True
             elif t.startswith("$(", i):
                 i = self.dollar(i, buf, subs)
                 word = True
+            elif c in "()" and state == "pattern":  # `(` before and `)` after a case pattern
+                toks.append(("op", c))
+                if c == ")":
+                    cases[-1][0] = "body"
+                    start = True
+                i += 1
             elif c in "<>&|;()":
                 if sub and c == ")" and depth == 0:
                     end()
@@ -154,6 +207,10 @@ class _Lexer:
                     depth += 1
                 elif op == ")":
                     depth -= 1
+                if op in _CASE_NEXT and state == "body":
+                    cases[-1] = ["pattern", True]
+                if op not in _REDIRECTS:
+                    start = True
                 toks.append(("redir" if op in _REDIRECTS else "op", op))
                 i += len(op)
             else:
@@ -179,6 +236,8 @@ class _Lexer:
                 i += 2
             elif c == "`":
                 i = self.backtick(i, buf, subs)
+            elif t.startswith("${", i):
+                i = self.brace(i, buf, subs, dq=True)
             elif t.startswith("$(", i):
                 i = self.dollar(i, buf, subs)
             else:
@@ -187,6 +246,71 @@ class _Lexer:
         if stop is not None:
             raise ValueError("unterminated double quote")
         return i
+
+    def ansi(self, i: int, buf: list[str]) -> int:
+        """Text in $'…' from i (after the quote), with its backslash escapes decoded."""
+        t, n = self.t, self.n
+        while i < n:
+            c = t[i]
+            if c == "'":
+                return i + 1
+            if c != "\\" or i + 1 >= n:
+                buf.append(c)
+                i += 1
+                continue
+            nxt = t[i + 1]
+            if nxt in _ANSI:
+                buf.append(_ANSI[nxt])
+                i += 2
+            elif nxt in "01234567":
+                digits = re.match(r"[0-7]{1,3}", t[i + 1:]).group()
+                buf.append(chr(int(digits, 8) & 0xFF))
+                i += 1 + len(digits)
+            elif nxt in _ANSI_NUMBER:
+                base, most = _ANSI_NUMBER[nxt]
+                m = re.match(r"[0-9A-Fa-f]{1,%d}" % most, t[i + 2:])
+                if m:
+                    buf.append(chr(int(m.group(), base)))
+                    i += 2 + len(m.group())
+                else:
+                    buf.append(c + nxt)
+                    i += 2
+            elif nxt == "c" and i + 2 < n:
+                buf.append(chr(ord(t[i + 2]) & 0x1F))
+                i += 3
+            else:
+                buf.append(c + nxt)
+                i += 2
+        raise ValueError("unterminated $' quote")
+
+    def brace(self, i: int, buf: list[str], subs: list[str], dq: bool) -> int:
+        """${…} from i. Spaces and `#` inside belong to it. Returns the index after the `}`."""
+        t, n, j = self.t, self.n, i + 2
+        while j < n:
+            c = t[j]
+            if c == "}":
+                buf.append(t[i:j + 1])
+                return j + 1
+            if c == "\\":
+                j += 2
+            elif c == "'" and not dq:
+                k = t.find("'", j + 1)
+                if k < 0:
+                    raise ValueError("unterminated single quote")
+                j = k + 1
+            elif t.startswith("$'", j) and not dq:
+                j = self.ansi(j + 2, [])
+            elif c == '"':
+                j = self.double(j + 1, [], subs, '"')
+            elif c == "`":
+                j = self.backtick(j, [], subs)
+            elif t.startswith("${", j):
+                j = self.brace(j, [], subs, dq)
+            elif t.startswith("$(", j):
+                j = self.dollar(j, [], subs)
+            else:
+                j += 1
+        raise ValueError("unterminated ${")
 
     def dollar(self, i: int, buf: list[str], subs: list[str]) -> int:
         _, j = self.script(i + 2, sub=True)
@@ -200,7 +324,8 @@ class _Lexer:
             j += 2 if t[j] == "\\" else 1
         if j >= self.n:
             raise ValueError("unterminated backtick")
-        subs.append(t[i + 1:j])
+        # bash removes the backslash before ` $ \ inside backticks before it runs the text
+        subs.append(re.sub(r"\\([`$\\])", r"\1", t[i + 1:j]))
         buf.append(t[i:j + 1])
         return j + 1
 
@@ -288,48 +413,83 @@ def _classify_send(tool_input: dict) -> Call:
     return Call(role=role, agent=to, issue=number, continued=True)
 
 
-def _find_guarded(cmd: list[tuple]) -> tuple[int, str, int] | None:
-    """(tokens before the call, "close" | "qa-codex", index of the last command word) or None."""
-    toks = [tok for tok in cmd if tok[0] != "body"]
+def _words(cmd: list[tuple]) -> list[str]:
+    """The words of a simple command, without its redirections and their targets."""
+    words, target = [], False
+    for tok in cmd:
+        if tok[0] == "redir":
+            target = True
+        elif tok[0] == "w":
+            if not target:
+                words.append(tok[1])
+            target = False
+    return words
+
+
+def _gh_close(words: list[str], k: int) -> int | None:
+    """Index of `close` if words[k:] is `gh … issue … close` with only options between, else None."""
+    seen_issue = False
+    for m in range(k + 1, len(words)):
+        w = words[m]
+        if w == "close" and seen_issue:
+            return m
+        if w == "issue" and not seen_issue:
+            seen_issue = True
+        elif not (w.startswith("-") or (m - 1 > k and words[m - 1].startswith("-"))):
+            return None
+    return None
+
+
+def _call_at(words: list[str], k: int) -> tuple[str, int] | None:
+    """("close" | "qa-codex", index of the last command word) if a guarded call starts at words[k]."""
+    name = words[k].rsplit("/", 1)[-1]
+    if name == "gh":
+        m = _gh_close(words, k)
+        return ("close", m) if m is not None else None
+    if words[k].endswith("qa-codex"):
+        return "qa-codex", k
+    if RUNNERS.fullmatch(name):
+        for m in range(k + 1, len(words)):
+            if words[m].endswith("qa-codex"):
+                return "qa-codex", m
+    return None
+
+
+def _find_guarded(cmd: list[tuple]) -> tuple[list[str], int, str, int] | None:
+    """(words, index of the first command word, "close" | "qa-codex", index of the last command word) or None.
+    Redirections do not count as words, wherever they stand."""
+    words = _words(cmd)
     i, after_prefix = 0, False
-    while i < len(toks):
-        kind, value = toks[i][0], toks[i][1]
-        if kind == "redir":
-            i += 2  # the redirection and its target
-            continue
+    while i < len(words):
+        value = words[i]
         if value in PREFIX_WORDS:
             after_prefix = True
         elif not ASSIGNMENT.match(value) and not (after_prefix and value.startswith("-")):
             break
         i += 1
-    rest = [tok[1] if tok[0] == "w" else None for tok in toks[i:]]
-    if not rest or rest[0] is None:
+    if i >= len(words):
         return None
-    name = rest[0].rsplit("/", 1)[-1]
-    if name == "gh" and rest[1:3] == ["issue", "close"]:
-        return i, "close", i + 2
-    if rest[0].endswith("qa-codex"):
-        return i, "qa-codex", i
-    if RUNNERS.fullmatch(name):
-        for k, word in enumerate(rest[1:], start=1):
-            if word is not None and word.endswith("qa-codex"):
-                return i, "qa-codex", i + k
+    found = _call_at(words, i)
+    if found:
+        return words, i, *found
+    if any(w in WRAPPERS for w in words[:i]):  # a wrapper option with an argument, as in `timeout 5 gh …`
+        for k in range(i + 1, len(words)):
+            if found := _call_at(words, k):
+                return words, k, *found
     return None
 
 
-def _close_number(args: list[tuple]) -> int:
+def _close_number(args: list[str]) -> int:
     number = None
     reason = False
     j = 0
     while j < len(args):
-        if args[j][0] != "w":
-            raise Deny(f"G1: gh issue close has a redirection {args[j][1]}, expected no redirection")
-        value = args[j][1]
+        value = args[j]
         if value in ("--reason", "-r") or value.startswith("--reason="):
             if value.startswith("--reason="):
                 given, j = value.split("=", 1)[1], j + 1
             else:
-                given = args[j + 1][1] if j + 1 < len(args) and args[j + 1][0] == "w" else None
+                given = args[j + 1] if j + 1 < len(args) else None
                 j += 2
             if reason or given not in CLOSE_REASONS:
                 raise Deny(f"G1: gh issue close reason is {given or 'missing'}, "
@@ -348,10 +508,9 @@ def _close_number(args: list[tuple]) -> int:
     return number
 
 
-def _qa_codex_issue(args: list[tuple]) -> int:
-    values = [tok[1] if tok[0] == "w" else None for tok in args]
-    m = re.fullmatch(r"ISSUE=([0-9]+)", values[1]) if len(values) == 2 and values[1] else None
-    if values[:1] != ["ROLE=qa"] or not m:
+def _qa_codex_issue(args: list[str]) -> int:
+    m = re.fullmatch(r"ISSUE=([0-9]+)", args[1]) if len(args) == 2 else None
+    if args[:1] != ["ROLE=qa"] or not m:
         raise Deny("G1: qa-codex arguments are not ROLE=qa ISSUE=<number>, "
                    "expected exactly these two arguments in this order")
     return int(m.group(1))
@@ -387,14 +546,18 @@ def _classify_text(text: str) -> Call | None:
     if ops or len(cmds) != 1:
         raise Deny("G1: a guarded call (gh issue close or qa-codex) is part of a command with shell operators, "
                    "expected one simple command without ; && || | & newline ( )")
-    cmd, (before, kind, last) = guarded[0]
-    if before:
-        raise Deny(f"G1: a guarded call ({kind}) has {cmd[0][1]} before it, "
+    cmd, (words, first, kind, last) = guarded[0]
+    if first:
+        raise Deny(f"G1: a guarded call ({kind}) has {words[0]} before it, "
                    "expected the call at the start of the command")
-    args = [tok for tok in cmd[last + 1:] if tok[0] != "body"]
-    if any(tok[0] == "body" for tok in cmd):
-        raise Deny(f"G1: a guarded call ({kind}) has a here-document, expected none")
+    redirection = next((tok[1] or "<<" for tok in cmd if tok[0] in ("redir", "body")), None)
+    if redirection:
+        raise Deny(f"G1: a guarded call ({kind}) has the redirection {redirection}, expected no redirection")
+    args = words[last + 1:]
     if kind == "close":
+        if words[1:last] != ["issue"]:
+            raise Deny(f"G1: gh issue close has {' '.join(words[1:last])} between gh and close, "
+                       "expected gh issue close <number>")
         return Call(role="close", agent="", issue=_close_number(args))
     return Call(role="qa", agent="qa-codex", issue=_qa_codex_issue(args))
 
@@ -408,6 +571,7 @@ def g8(command: str) -> str | None:
     except ValueError:
         toks = None
     values = [tok[1] for tok in toks or () if tok[0] == "w"]  # quotes removed
+    values += [v.translate(_NO_BRACES) for v in values if "{" in v]  # settings.{json,bak} names settings.json
     mentions = SETTINGS_NAME.search(command) or CLAUDE_GLOB.search(command) or any(
         SETTINGS_NAME.search(v) or (".claude/" in v and any(ch in v for ch in "*?[")) for v in values)
     if not mentions:

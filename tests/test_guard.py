@@ -224,6 +224,105 @@ def test_guarded_call_in_substitution_is_denied(cmd):
     denied(bash(cmd))
 
 
+# Bypasses found by QA (issue #5, first round) and related forms. For every command
+# here, bash runs `gh issue close` (see test_bash_runs_the_hidden_close below).
+HIDDEN_CLOSE = [
+    # a comment with an unbalanced quote must not swallow the next line
+    "ls # don't forget\ngh issue close 5 # it's done",
+    "ls # it's\ngh issue close 5 #'",
+    "echo $'it\\'s'\ngh issue close 5 #'",
+    'ls # say "hi\ngh issue close 5 #"',
+    "ls # `\ngh issue close 5 #`",
+    "ls # $(\ngh issue close 5",
+    "echo a;# it's\ngh issue close 5",
+    # `#` inside ${…} is no comment, and ${…} may contain spaces
+    "echo ${x:- #} ; gh issue close 5",
+    "echo ${x:-a b}; gh issue close 5",
+    # a redirection between the words of the call
+    "gh 2>/dev/null issue close 5", "gh issue >/dev/null close 5", "gh issue close >/dev/null 5",
+    "gh issue close 5 2>/dev/null", "gh <<<x issue close 5",
+    # `case` inside $(…): the `)` of a pattern does not end the substitution
+    "echo $(case x in x) gh issue close 5;; esac)",
+    "echo $(case x in (x) gh issue close 5;; esac)",
+    'echo "$(case x in x) gh issue close 5;; esac)"',
+    "echo $(case x in\nx) gh issue close 5\nesac)",
+    "echo $(case x in y) :;; x) gh issue close 5;; esac)",
+    "echo $(case x in x) case y in y) gh issue close 5;; esac;; esac)",
+    "echo $(echo a # )\ngh issue close 5)",
+    # nested backticks: bash removes the backslash before ` $ \\ inside backticks
+    "echo `echo \\`gh issue close 5\\``", "echo `echo \\$(gh issue close 5)`",
+    # prefixes that take an argument, and coproc (QA observations)
+    "coproc gh issue close 5", "nice gh issue close 5", "nice -n 5 gh issue close 5",
+    "timeout 5 gh issue close 5", "env -u X gh issue close 5", "exec -a name gh issue close 5",
+    # the repo option between `issue` and `close` (QA observation)
+    "gh issue -R o/r close 5", "gh issue --repo o/r close 5", "gh issue --repo=o/r close 5",
+]
+
+
+@pytest.mark.parametrize("cmd", HIDDEN_CLOSE)
+def test_hidden_close_is_denied(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+@pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
+@pytest.mark.parametrize("cmd", HIDDEN_CLOSE)
+def test_bash_runs_the_hidden_close(cmd, tmp_path):
+    """Parity check: the cases above are real. bash, with the fake gh first on PATH, runs `gh issue close`."""
+    calls = tmp_path / "calls.jsonl"
+    # Even if a real gh ran (it must not), it has no login: a fresh HOME and gh config, no token.
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN")}
+    env |= {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_CALLS": str(calls),
+            "HOME": str(tmp_path), "GH_CONFIG_DIR": str(tmp_path / "gh"), "XDG_CONFIG_HOME": str(tmp_path)}
+    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, env=env, capture_output=True, timeout=30)
+    assert any(c[:1] == ["issue"] and "close" in c[1:] for c in lines(calls))
+
+
+@pytest.mark.parametrize("cmd", [
+    "python3 >/dev/null scripts/qa-codex ROLE=qa ISSUE=5", "uv run 2>/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
+    "scripts/qa-codex 2>&1 ROLE=qa ISSUE=5", "scripts/qa-codex ROLE=qa >out ISSUE=5",
+    "python3 scripts/qa-codex ROLE=qa ISSUE=5 # it's\ngh issue close 5",
+])
+def test_qa_codex_with_redirection_anywhere_is_denied(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+@pytest.mark.parametrize("cmd, issue", [
+    ("gh issue close 5 # done", 5), ("gh issue close 5 #it's done", 5), ("$'gh' issue close 5", 5),
+    ('$"gh" issue close 5', 5), ("gh issue close $'5'", 5), ("gh issue close 5 -r $'not planned'", 5),
+])
+def test_close_with_comment_or_ansi_quotes_is_parsed(cmd, issue):
+    assert classify(bash(cmd)) == Call(role="close", agent="", issue=issue)
+
+
+@pytest.mark.parametrize("cmd", [
+    "ls # gh issue close 5", "ls # it's fine\necho ok", "echo $(case x in x) echo hi;; esac)",
+    'x=$(case "$y" in a) echo 1;; *) echo 2;; esac)', "echo ${x:-gh issue close 5}", "echo ${#x} ${x#gh}",
+    "gh issue list --search close", "gh issue view 5 --comments", "echo $'a\\'b'",
+    "git commit -m \"$(cat <<'EOF'\nDon't run gh issue close by hand (see #7)\nEOF\n)\"",
+])
+def test_comments_ansi_quotes_and_case_that_run_no_guarded_call_pass(cmd):
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", ["cp x .claude/settings.js$'o'n", "cp x .claude/settings.{json,bak}",
+                                 "cp x .claude/{settings.json,y}"])
+def test_g8_sees_ansi_quotes_and_brace_expansion(cmd):
+    assert denied(bash(cmd)).startswith("G8:")
+
+
+def test_split_command_skips_comments_and_decodes_ansi_quotes():
+    assert split_command("echo a # it's\nls") == ([["echo", "a"], ["ls"]], 1)
+    assert split_command("echo $'a\\'b\\tc' $\"d\"") == ([["echo", "a'b\tc", "d"]], 0)
+    assert split_command("echo ${x:- #} y") == ([["echo", "${x:- #}", "y"]], 0)
+    assert substitutions("$(case x in x) gh issue close 5;; esac)") == ["case x in x) gh issue close 5;; esac"]
+
+
+def test_comment_with_apostrophe_denies_end_to_end(env):
+    code, out = run_guard(bash("ls # don't forget\ngh issue close 5 # it's done"), env, FAKE_GH_FAIL="1")
+    assert code == 0 and deny_reason(out).startswith("G1:")
+    assert lines(env["FAKE_GH_CALLS"]) == []
+
+
 @pytest.mark.parametrize("cmd", ["gh issue close 'unterminated", 'echo "qa-codex', "echo $(gh issue close 5",
                                  "echo `gh", "echo gh\\"])
 def test_unparseable_command_mentioning_guarded_text_is_denied(cmd):
