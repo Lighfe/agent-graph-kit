@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Fake `git` for the guard tests. Controlled by the environment:
+
+FAKE_GIT_DIR=<path>   what `git rev-parse --git-dir` prints (required for that call)
+FAKE_GIT_HEAD=<sha>   what `git rev-parse HEAD` prints (default: 40 times "c")
+FAKE_GIT_DIRTY=1      `git status --porcelain` prints a changed file
+FAKE_GIT_FAIL=1       every call exits 128
+"""
+import os
+import sys
+
+env = os.environ.get
+args = sys.argv[1:]
+
+if env("FAKE_GIT_FAIL") == "1":
+    sys.stderr.write("fatal: synthetic git failure\n")
+    sys.exit(128)
+if args == ["rev-parse", "--git-dir"] and env("FAKE_GIT_DIR"):
+    print(env("FAKE_GIT_DIR"))
+    sys.exit(0)
+if args == ["rev-parse", "HEAD"]:
+    print(env("FAKE_GIT_HEAD", "c" * 40))
+    sys.exit(0)
+if args == ["status", "--porcelain"]:
+    if env("FAKE_GIT_DIRTY") == "1":
+        print(" M synthetic.txt")
+    sys.exit(0)
+sys.stderr.write(f"fake git: unsupported call {args}\n")
+sys.exit(2)
