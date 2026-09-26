@@ -92,8 +92,31 @@ A hook runs before each tool call of the orchestrator and of its subagents. It g
 | Bash call of `qa-codex` | qa |
 | Bash call of `gh issue close <number>` | close |
 | Bash command that writes to `.claude/settings*.json` | – (always denied, G8) |
+| Any other Bash command that contains the trigger (below) | – (always denied, G1) |
 
-All other calls pass. Examples: other subagent types, the Codex review skill, normal Bash commands.
+All other calls pass. Examples: other subagent types, the Codex review skill, Bash commands without the trigger.
+
+**Bash trigger rule.** The hook does not parse Bash commands to find a guarded call. It uses a fail-closed rule instead:
+
+- **Trigger.** A text is triggered if it contains both words `gh` and `close` (Python regexes `\bgh\b` and `\bclose\b` with the flag `re.ASCII`, case-sensitive), or the text `qa-codex`. A Bash command is triggered if its original text is triggered, or a copy of it with every backslash-newline (`\` followed by LF) removed is triggered. So `gh issue clo\` + LF + `se 5` is triggered.
+- **Allowed forms.** A triggered command is a guarded call only if its original, unchanged text (never the copy) matches one of these patterns with Python `re.fullmatch`:
+  - close: `gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?`
+  - qa: `scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?`
+
+  A match is not an allow on its own. The call then goes through the checks (5.4), the lock and the deadline (5.6, 5.7) and the launch comment (5.3), as every guarded call does. `qa-codex` runs with the Bash tool's background option (`run_in_background`), not with `&`.
+- **Deny.** Every other triggered command is denied with `G1:`, before any `gh` or `git` call. The deny reason names the two forms and the ways around: `git commit -F <file>` for a commit message, `gh … --body-file <file>` for a comment body, the Read or Grep tool instead of Bash, a path without the trigger word (`git add scripts/`), and `run_in_background` instead of `&`.
+- **No trigger.** A Bash command that is not triggered is not a guarded call. G8 (5.9) still applies to it, and G8 runs first for every Bash command.
+
+**Accepted false denies.** The rule denies some commands that run no guarded call. This is accepted, because the agent can always use one of the ways around. Examples:
+
+- `cat scripts/qa-codex`
+- a heredoc commit message that mentions `qa-codex` (`git commit -m "$(cat <<'EOF'` … `EOF` … `)"`)
+- `git commit -m "Fix gh close handling"`
+- `gh issue view 5 | grep close`
+- `gh pr close 5`
+- `/usr/bin/gh issue close 5`, `command gh issue close 5`, `gh  issue close 5` (not the exact form)
+
+**Known limit (P1).** A text that does not literally contain the trigger is not recognized, for example variables (`$GH issue close 5`), `$'…'` escapes, brace expansion (`gh issue {close,} 5`), globs, quotes or backslashes inside a word (`gh issue cl''ose 5`, `gh issue c\lose 5`), and other letter case (`GH issue close 5`, which runs `gh` on a case-insensitive macOS file system). Calls outside the prescribed ones (`gh api`, `gh issue edit --state closed`) stay unchecked.
 
 ### 5.2 Launch line
 

@@ -27,7 +27,7 @@ Execution is deferred. In a later session, convert these tasks to issues using d
 
 ## Review Focus
 
-1. **Guarded text in commands that are not guarded.** `grep "gh issue close" AGENTS.md`, `cat scripts/qa-codex`, or a commit message that mentions `qa-codex` must pass. `gh  issue close 5` (extra whitespace) is still guarded. `gh issue close` or `qa-codex` in a compound command (`a && gh issue close 5`, `(gh issue close 5)`, `gh issue close 5 &`) or in a command substitution (`echo "$(gh issue close 5)"`) must be denied. Tests are in Task 5.
+1. **Bash commands that mention a guarded call.** The guard does not parse Bash commands (spec 5.1). A command is triggered if it contains the words `gh` and `close` (`\bgh\b`, `\bclose\b`, `re.ASCII`, case-sensitive) or the text `qa-codex`, also after every backslash-newline is removed. A triggered command is a guarded call only if its whole original text matches `gh issue close <n>` (with an optional `--reason completed` or `--reason 'not planned'`) or `scripts/qa-codex ROLE=qa ISSUE=<n>` exactly, as in spec 5.1. Every other triggered command is denied with `G1:`: compound commands (`a && gh issue close 5`, `gh issue close 5 &`), substitutions (`echo "$(gh issue close 5)"`), extra whitespace (`gh  issue close 5`) and prefixes (`/usr/bin/gh issue close 5`). Accepted false denies: `cat scripts/qa-codex`, `grep "gh issue close" AGENTS.md`, a commit message or heredoc commit message that mentions `qa-codex` or `gh … close`, `gh issue view 5 | grep close`, `gh pr close 5`. The deny reason names the ways around (`git commit -F`, `--body-file`, the Read or Grep tool, `git add scripts/`, `run_in_background`). Tests are in Task 5.
 2. **The hook fails in some way.** If `gh` is missing or offline, `git` fails, the input JSON is broken, or `uv` cannot start, the call is denied, never allowed. Tests are in Task 5, and a smoke check is in Task 7.
 3. **Stale or odd comments.** These cases are covered:
    - A late result from an earlier attempt.
@@ -454,12 +454,17 @@ Lane: default
 
 - [ ] A subagent launch of `pm`, `software-engineer`, `frontend-engineer` or `qa-engineer` is guarded. Other agent types pass without any `gh` call
 - [ ] A launch needs exactly one line `ROLE=<role> ISSUE=<n>` whose role matches the agent. Otherwise it is denied with `G1:`
-- [ ] Every Bash command is tokenized (there is no raw-text prefilter). A simple command is guarded if its tokens start with `gh issue close`, or its first word ends in `qa-codex`, or it runs `qa-codex` through `uv` or `python`. `gh  issue close 5` (extra spaces or tabs) is guarded. `grep "gh issue close" AGENTS.md` and `cat scripts/qa-codex` pass
-- [ ] A guarded call is denied when the command has any shell operator (`;`, `&&`, `||`, `|`, `&`, newline, `(`, `)`)
-- [ ] The text inside `$(…)` or backticks is checked as a command of its own. If it contains a guarded call, the whole command is denied. A heredoc commit message that only mentions `qa-codex` passes
-- [ ] A command that cannot be parsed is denied if its text contains `gh` or `qa-codex`, and passes otherwise
-- [ ] `gh issue close` is allowed only with exactly one issue number made of digits. `-R`/`--repo`, unknown options, leading `VAR=value` assignments and a missing or second number are denied
-- [ ] `qa-codex` is allowed only with exactly the arguments `ROLE=qa ISSUE=<n>`
+- [ ] **Trigger.** A text is triggered if it contains both words `gh` and `close` (Python regexes `\bgh\b` and `\bclose\b`, flag `re.ASCII`, case-sensitive), or the text `qa-codex`. A Bash command is triggered if its original text is triggered, or a copy of it with every backslash-newline (`\` followed by LF) removed is triggered. Tests: `gh issue clo\` + LF + `se 5` and `g\` + LF + `h issue close 5` are triggered (and denied, see below). `gh issue list --state closed` and `grep -n close notes.md` are not triggered
+- [ ] **Allowed forms.** A triggered command is a guarded call only if its original, unchanged text (never the copy) matches one of these with Python `re.fullmatch`:
+  - close: `gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?`
+  - qa: `scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?`
+
+  A match gives the close call or the `qa-codex` call (role `qa`, agent `qa-codex`) for that issue number. It then goes through the checks G1–G7, the lock, the deadline and the launch comment, as before. A match is never an allow on its own. Tests (each is classified as the guarded call with the right issue number): `gh issue close 12`, `gh issue close 12 --reason completed`, `gh issue close 12 --reason=completed`, `gh issue close 12 -r 'not planned'`, `gh issue close 12 --reason "not planned"`, `gh issue close 12` + two spaces + LF, `scripts/qa-codex ROLE=qa ISSUE=12`, and `scripts/qa-codex ROLE=qa ISSUE=12` in a Bash event with `"run_in_background": true` (S1 Q4)
+- [ ] **Deny.** Every other triggered command is denied with `G1:`, before any `gh` or `git` call. Tests (each denied with `G1:`, and a subprocess run of at least three of them logs no `gh` call): `scripts/qa-codex ROLE=qa ISSUE=5` + `\r`, ` gh issue close 5` (leading space), `gh  issue close 5` (two spaces), `gh` + tab + `issue close 5`, `/usr/bin/gh issue close 5`, `command gh issue close 5`, `scripts/qa-codex ROLE=qa ISSUE=5 &`, `gh issue close 5 > /dev/null`, `gh issue close 5 && ls`, `gh issue close 5` + LF + LF, `gh issue close 0`, `gh issue close 05`, `gh issue close #5`, `gh issue close 5 --reason other`, `gh issue close 5 -R o/r`, `gh issue close 5 --comment x`, `scripts/qa-codex ROLE=qa ISSUE=0`, `scripts/qa-codex ISSUE=5 ROLE=qa`, `./scripts/qa-codex ROLE=qa ISSUE=5`, `uv run scripts/qa-codex ROLE=qa ISSUE=5`, `cat scripts/qa-codex`, `git add scripts/qa-codex`, `git commit -m "Fix gh close handling"`, `gh issue view 5 | grep close`, `gh pr close 5`, and a heredoc commit message that mentions `qa-codex` (`git commit -m "$(cat <<'EOF'` + LF + `Add qa-codex launcher` + LF + `EOF` + LF + `)"`)
+- [ ] **Deny message.** The deny reason for a triggered command that matches no form starts with `G1:` and contains each of these texts: `gh issue close <n>`, `scripts/qa-codex ROLE=qa ISSUE=<n>`, `git commit -F`, `--body-file`, `Read`, `Grep`, `git add scripts/` and `run_in_background`. (It names the two allowed forms and the ways around: a commit message from a file, a comment body from a file, the Read or Grep tool instead of Bash, a path without the trigger word, and `qa-codex` through the Bash tool's background option instead of `&`.) A test checks these texts
+- [ ] **No trigger.** A Bash command that is not triggered is not a guarded call and makes no `gh` call. Tests: `ls`, `gh issue view 5 --comments`, `gh issue comment 5 --body-file /tmp/x.md`, `gh issue list --state closed` pass with no output. G8 still applies to them
+- [ ] **G8 first.** G8 runs before the trigger rule for every Bash command. Test: `cp scripts/qa-codex .claude/settings.json` is denied with `G8:`
+- [ ] **Lexer removed.** `classify` decides a Bash command only with the trigger regexes and the two `re.fullmatch` forms. It calls no tokenizer for this. Every function and constant left in `guard.py` is reached from `main` (directly or through other functions); lexer code stays only as far as `g8` uses it. Tests of the old classifier that contradict the new rule are removed or changed (for example `cat scripts/qa-codex` in a pass list, `gh  issue close 12` parsed as a close)
 - [ ] When allowed, a launch posts `## Launch: <role> (attempt <n>)` with the line `Agent: <agent>` before the call runs. Close posts nothing
 - [ ] A `SendMessage` call is guarded like a launch: it needs exactly one launch line in its message, otherwise `G1:`. When allowed, it posts `## Launch: <role> (continued, round <n>)` with `Agent: <target>`
 - [ ] A Bash command that writes to `.claude/settings*.json` is denied with `G8:`. Cases: `echo '{"disableAllHooks": true}' > .claude/settings.local.json`, `cd .claude && tee settings.local.json`, `cp x .claude/settings.json`, `mv`, `sed -i`, `python -c "…settings.local.json…"`. `cat .claude/settings.json` and `jq . .claude/settings.json` pass. When unsure, deny
@@ -490,10 +495,8 @@ Lane: default
 
 ```python
 class Deny(Exception): ...
-def split_command(command: str) -> tuple[list[list[str]], int]   # (simple commands, number of operators); raises ValueError
-def substitutions(token: str) -> list[str]                  # texts inside $(…) and backticks; raises ValueError if unbalanced
 def classify(event: dict) -> Call | None                     # None = not guarded; raises Deny
-def decide(event: dict, read_facts, post_comment) -> str | None   # deny reason or None
+def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext) -> str | None   # deny reason or None
 def main(stdin=sys.stdin, stdout=sys.stdout) -> int          # always returns 0
 ```
 
@@ -508,27 +511,27 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int          # always returns 0
    def bash(cmd): return {"tool_name": "Bash", "tool_input": {"command": cmd}}
    def agent(t, prompt): return {"tool_name": "Agent", "tool_input": {"subagent_type": t, "prompt": prompt}}
 
-   @pytest.mark.parametrize("cmd", ['grep -n "gh issue close" AGENTS.md', "cat scripts/qa-codex",
-                                    'git commit -m "run qa-codex later"', "ls",
-                                    "git commit -m \"$(cat <<'EOF'\nAdd qa-codex launcher\nEOF\n)\""])
-   def test_unguarded_bash_passes(cmd):
+   @pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue comment 5 --body-file /tmp/x.md",
+                                    "gh issue list --state closed", "grep -n close notes.md"])
+   def test_command_without_trigger_is_not_guarded(cmd):
        assert classify(bash(cmd)) is None
 
-   @pytest.mark.parametrize("cmd", ["echo hi && gh issue close 5", "gh issue close 5; ls",
-                                    "gh issue close 5 -R other/repo", "gh issue close", "gh issue close 5 6",
-                                    "GH_REPO=x/y gh issue close 5", "scripts/qa-codex ROLE=qa",
-                                    "gh issue close 'unterminated", "(gh issue close 5)", "gh issue close 5 &",
-                                    'echo "$(gh issue close 5)"', "echo `scripts/qa-codex ROLE=qa ISSUE=5`"])
-   def test_unclear_guarded_bash_is_denied(cmd):
-       with pytest.raises(Deny):
-           classify(bash(cmd))
+   @pytest.mark.parametrize("cmd", ["gh issue close 12", "gh issue close 12 --reason completed",
+                                    "gh issue close 12 -r 'not planned'", "gh issue close 12  \n"])
+   def test_close_form_is_the_guarded_call(cmd):
+       assert classify(bash(cmd)).issue == 12
 
-   def test_close_and_qa_codex_are_parsed():
-       assert classify(bash("gh issue close 12 --reason completed")).issue == 12
-       assert classify(bash("gh  issue close 12")).issue == 12
-       assert classify(bash("gh\tissue close 12")).issue == 12
+   def test_qa_form_is_the_guarded_call():
        call = classify(bash("scripts/qa-codex ROLE=qa ISSUE=12"))
        assert (call.role, call.agent, call.issue) == ("qa", "qa-codex", 12)
+
+   @pytest.mark.parametrize("cmd", ["gh  issue close 5", "/usr/bin/gh issue close 5", "gh issue close 5 && ls",
+                                    "scripts/qa-codex ROLE=qa ISSUE=5 &", "gh issue close 05", "gh issue clo\\\nse 5",
+                                    "cat scripts/qa-codex", 'git commit -m "Fix gh close handling"', "gh pr close 5",
+                                    "git commit -m \"$(cat <<'EOF'\nAdd qa-codex launcher\nEOF\n)\""])
+   def test_other_triggered_commands_are_denied(cmd):
+       with pytest.raises(Deny, match="^G1:"):
+           classify(bash(cmd))
 
    def test_launch_line_must_match_agent():
        with pytest.raises(Deny):
@@ -578,20 +581,23 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int          # always returns 0
    DEADLINE_S = int(os.environ.get("GUARD_DEADLINE", "60"))   # spec 5.6
    AGENT_ROLE = {"pm": "pm", "software-engineer": "engineer",
                  "frontend-engineer": "engineer", "qa-engineer": "qa"}
-   OPERATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
+   GH = re.compile(r"\bgh\b", re.ASCII)
+   CLOSE_WORD = re.compile(r"\bclose\b", re.ASCII)
+   CLOSE_FORM = re.compile(r"""gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?""")
+   QA_FORM = re.compile(r"scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?")
 
-   def split_command(command):
-       lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
-       lex.whitespace_split = True
-       cmds, cur, ops = [], [], 0
-       for tok in lex:
-           if tok in OPERATORS:
-               ops += 1
-               cmds.append(cur); cur = []
-           else:
-               cur.append(tok)
-       cmds.append(cur)
-       return [c for c in cmds if c], ops
+   def _triggered(text):
+       return bool(GH.search(text) and CLOSE_WORD.search(text)) or "qa-codex" in text
+
+   def _classify_bash(tool_input):
+       command = tool_input.get("command")      # not a string -> Deny("G1: …")
+       reason = g8(command)                     # first, no gh call
+       if reason: raise Deny(reason)
+       if not (_triggered(command) or _triggered(command.replace("\\\n", ""))):
+           return None
+       if m := CLOSE_FORM.fullmatch(command): return Call(role="close", agent="", issue=int(m[1]))
+       if m := QA_FORM.fullmatch(command): return Call(role="qa", agent="qa-codex", issue=int(m[1]))
+       raise Deny("G1: … (the two forms and the ways around, see the deny message criterion)")
 
    def main(stdin=sys.stdin, stdout=sys.stdout):
        try:
@@ -609,12 +615,7 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int          # always returns 0
        sys.exit(main())
    ```
 
-   How `classify` handles a Bash command (there is no raw-text prefilter, so whitespace variants cannot slip through):
-   - If `split_command` raises `ValueError`: it raises `Deny` if the text contains `gh` or `qa-codex`, otherwise it returns `None`.
-   - For each token, it calls `substitutions(token)` and classifies each inner text the same way (recursively). If an inner text contains a guarded call, it raises `Deny`.
-   - If a simple command is guarded and the operator count is not 0, or there is more than one simple command, it raises `Deny`.
-   - Otherwise it parses the single guarded command (close number or `qa-codex` arguments), or returns `None`.
-   - A heredoc body line that starts with a guarded call is denied. This is a false deny, which is safe; the engineer rewrites the command.
+   How `classify` handles a Bash command: G8 runs first. Then the trigger rule decides with the two regexes and the two `re.fullmatch` forms only. There is no tokenizer for guarded calls. Every triggered command that is not one of the two forms is denied, also when it runs no guarded call (accepted false denies, spec 5.1). A tokenizer may exist only as far as G8 needs it.
 
    `read_facts` runs `gh issue view N --json number,state,labels,body,comments`, `git rev-parse HEAD` and `git status --porcelain`, each with `check=True, timeout=20`. `post_comment` runs `gh issue comment N --body-file -` with the body on stdin.
 5. Run `uv run --with pytest pytest -v`. Expected: all tests PASS.
