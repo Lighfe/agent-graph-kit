@@ -18,7 +18,7 @@ Now, it is in bootstrap. We build the kit with a prose-only process.
 - `gh issue edit <number> --add-label <label>` / `--remove-label <label>` - change labels
 - `gh issue close <number>` - close an issue (orchestrator only, see `docs/team/orchestrator.md`)
 
-Test command: none yet. If no test suite exists, say so in the issue comment. Never report tests as passed if no test ran.
+Test command: uv run --with pytest pytest. Never report tests as passed if no test ran.
 
 ## Skills and subagents
 

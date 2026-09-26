@@ -1,0 +1,10 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv publishes no major tags since v8; v10.2.0 is the current major.
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv run --with pytest pytest
