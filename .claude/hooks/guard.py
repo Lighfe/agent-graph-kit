@@ -17,6 +17,11 @@ overall deadline (GUARD_DEADLINE seconds, default 60). Stdlib only.
 Known limits by design (P1, hooks are not a security boundary): a command
 run from a string or a variable (`bash -c`, `eval`, `xargs`, `sudo`,
 `$GH issue close 5`, aliases, functions) is not recognized.
+
+To stay safe where the tokenizer and bash may differ, the guard also denies
+some commands that run no guarded call: `echo gh issue close 5` (a close
+after another command word), and a later line that is a guarded call on its
+own, also inside a here-document or a quoted string (see _line_check).
 """
 
 from __future__ import annotations
@@ -68,23 +73,36 @@ class Deny(Exception):
 # --- shell tokenizer ------------------------------------------------------------------
 #
 # A small bash-like tokenizer. It knows quotes ('…', "…", $'…', $"…"), backslashes,
-# line continuations, ${…}, $(…), backticks, arithmetic ((…)), $((…)) and $[…],
-# operators, redirections (also with {fd}), here-documents, comments and the
-# patterns of `case`. As in bash, `#` starts a comment only at the start of a
-# word, so `echo x#; gh issue close 5` has two commands.
+# line continuations, $name, ${…}, $(…), <(…), >(…), backticks, arithmetic ((…)),
+# $((…)), $[…] and subscripts a[…], operators, redirections (also with {fd}),
+# here-documents, comments and the patterns of `case`. As in bash, `#` starts a
+# comment only at the start of a word, so `echo x#; gh issue close 5` has two commands.
 #
-# Tokens: ("w", value, subs) a word, quotes removed, `subs` the texts inside
-# $(…), backticks and arithmetic (unquoted or in double quotes); ("op", op) a
-# command separator, also "((" before an arithmetic command; ("redir", op) a
-# redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
+# Tokens: ("w", value, subs, bare) a word, quotes removed, `subs` the texts inside
+# $(…), <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double
+# quotes), `bare` the word without its expansions; ("op", op) a command separator,
+# also "((" before an arithmetic command; ("redir", op) a redirection; ("body", "",
+# subs) the substitutions in an unquoted here-document body.
+#
+# Where the tokenizer is not sure how bash reads a text, it reads it so that more
+# text is checked as a command: the text inside arithmetic and subscripts is also
+# checked as a command of its own, and each line is also read on its own
+# (_line_check), because bash goes on with the next line after a syntax error.
 
-_OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", "<(", ">(", ">>", ">|", "<>", "<&", ">&",
+_OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", ">>", ">|", "<>", "<&", ">&",
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
 _REDIRECTS = {"<", ">", ">>", ">|", "<>", "<&", ">&", "&>", "&>>", "<<", "<<-", "<<<"}
-_OPEN = {"(", "<(", ">("}
 _CASE_NEXT = {";;", ";&", ";;&"}  # end a case branch; a pattern follows
 _COMMAND_FOLLOWS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
+_JOINABLE = (*_OPS, "<(", ">(", "((", "))", "$'", '$"', "${", "$(", "$((", "$[", "$$")  # tokens of more than one character
+_MAX_NESTING = 100  # deeper $…, <(…) and >(…) nesting cannot be parsed
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9!@#?$*-]")  # $name, $1, $!, $$ …
+# An expansion ($x, ${…}, $(…), `…`) in a word is kept between these two marks while the
+# lexer runs. The word's value drops the marks; its "bare" form drops the whole expansion,
+# which is what bash runs when the expansion is empty (`$(true)gh` runs gh).
+_X0, _X1 = "\ue000", "\ue001"
+_EXPANDED = re.compile(f"{_X0}[^{_X1}]*{_X1}")
 _NAMED_FD = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")  # {fd}>file: bash puts the new fd number in $fd
 _ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
          "\\": "\\", "'": "'", '"': '"', "?": "?"}
@@ -96,22 +114,26 @@ class _Lexer:
     # ahead of the current position. So every loop reads self.t and self.n again, and a
     # position returned by a nested call is a position in the new text.
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, one_line: bool = False):
         self.t = text
         self.n = len(text)
+        self.one_line = one_line  # stop at the first newline outside quotes and $(…)
+        self.level = 0  # nesting of $…, <(…) and >(…)
 
-    def join(self, i: int, k: int = 2) -> None:
-        """Remove the line continuations (backslash-newline) in the k characters after i.
-        Bash removes them before it reads a token, so `$\\<newline>'` is `$'` and `<\\<newline><` is `<<`."""
+    def join(self, i: int) -> None:
+        """Remove the line continuations (backslash-newline) inside the token that starts at i.
+        Bash removes them before it reads a token, so `$\\<newline>'` is `$'` and `<\\<newline><` is `<<`.
+        It stops after the token, so a `#` after it and the comment behind it stay as they are."""
         j = i + 1
-        while j < min(self.n, i + 1 + k):
-            if self.t.startswith("\\\n", j):
+        while j <= self.n:
+            while self.t.startswith("\\\n", j):
                 self.t = self.t[:j] + self.t[j + 2:]
                 self.n -= 2
-            elif self.t[j] == "\\":
-                break
-            else:
+            head = self.t[i:j + 1]
+            if j < self.n and any(len(tok) > len(head) and tok.startswith(head) for tok in _JOINABLE):
                 j += 1
+            else:
+                return
 
     def script(self, i: int, sub: bool) -> tuple[list[tuple], int]:
         """Tokens from i to the end, or (sub=True) to the `)` that closes a $(."""
@@ -130,10 +152,11 @@ class _Lexer:
         def end():
             nonlocal buf, subs, word, quoted, start
             if word:
-                value = "".join(buf)
+                marked = "".join(buf)
+                value = marked.replace(_X0, "").replace(_X1, "")
                 if toks and toks[-1] in (("redir", "<<"), ("redir", "<<-")):
                     heredocs.append((value, toks[-1][1] == "<<-", quoted))
-                toks.append(("w", value, tuple(subs)))
+                toks.append(("w", value, tuple(subs), _EXPANDED.sub("", marked)))
                 plain = not quoted and not subs
                 state = cases[-1][0] if cases else None
                 if state == "word":  # case WORD
@@ -169,7 +192,7 @@ class _Lexer:
                     j, inner, inner_subs = arith
                     end()
                     toks.append(("op", "(("))
-                    toks.append(("w", self.t[i:j], (*inner_subs, inner)))
+                    toks.append(("w", self.t[i:j], (*inner_subs, inner), self.t[i:j]))
                     start = False
                     i = j
                     continue
@@ -184,6 +207,8 @@ class _Lexer:
                 i = n if j < 0 else j
             elif c == "\n":
                 end()
+                if self.one_line and not sub:
+                    return toks, i
                 toks.append(("op", "\n"))
                 start = True
                 i += 1
@@ -214,10 +239,13 @@ class _Lexer:
             elif c == "`":
                 i = self.backtick(i, buf, subs)
                 word = True
-            elif c == "$" and t.startswith(("$'", '$"', "${", "$(", "$[", "$$"), i):
+            elif c == "$":
                 i, is_quoted = self.dollar(i, buf, subs)
                 word = True
                 quoted = quoted or is_quoted
+            elif c in "<>" and t.startswith(("<(", ">("), i):  # process substitution, a word part like $(…)
+                i = self.procsub(i, buf, subs)
+                word = True
             elif c in "()" and state == "pattern":  # `(` before and `)` after a case pattern
                 toks.append(("op", c))
                 if c == ")":
@@ -234,7 +262,7 @@ class _Lexer:
                     if (text.isascii() and text.isdigit()) or _NAMED_FD.fullmatch(text):
                         buf, word = [], False  # a file descriptor, as in 2>&1 or {fd}>file
                 end()
-                if op in _OPEN:
+                if op == "(":
                     depth += 1
                 elif op == ")":
                     depth -= 1
@@ -245,11 +273,15 @@ class _Lexer:
                 toks.append(("redir" if op in _REDIRECTS else "op", op))
                 i += len(op)
             elif c == "[" and not quoted and not subs and (not word or _NAME.fullmatch("".join(buf))) and (
-                    sub_end := self.subscript(i)):
-                # the subscript of an array assignment, `a[1<<2]=x` or `a=( [1<<2]=x )`, is arithmetic
+                    sub_end := self.arith(i + 1, "]")):
+                # A subscript, as in `a[1<<2]=x`, `a[1<<2]` as the first word or `a=( [1<<2]=x )`, is one unit:
+                # `<<` in it is no here-document. Bash reads an argument `a[…]` as a unit only in some
+                # places. Reading it as a unit everywhere is safe, because the text inside is checked
+                # as a command of its own. It is checked with a letter before it: in bash, a `#` after
+                # the `[` is inside a word and starts no comment.
                 j, inner, inner_subs = sub_end
                 buf.append(self.t[i:j])
-                subs.extend((*inner_subs, inner))
+                subs.extend((*inner_subs, "x" + inner))
                 word = True
                 i = j
             else:
@@ -262,19 +294,41 @@ class _Lexer:
         return toks, i
 
     def dollar(self, i: int, buf: list[str], subs: list[str], dq: bool = False) -> tuple[int, bool]:
-        """An expansion or quote that starts with `$` at i: $'…', $"…", ${…}, $(…), $((…)), $[…], $$.
+        """What starts with `$` at i: the quotes $'…' and $"…", or an expansion $name, $1, $$, ${…},
+        $(…), $((…)), $[…] (appended between the marks _X0 and _X1), or a plain `$`.
         Returns (index after it, whether it is a quote)."""
+        self.level += 1
+        try:
+            return self._dollar(i, buf, subs, dq)
+        finally:
+            self.level -= 1
+
+    def _dollar(self, i: int, buf: list[str], subs: list[str], dq: bool) -> tuple[int, bool]:
+        if self.level > _MAX_NESTING:
+            raise ValueError("the command is nested too deeply")
         self.join(i)
         t = self.t
-        if t.startswith("$$", i):  # the process id, so a quote after it is a plain quote
-            buf.append("$$")
-            return i + 2, False
         if t.startswith("$'", i) and not dq:
             return self.ansi(i + 2, buf), True
         if t.startswith('$"', i) and not dq:
             return self.double(i + 2, buf, subs, '"'), True
+        part: list[str] = []
         if t.startswith("${", i):
-            return self.brace(i, buf, subs, dq), False
+            j = self.brace(i, part, subs, dq)
+        elif m := _PARAMETER.match(t, i + 1):  # $$ is the process id, so a quote after it is a plain quote
+            j = m.end()
+            part.append(t[i:j])
+        else:
+            j = self.expression(i, part, subs)
+        if not part:
+            buf.append("$")
+            return i + 1, False
+        buf.append(_X0 + "".join(part) + _X1)
+        return j, False
+
+    def expression(self, i: int, buf: list[str], subs: list[str]) -> int:
+        """$(…), $((…)) or $[…] at i, else nothing. Returns the index after it."""
+        t = self.t
         if t.startswith("$[", i):
             arith = self.arith(i + 2, "]")
             if not arith:
@@ -284,8 +338,7 @@ class _Lexer:
         elif t.startswith("$(", i):
             arith = None
         else:
-            buf.append("$")
-            return i + 1, False
+            return i
         if arith:  # the text inside is also checked as a command: $((…) ) may be a $( (…) )
             j, inner, inner_subs = arith
             subs.extend((*inner_subs, inner))
@@ -293,14 +346,19 @@ class _Lexer:
             _, j = self.script(i + 2, sub=True)
             subs.append(self.t[i + 2:j - 1])
         buf.append(self.t[i:j])
-        return j, False
+        return j
 
-    def subscript(self, i: int) -> tuple[int, str, list[str]] | None:
-        """`[…]` at i if `=` or `+=` follows it, as in an array assignment, else None."""
-        arith = self.arith(i + 1, "]")
-        if arith and self.t.startswith(("=", "+="), arith[0]):
-            return arith
-        return None
+    def procsub(self, i: int, buf: list[str], subs: list[str]) -> int:
+        if self.level >= _MAX_NESTING:
+            raise ValueError("the command is nested too deeply")
+        self.level += 1
+        try:
+            _, j = self.script(i + 2, sub=True)
+        finally:
+            self.level -= 1
+        subs.append(self.t[i + 2:j - 1])
+        buf.append(self.t[i:j])
+        return j
 
     def arith(self, i: int, close: str) -> tuple[int, str, list[str]] | None:
         """Arithmetic from i to `close` ("))" or "]"): (index after it, the text inside, the
@@ -327,7 +385,7 @@ class _Lexer:
                 depth += 1
                 j += 1
             elif c == close[0]:
-                self.join(j, 1)
+                self.join(j)
                 if depth:
                     depth -= 1
                     j += 1
@@ -424,6 +482,12 @@ class _Lexer:
                 j = self.backtick(j, [], subs)
             elif c == "$":
                 j, _ = self.dollar(j, [], subs, dq=dq)
+            elif c in "<>" and not dq:
+                self.join(j)
+                if self.t.startswith(("<(", ">("), j):
+                    j = self.procsub(j, [], subs)
+                else:
+                    j += 1
             else:
                 j += 1
         raise ValueError("unterminated ${")
@@ -436,7 +500,7 @@ class _Lexer:
             raise ValueError("unterminated backtick")
         # bash removes the backslash before ` $ \ inside backticks before it runs the text
         subs.append(re.sub(r"\\([`$\\])", r"\1", t[i + 1:j]))
-        buf.append(t[i:j + 1])
+        buf.append(_X0 + t[i:j + 1] + _X1)
         return j + 1
 
     def heredoc(self, i: int, delim: str, strip: bool, joined: bool) -> tuple[int, str]:
@@ -463,8 +527,14 @@ class _Lexer:
         return n, t[start:]
 
 
-def _lex(command: str) -> list[tuple]:
-    return _Lexer(command).script(0, sub=False)[0]
+def _lex(command: str, start: int = 0, one_line: bool = False) -> list[tuple]:
+    """Tokens of the command from `start`. Raises ValueError if it cannot be parsed."""
+    if _X0 in command or _X1 in command:
+        raise ValueError("the command contains a private-use character the tokenizer uses")
+    try:
+        return _Lexer(command, one_line).script(start, sub=False)[0]
+    except RecursionError:
+        raise ValueError("the command is nested too deeply") from None
 
 
 def _simple_commands(toks: list[tuple]) -> tuple[list[list[tuple]], int]:
@@ -534,15 +604,16 @@ def _classify_send(tool_input: dict) -> Call:
     return Call(role=role, agent=to, issue=number, continued=True)
 
 
-def _words(cmd: list[tuple]) -> list[str]:
-    """The words of a simple command, without its redirections and their targets."""
+def _words(cmd: list[tuple], bare: bool = False) -> list[str]:
+    """The words of a simple command, without its redirections and their targets.
+    bare=True: each word without its expansions ($x, ${…}, $(…), `…`)."""
     words, target = [], False
     for tok in cmd:
         if tok[0] == "redir":
             target = True
         elif tok[0] == "w":
             if not target:
-                words.append(tok[1])
+                words.append(tok[3] if bare else tok[1])
             target = False
     return words
 
@@ -576,10 +647,12 @@ def _call_at(words: list[str], k: int) -> tuple[str, int] | None:
     return None
 
 
-def _find_guarded(cmd: list[tuple]) -> tuple[list[str], int, str, int] | None:
-    """(words, index of the first command word, "close" | "qa-codex", index of the last command word) or None.
-    Redirections do not count as words, wherever they stand."""
-    words = _words(cmd)
+def _find_guarded(cmd: list[tuple], anywhere: bool = True) -> tuple[list[str], int, str, int] | None:
+    """(bare words, index of the first command word, "close" | "qa-codex", index of the last command word) or None.
+    Redirections do not count as words, wherever they stand. The search uses the words without their
+    expansions, because an empty expansion vanishes: `$(true)gh` and `${x}gh` run gh.
+    anywhere=False: after an unknown command word, do not look further (for prose lines)."""
+    words = _words(cmd, bare=True)
     i, after_prefix = 0, False
     while i < len(words):
         value = words[i]
@@ -600,6 +673,8 @@ def _find_guarded(cmd: list[tuple]) -> tuple[list[str], int, str, int] | None:
     # So a `gh … issue close` later in the words counts too. A qa-codex word later counts after a
     # known wrapper, or when its launch arguments follow, so `cat scripts/qa-codex` still passes.
     wrapped = any(w in WRAPPERS for w in words[:i])
+    if not (anywhere or wrapped):
+        return None
     for k in range(i + 1, len(words)):
         found = _call_at(words, k)
         if not found:
@@ -677,7 +752,11 @@ def _classify_text(text: str) -> Call | None:
     if ops or len(cmds) != 1:
         raise Deny("G1: a guarded call (gh issue close or qa-codex) is part of a command with shell operators, "
                    "expected one simple command without ; && || | & newline ( )")
-    cmd, (words, first, kind, last) = guarded[0]
+    cmd, (bare, first, kind, last) = guarded[0]
+    words = _words(cmd)
+    if words[first:last + 1] != bare[first:last + 1]:
+        raise Deny(f"G1: a guarded call ({kind}) has an expansion ($…, `…`) in {' '.join(words[first:last + 1])}, "
+                   "expected plain command words")
     if first:
         raise Deny(f"G1: a guarded call ({kind}) has {words[0]} before it, "
                    "expected the call at the start of the command")
@@ -691,6 +770,40 @@ def _classify_text(text: str) -> Call | None:
                        "expected gh issue close <number>")
         return Call(role="close", agent="", issue=_close_number(args))
     return Call(role="qa", agent="qa-codex", issue=_qa_codex_issue(args))
+
+
+def _has_guarded(text: str, start: int = 0, one_line: bool = False) -> bool:
+    """True if `text` from `start`, read as a command on its own, has a guarded call at the start of
+    a simple command, also behind prefixes and known wrappers, or inside a substitution. A text that
+    cannot be parsed has none. one_line: read only up to the end of the first line, which may go on
+    over more lines inside quotes and $(…)."""
+    try:
+        toks = _lex(text, start, one_line)
+    except ValueError:
+        return False
+    for cmd in _simple_commands(toks)[0]:
+        if _find_guarded(cmd, anywhere=False):
+            return True
+        if any(_has_guarded(inner) for tok in cmd if tok[0] in ("w", "body") for inner in tok[2]):
+            return True
+    return False
+
+
+def _line_check(command: str) -> str | None:
+    """Deny reason if a later line of the command is a guarded call when it is read on its own.
+
+    After a syntax error, bash drops the rest of that line and parses the next line fresh. So a
+    line that is data to the tokenizer (a here-document body, a quoted string) may run, when bash
+    finds a syntax error the tokenizer does not know. Each line is read on its own; a line that
+    goes on over more lines (an open quote) is read together with them. The lines after that
+    are checked on their own too."""
+    starts = [m.end() for m in re.finditer("\n", command)]
+    for number, k in enumerate(starts, start=1):
+        if _has_guarded(command, k, one_line=True):
+            return (f"G1: line {number + 1} of the command is a guarded call (gh issue close or qa-codex) when "
+                    "bash reads it on its own, as it does after a syntax error; expected no such line "
+                    "(put long text in a file: git commit -F, gh --body-file)")
+    return None
 
 
 def g8(command: str) -> str | None:
@@ -725,7 +838,11 @@ def _classify_bash(tool_input: dict) -> Call | None:
     reason = g8(command)  # first, and without any gh call
     if reason:
         raise Deny(reason)
-    return _classify_text(command)
+    call = _classify_text(command)
+    reason = _line_check(command)
+    if reason:
+        raise Deny(reason)
+    return call
 
 
 def classify(event: dict) -> Call | None:

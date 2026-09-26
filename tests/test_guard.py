@@ -188,7 +188,6 @@ def test_allowed_qa_codex_forms(cmd):
     "gh issue list --state open --label ready", "gh issue comment 5 --body-file /tmp/x", "gh pr close 5",
     "echo gh", "git log --oneline -5", "uv run --with pytest pytest", "python3 -m pytest tests/test_qa_codex.py",
     "echo x#y", "git commit -m 'a `gh` b'", "wc -l scripts/qa-codex", "",
-    "cat <<'EOF'\ngh issue close 5\nEOF",
     "git commit -m \"$(cat <<'EOF'\nDon't run qa-codex through gh\nEOF\n)\"",
 ])
 def test_unguarded_commands_pass(cmd):
@@ -275,6 +274,22 @@ HIDDEN_CLOSE = [
     "echo $\\\n'\\'' ; gh issue close 5 #'", "echo $\\\n{x:- #} ; gh issue close 5",
     # `<<` in an array subscript of an assignment is a shift
     "a[1<<2]=x\ngh issue close 5", "a=( [1<<2]=x )\ngh issue close 5",
+    # … and in the first word of a command also without `=`; in an argument, `[…]=` is no unit
+    "a[esac1<<2]\ngh issue close 5", "true | a[<<]a\ngh issue close 5", "x=1 a[1<<2]\ngh issue close 5",
+    "echo a[x;gh issue close 5]=y", "echo [x;gh issue close 5]=y", "a=(x) echo a[x;gh issue close 5]=y",
+    "[#$x; gh issue close 5 #]=)", "echo a[#; gh issue close 5 #]",
+    # <(…) and >(…) are parsed like $(…): a word part, with here-documents of their own
+    "echo >((!1<<2)) \ngh issue close 5", "do<(echo)#; gh issue close 5",
+    "echo <(true)#; gh issue close 5", "echo ${x:-<(gh issue close 5)}", "echo a>(gh issue close 5)",
+    # a syntax error in bash drops the rest of its line, and bash goes on with the next line
+    "a=(1<<2\ngh issue close 5", "a=(x; echo ')\ngh issue close 5 #'",
+    "echo \"$(a=(x; echo ')\ngh issue close 5 #')\"", "a=(x; echo ')\ntimeout 5 gh issue close 5 #'",
+    "a=(x; echo ')\ngh issue close 5\n'",
+    # a comment is not joined with the next line
+    "true&#\\\ngh issue close 5", "true;#\\\ngh issue close 5",
+    # an empty expansion glued to a command word
+    "${case}\\\ngh issue close 5", "$!\\\ngh issue close 5", "``gh issue close 5", "$(true)gh issue close 5",
+    "gh ${x}issue close 5", "gh issue ${x}close 5", '"$x"gh issue close 5',
     # a line continuation in an unquoted here-document body can form the delimiter
     "cat <<EOF\nx\nEO\\\nF\ngh issue close 5\nEOF",
     # a command that runs the words after it, also one the guard does not know by name
@@ -335,7 +350,9 @@ def test_comments_ansi_quotes_and_case_that_run_no_guarded_call_pass(cmd):
     'echo "$((1<<2)) $[2<<1]"', "exec {fd}>/dev/null", "echo $'\\c'", "echo $'a\\cb'",
     "echo $(grep -c case f)", "x=$(echo case x in y)", "for case in a b; do echo $case; done",
     "function f { echo hi; }", "echo a \\\n  b", "ls &&\\\n ls", "echo $\\\n{HOME}",
-    "git commit -m \"$(cat <<'EOF'\nHandle case x in y) in gh issue close (see #7)\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nHandle case x in y) for the close (see #7)\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nDon't run gh issue close by hand\nEOF\n)\"",
+    "git commit -m \"$(cat <<'EOF'\nFix: gh issue close 5 with {fd}> is denied\n- and gh issue close behind ionice\nEOF\n)\"",
 ])
 def test_arithmetic_named_fds_and_keywords_that_run_no_guarded_call_pass(cmd):
     assert classify(bash(cmd)) is None
@@ -768,3 +785,39 @@ def test_guard_script_has_pep723_header_and_stdlib_only():
     text = GUARD.read_text()
     assert text.startswith("#!/usr/bin/env -S uv run --script\n")
     assert "# /// script" in text and "# dependencies = []" in text
+
+
+def test_tokenizer_marks_in_the_command_do_not_hide_a_close():
+    assert denied(bash("gh issue close 5")).startswith("G1:")
+    assert classify(bash("echo ")) is None
+
+
+@pytest.mark.parametrize("cmd", ["cat <<'EOF'\ngh issue close 5\nEOF", "echo 'a\ngh issue close 5\nb'",
+                                 "git commit -m \"$(cat <<'EOF'\nFix it\n\ngh issue close 5 is denied\nEOF\n)\""])
+def test_a_line_that_is_a_guarded_call_on_its_own_is_denied(cmd):
+    """Bash drops the rest of a line with a syntax error and parses the next line fresh. So a line
+    that is data to the guard (a here-document body, a quoted string) may run. Such a line is denied."""
+    reason = denied(bash(cmd))
+    assert reason.startswith("G1:") and "line" in reason
+
+
+def test_deep_nesting_is_unparseable_not_a_crash():
+    assert classify(bash("echo " + "${" * 3000)) is None
+    assert denied(bash("gh issue close 5 " + "$(" * 3000)).startswith("G1:")
+    assert classify(bash("cat <<'EOF'\n" + "x ${\n" * 3000 + "EOF")) is None
+
+
+@pytest.mark.parametrize("cmd", ["echo gh issue close 5", "grep -e gh issue close 5"])
+def test_a_close_after_another_command_word_is_denied(cmd):
+    """A safe false deny: the guard cannot know which commands run the words after them."""
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+@pytest.mark.parametrize("cmd", ["gh {fd}>/dev/null issue close 5", "(( 1<<2 ))\ngh issue close 5",
+                                 "echo $'\\c'; gh issue close 5 #'", "function f { gh issue close 5; }\nf",
+                                 "echo $(time -p case x in x) gh issue close 5;; esac)",
+                                 "{fd}>/dev/null scripts/qa-codex ROLE=qa ISSUE=5", "a=(x; echo ')\ngh issue close 5 #'"])
+def test_second_round_bypasses_deny_end_to_end(env, cmd):
+    code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1")
+    assert code == 0 and deny_reason(out).startswith("G1:")
+    assert lines(env["FAKE_GH_CALLS"]) == []
