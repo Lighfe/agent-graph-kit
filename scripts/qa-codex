@@ -103,7 +103,8 @@ def build_prompt(criteria: list[str], base: str, head: str) -> str:
         + "\n\n".join(blocks) + "\n\n"
         "Return only the JSON that the output schema asks for: exactly one entry for each criterion "
         "above, with its number as `id`, the verdict `pass`, `fail` or `invalid`, and your evidence. "
-        "Set `verified_sha` to the full output of `git rev-parse HEAD`.\n"
+        "Set `verified_sha` to the full output of `git rev-parse HEAD`. "
+        "Do not quote secrets (keys, tokens, passwords) in your evidence; name them instead.\n"
     )
 
 
@@ -214,7 +215,7 @@ def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
         return None
     lines = [line.strip() for line in (stderr + "\n" + stdout).splitlines() if line.strip()]
     line = next((x for x in lines if _ERROR_LINE.search(x)), lines[0] if lines else f"exit code {p.returncode}")
-    return line[:codex_exec.REASON_MAX]
+    return codex_exec.redact(line)[:codex_exec.REASON_MAX]  # redact before the cut
 
 
 def _has_frontend_submodule(worktree: Path) -> bool:
@@ -255,8 +256,10 @@ def _reset_worktree(worktree: Path) -> None:
 
 
 def _post(issue: int, body: str) -> int:
+    """The only place that posts a comment. The whole comment is redacted right before `gh`."""
     try:
-        p = subprocess.run(["gh", "issue", "comment", str(issue), "--body-file", "-"], input=body,
+        p = subprocess.run(["gh", "issue", "comment", str(issue), "--body-file", "-"],
+                           input=codex_exec.redact(body),
                            capture_output=True, text=True)
     except OSError as e:
         print(f"qa-codex: cannot post the comment: {e}", file=sys.stderr)
@@ -347,7 +350,7 @@ def main(argv: list[str], sleep=time.sleep) -> int:
     try:
         added = _git("worktree", "add", "--detach", "--quiet", str(worktree), head, cwd=repo)
         if added.returncode != 0:
-            return post(INVALID, f"cannot create the worktree: {added.stderr.strip()[:codex_exec.REASON_MAX]}")
+            return post(INVALID, f"cannot create the worktree: {codex_exec._one_line(added.stderr)}")
         error = pre_step(worktree, prestep_timeout)
         if error is not None:
             return post(UNAVAILABLE, error)

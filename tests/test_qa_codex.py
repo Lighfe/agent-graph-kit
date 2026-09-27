@@ -772,3 +772,223 @@ def test_qa_role_file_has_spec_7_behavior():
     ]:
         assert needle in text, needle
     assert text.count("Checker: claude (fallback)") == 2  # the example and the definition of done
+
+
+# --- redaction (spec P5) -----------------------------------------------------------------
+# All secrets below are synthetic. The env vars are set with monkeypatch, never read.
+
+ENV_SECRET = "synthEnvSecretValue0123456789ABCDEF"
+GH_TOKEN_SYN = "ghp_" + "Z9" * 15
+SK_KEY_SYN = "sk-proj-" + "q7_W-" * 6
+
+# A fake codex that the test scripts: SCRIPTED_CODEX=<path> to a JSON file with either
+# {"message": ...} (turn.failed, exit 1) or {"output": ...} (written to the -o file; the value
+# "HEAD" of verified_sha becomes `git rev-parse HEAD`).
+SCRIPTED_CODEX = r'''#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+sys.stdin.read()
+with open(os.environ["SCRIPTED_CODEX"], encoding="utf-8") as f:
+    spec = json.load(f)
+if "message" in spec:
+    print(json.dumps({"type": "turn.failed", "error": {"message": spec["message"]}}))
+    sys.exit(1)
+out = spec["output"]
+if out.get("verified_sha") == "HEAD":
+    out["verified_sha"] = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                                         check=True).stdout.strip()
+with open(args[args.index("-o") + 1], "w", encoding="utf-8") as f:
+    json.dump(out, f)
+'''
+
+# A fake npm whose failure line is SCRIPTED_NPM_LINE.
+SCRIPTED_NPM = r'''#!/usr/bin/env python3
+import os, sys
+sys.stderr.write("npm ERR! " + os.environ["SCRIPTED_NPM_LINE"] + "\n")
+sys.exit(1)
+'''
+
+
+def _install(qa_env, tool, source):
+    path = qa_env.bin / tool
+    path.unlink()
+    path.write_text(source)
+    path.chmod(0o755)
+
+
+def _scripted(qa_env, monkeypatch, spec):
+    _install(qa_env, "codex", SCRIPTED_CODEX)
+    (qa_env.tmp / "scripted.json").write_text(json.dumps(spec))
+    monkeypatch.setenv("SCRIPTED_CODEX", str(qa_env.tmp / "scripted.json"))
+
+
+def _output(evidence=("e1", "e2"), verdicts=("pass", "pass"), verdict="pass"):
+    return {"verdict": verdict,
+            "criteria": [{"id": i, "verdict": v, "evidence": e}
+                         for i, (v, e) in enumerate(zip(verdicts, evidence), 1)],
+            "tests": {"command": "uv run --with pytest pytest", "result": "3 passed"},
+            "verified_sha": "HEAD"}
+
+
+def _no_part(secret, text, n=8):
+    return all(secret[i:i + n] not in text for i in range(len(secret) - n + 1))
+
+
+@pytest.fixture
+def secret_env(monkeypatch):
+    monkeypatch.setenv("SYNTHETIC_API_KEY", ENV_SECRET)
+    return ENV_SECRET
+
+
+@pytest.mark.parametrize("verdicts,marker", [(("pass", "pass"), "## QA: PASS"),
+                                             (("pass", "fail"), "## QA: FAIL")])
+def test_evidence_secrets_are_redacted(qa_env, monkeypatch, secret_env, verdicts, marker):
+    evidence = (f"the log printed {secret_env} and Authorization: Basic c3ludGg6c2VjcmV0",
+                f"saw {GH_TOKEN_SYN}, {SK_KEY_SYN} and https://x.invalid/?access_token=abc123def&x=1")
+    _scripted(qa_env, monkeypatch, {"output": _output(evidence, verdicts)})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == marker
+    assert "[redacted]" in comment
+    for secret in (secret_env, GH_TOKEN_SYN, SK_KEY_SYN, "c3ludGg6c2VjcmV0", "abc123def"):
+        assert secret not in comment, secret
+    assert "access_token=[redacted]&x=1" in comment
+    assert "Authorization: [redacted]" in comment
+
+
+def test_invalid_criterion_reason_is_redacted(qa_env, monkeypatch, secret_env):
+    _scripted(qa_env, monkeypatch, {"output": _output((f"cannot log in with {secret_env}", "ok"),
+                                                      ("invalid", "pass"))})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
+    assert "criterion 1" in reason and "[redacted]" in reason
+    assert secret_env not in comment
+
+
+def test_schema_error_is_redacted(qa_env, monkeypatch, secret_env):
+    _scripted(qa_env, monkeypatch, {"output": _output(verdict=f"Bearer {secret_env}x")})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert "output does not match the schema" in comment
+    assert "[redacted]" in comment
+    assert secret_env not in comment
+
+
+def test_codex_failure_message_is_redacted(qa_env, monkeypatch, secret_env):
+    _scripted(qa_env, monkeypatch, {"message": f"request failed with key {secret_env} and Bearer abcdefgh123"})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert "[redacted]" in comment
+    assert secret_env not in comment and "abcdefgh123" not in comment
+
+
+def test_codex_failure_message_cut_does_not_leak(qa_env, monkeypatch, secret_env):
+    message = "x" * (codex_exec.REASON_MAX - 3 - 20) + " " + secret_env + " tail"
+    _scripted(qa_env, monkeypatch, {"message": message})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert _no_part(secret_env, comment)
+
+
+def test_one_line_redacts_before_the_cut(secret_env):
+    line = codex_exec._one_line("x" * (codex_exec.REASON_MAX - 20) + GH_TOKEN_SYN + " " + secret_env)
+    assert len(line) <= codex_exec.REASON_MAX
+    assert _no_part(secret_env, line) and _no_part(GH_TOKEN_SYN, line)
+
+
+def test_pre_step_output_is_redacted(frontend_env, monkeypatch, secret_env):
+    _install(frontend_env, "npm", SCRIPTED_NPM)
+    monkeypatch.setenv("SCRIPTED_NPM_LINE", f"could not fetch with token={secret_env}")
+    comment, _ = frontend_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "[redacted]" in comment
+    assert secret_env not in comment
+
+
+def test_pre_step_line_cut_does_not_leak(frontend_env, monkeypatch, secret_env):
+    _install(frontend_env, "npm", SCRIPTED_NPM)
+    prefix = "x" * (codex_exec.REASON_MAX - len("npm ERR! ") - 20) + " "
+    monkeypatch.setenv("SCRIPTED_NPM_LINE", prefix + secret_env + " tail")
+    comment, _ = frontend_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _no_part(secret_env, comment)
+
+
+def test_redact_env_values_longest_first(monkeypatch):
+    monkeypatch.setenv("SHORT_TOKEN", "abcdefgh")
+    monkeypatch.setenv("LONG_Secret", "abcdefgh-and-more")
+    monkeypatch.setenv("TINY_PASSWORD", "seven77")  # under 8 characters: kept
+    monkeypatch.setenv("PLAIN_NAME", "notasecretvalue")
+    text = "a abcdefgh-and-more b abcdefgh c seven77 d notasecretvalue"
+    assert codex_exec.redact(text) == "a [redacted] b [redacted] c seven77 d notasecretvalue"
+
+
+def test_redact_env_name_is_case_insensitive(monkeypatch):
+    for name in ("my_key", "gh_Token", "app_secret", "db_password"):
+        monkeypatch.setenv(name, f"value-of-{name}")
+    text = " ".join(f"value-of-{n}" for n in ("my_key", "gh_Token", "app_secret", "db_password"))
+    assert codex_exec.redact(text) == " ".join(["[redacted]"] * 4)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Authorization: Basic abc", "Authorization: [redacted]"),
+    ("x\nauthorization: token abc def\ny", "x\nauthorization: [redacted]\ny"),
+    ("use Bearer abcdefgh now", "use Bearer [redacted] now"),
+    ("use bearer abcdefg now", "use bearer abcdefg now"),  # 7 characters: kept
+    ("t " + "ghp_" + "a1" * 10 + " e", "t [redacted] e"),
+    ("t " + "GHO_" + "A1" * 10, "t [redacted]"),
+    ("t " + "ghs_" + "a1" * 10, "t [redacted]"),
+    ("t " + "ghu_" + "a1" * 10, "t [redacted]"),
+    ("t " + "ghr_" + "a1" * 10, "t [redacted]"),
+    ("t " + "ghp_" + "a" * 19, "t " + "ghp_" + "a" * 19),  # 19 characters: kept
+    ("t github_pat_" + "a_1" * 7 + " e", "t [redacted] e"),
+    ("t sk-" + "a_b-" * 5 + " e", "t [redacted] e"),
+    ("t SK-PROJ-" + "ab12" * 5, "t [redacted]"),
+    ("t sk-" + "a" * 19, "t sk-" + "a" * 19),
+    ("?token=abc&key=def ", "?token=[redacted]&key=[redacted] "),
+    ("api_key=abc123'x", "api_key=[redacted]'x"),
+    ("ACCESS_TOKEN=abc\"x", "ACCESS_TOKEN=[redacted]\"x"),
+    ("password=hunter2`x", "password=[redacted]`x"),
+    ("Password=a b", "Password=[redacted] b"),
+])
+def test_redact_patterns(text, expected):
+    assert codex_exec.redact(text, environ={}) == expected
+
+
+def test_redact_keeps_a_normal_pass_comment(secret_env, monkeypatch):
+    monkeypatch.setenv("SYNTHETIC_GH_TOKEN", GH_TOKEN_SYN)
+    head = "0123456789abcdef0123456789abcdef01234567"
+    output = {"verdict": "pass", "criteria": [
+        {"id": 1, "verdict": "pass", "evidence": "created an account with the form, got a 201"},
+        {"id": 2, "verdict": "pass", "evidence": "the error names the username; the input is kept"}],
+        "tests": {"command": "uv run --with pytest pytest", "result": "42 passed, 0 failed"},
+        "verified_sha": head}
+    text = qa.render(output, criteria=[CRIT_1, CRIT_2], marker="## QA: PASS", reason="", head=head,
+                     retries=["transient"])
+    assert codex_exec.redact(text) == text
+    lines = text.splitlines()
+    assert lines[0] == "## QA: PASS"
+    assert f"Verified: {head}" in lines and "Checker: codex" in lines and "Retries: 1 (transient)" in lines
+
+
+def test_normal_pass_comment_is_posted_unchanged(qa_env, secret_env):
+    comment, _ = qa_env.run(["ok"])
+    output = {"verdict": "pass", "criteria": [
+        {"id": i, "verdict": "pass", "evidence": f"synthetic evidence {i}"} for i in (1, 2)],
+        "tests": {"command": "uv run --with pytest pytest", "result": "3 passed, 0 failed"},
+        "verified_sha": qa_env.head}
+    assert comment == qa.render(output, criteria=[CRIT_1, CRIT_2], marker="## QA: PASS", reason="",
+                                head=qa_env.head, retries=[])
+
+
+def test_one_post_path_through_redact():
+    source = SCRIPT.read_text()
+    assert source.count('"comment"') == 1  # the only `gh issue comment` call
+    post = source[source.index("def _post("):source.index("def _parse_args(")]
+    assert '"issue", "comment"' in post
+    assert "input=codex_exec.redact(body)" in post
+
+
+def test_prompt_forbids_quoting_secrets():
+    prompt = qa.build_prompt([CRIT_1], "b" * 40, "a" * 40)
+    assert "Do not quote secrets (keys, tokens, passwords) in your evidence" in prompt

@@ -54,6 +54,42 @@ SIGNAL_MAX = 64
 
 REASON_MAX = 500
 
+# Redaction (spec P5): every comment is redacted right before it is posted, and every reason is
+# redacted before it is cut to REASON_MAX (a cut secret no longer matches). Over-redaction is fine.
+REDACTED = "[redacted]"
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD", re.IGNORECASE)
+SECRET_MIN = 8
+SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile(rx, re.IGNORECASE), repl) for rx, repl in [
+    (r"(authorization:)[^\n]*", r"\1 " + REDACTED),
+    (r"\b(bearer)[ \t]+\S{8,}", r"\1 " + REDACTED),
+    (r"gh[pousr]_[a-z0-9]{20,}", REDACTED),
+    (r"github_pat_[a-z0-9_]{20,}", REDACTED),
+    (r"sk-[a-z0-9_-]{20,}", REDACTED),
+    (r"((?:token|key|password)=)[^\s&\"'`]+", r"\1" + REDACTED),
+]]
+
+
+def _secret_values(environ) -> list[str]:
+    """Values of secret-looking env vars (and their whitespace-joined, JSON- and repr-escaped
+    forms), at least SECRET_MIN characters, longest first."""
+    values: set[str] = set()
+    for name, value in environ.items():
+        if not SECRET_NAME.search(name) or len(value) < SECRET_MIN:
+            continue
+        for form in (value, " ".join(value.split()), json.dumps(value)[1:-1], repr(value)[1:-1]):
+            if len(form) >= SECRET_MIN:
+                values.add(form)
+    return sorted(values, key=len, reverse=True)
+
+
+def redact(text: str, environ=None) -> str:
+    """Replace secret-looking env values and common credential patterns with [redacted]."""
+    for value in _secret_values(os.environ if environ is None else environ):
+        text = text.replace(value, REDACTED)
+    for pattern, repl in SECRET_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
 
 def _turn_failed(stdout: str) -> str | None:
     """Message of the last `turn.failed` event on stdout (`--json`), or None."""
@@ -125,7 +161,8 @@ def crash_reason(returncode: int, stdout: str, stderr: str) -> str | None:
 
 
 def _one_line(text: str) -> str:
-    line = " ".join(text.split())
+    """One redacted line, cut to REASON_MAX (redacted first, so a cut leaks no part of a secret)."""
+    line = " ".join(redact(text).split())
     return line if len(line) <= REASON_MAX else line[:REASON_MAX - 3] + "..."
 
 
