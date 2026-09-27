@@ -5,9 +5,11 @@
 # ///
 """Codex QA launcher (spec 6): `scripts/qa-codex ROLE=qa ISSUE=<n>`.
 
-Reads the issue with `gh`, runs `codex exec` in a temporary git worktree at the head of the
-range of the newest valid `## Engineer: DONE`, validates the JSON and posts one QA comment.
-Failure rules: spec 6.2. Exit 0 when a comment was posted, non-zero otherwise.
+Reads the issue with `gh` and the range `<base>..<done head>` of the newest valid
+`## Engineer: DONE`. The DONE head must be `HEAD` or an ancestor of `HEAD` (a re-check after
+`HEAD` moved, G4). Runs `codex exec` in a temporary git worktree at `HEAD` on `<base>..HEAD`,
+validates the JSON and posts one QA comment that names both heads. Failure rules: spec 6.2.
+Exit 0 when a comment was posted, non-zero otherwise.
 """
 
 from __future__ import annotations
@@ -173,7 +175,7 @@ def _tests_line(tests: dict) -> str:
 
 
 def render(output: dict | None, *, criteria: list[str], marker: str, reason: str, head: str,
-           retries: list[str]) -> str:
+           retries: list[str], done_head: str | None = None) -> str:
     lines = [marker, ""]
     if reason:
         lines += [f"Reason: {reason}", ""]
@@ -186,7 +188,10 @@ def render(output: dict | None, *, criteria: list[str], marker: str, reason: str
             lines.append(f"- [{'x' if verdict == 'pass' else ' '}] {first} - {verdict.upper()}")
             lines += rest  # the issue's own text, nested bullets included
             lines += ["      " + e.strip() for e in entry["evidence"].splitlines() if e.strip()]
-        lines += ["", _tests_line(output["tests"]), f"Verified: {head}"]
+        lines += ["", _tests_line(output["tests"])]
+        if done_head:
+            lines.append(f"Done head: {done_head}")  # the DONE head; `Verified:` stays HEAD (G6)
+        lines.append(f"Verified: {head}")
     lines.append("Checker: codex")
     if retries:
         lines.append(f"Retries: {len(retries)} ({', '.join(retries)})")
@@ -362,10 +367,11 @@ def _main(argv: list[str], sleep) -> int:
         return 1
 
     criteria = parse_criteria(issue.body)
+    done_head: str | None = None
 
     def post(marker: str, reason: str, output: dict | None = None, retries: list[str] = ()) -> int:
         return _post(number, render(output, criteria=criteria, marker=marker, reason=reason, head=head,
-                                    retries=list(retries)))
+                                    retries=list(retries), done_head=done_head))
 
     if not criteria:
         return post(INVALID, "the issue has no acceptance criteria "
@@ -378,10 +384,16 @@ def _main(argv: list[str], sleep) -> int:
         return post(INVALID, f"the newest `{issue_state.DONE}` comment has no `Commits: <base>..<head>` line")
     base, range_head = rng
     resolved = _git("rev-parse", "--verify", "--quiet", "--end-of-options", f"{range_head}^{{commit}}", cwd=repo)
-    resolved_sha = resolved.stdout.strip() if resolved.returncode == 0 else ""
-    if resolved_sha != head:
-        return post(INVALID, f"the range head {range_head} resolves to {resolved_sha or 'no commit'}, "
-                             f"expected HEAD {head} of the main working tree")
+    if resolved.returncode != 0 or not resolved.stdout.strip():
+        return post(INVALID, f"the DONE head {range_head} does not resolve to a commit")
+    resolved_sha = resolved.stdout.strip()
+    # A DONE head equal to HEAD counts as an ancestor. Checked before the worktree exists.
+    ancestor = _git("merge-base", "--is-ancestor", resolved_sha, head, cwd=repo)
+    if ancestor.returncode != 0:
+        detail = "" if ancestor.returncode == 1 else f" (`git merge-base` failed: {codex_exec._one_line(ancestor.stderr)})"
+        return post(INVALID, f"the DONE head {resolved_sha} is not an ancestor of HEAD {head} of the main "
+                             f"working tree{detail}; the engineer must post a new `{issue_state.DONE}`")
+    done_head = resolved_sha
 
     tmp = Path(tempfile.mkdtemp(prefix="qa-codex-"))
     worktree = tmp / "worktree"

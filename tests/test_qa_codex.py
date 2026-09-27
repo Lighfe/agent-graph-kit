@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 import codex_exec
+import issue_state
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKES = ROOT / "tests" / "fakes"
@@ -195,6 +196,7 @@ def test_pass_comment_format(qa_env):
     assert "      synthetic evidence 1" in lines
     assert "Tests: `uv run --with pytest pytest`, 3 passed, 0 failed" in lines
     assert f"Verified: {qa_env.head}" in lines
+    assert lines[lines.index(f"Verified: {qa_env.head}") - 1] == f"Done head: {qa_env.head}"
     assert "Checker: codex" in lines
     assert not any(line.startswith("Retries:") for line in lines)
 
@@ -353,21 +355,13 @@ def test_no_valid_done_is_invalid(qa_env, comments):
     assert qa_env.calls("codex") == []
 
 
-def test_stale_range_head_is_invalid(qa_env):
-    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer",
-                                 qa_env.done(head=qa_env.base)])
-    comment, _ = qa_env.run(["ok"])
-    assert comment.splitlines()[0] == "## QA: INVALID"
-    assert qa_env.base in comment and qa_env.head in comment
-    assert qa_env.calls("codex") == []
-
-
 def test_unknown_range_head_is_invalid(qa_env):
     qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer",
                                  qa_env.done(head="f" * 40)])
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: INVALID"
-    assert "f" * 40 in comment and qa_env.head in comment
+    reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
+    assert "f" * 40 in reason
     assert qa_env.calls("codex") == []
 
 
@@ -376,7 +370,119 @@ def test_short_range_head_that_resolves_to_head_is_accepted(qa_env):
                                  qa_env.done(head=qa_env.head[:10])])
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
+    assert f"Done head: {qa_env.head}" in comment.splitlines()
     assert f"Verified: {qa_env.head}" in comment
+
+
+# --- the re-check: HEAD moved past the DONE head (issue #36) ------------------------
+
+
+def _commit_on_top(qa_env, name="later.txt"):
+    (qa_env.repo / name).write_text("later\n")
+    git(qa_env.repo, "add", ".")
+    git(qa_env.repo, "commit", "-q", "-m", "later")
+    return git(qa_env.repo, "rev-parse", "HEAD")
+
+
+def _record_git(qa_env):
+    """Record every git call of qa-codex (to see whether a worktree was created)."""
+    calls = []
+    real = qa._git
+
+    def recording(*args, cwd=None):
+        calls.append(list(args))
+        return real(*args, cwd=cwd)
+
+    qa_env.mp.setattr(qa, "_git", recording)
+    return calls
+
+
+@pytest.mark.parametrize("modes,marker", [(["ok"], "## QA: PASS"), (["fail"], "## QA: FAIL")])
+def test_recheck_after_head_moved_verifies_base_to_head(qa_env, modes, marker):
+    c = _commit_on_top(qa_env)
+    comment, _ = qa_env.run(modes)  # the DONE still names Commits: base..B (qa_env.head)
+    lines = comment.splitlines()
+    assert lines[0] == marker
+    (call,) = qa_env.calls("codex")
+    assert "later.txt" in call["tree"]  # the worktree is at C, not at B
+    worktree = call["argv"][call["argv"].index("-C") + 1]
+    assert call["cwd"] == worktree
+    assert f"Commit range: {qa_env.base}..{c}\n" in call["stdin"]
+    assert f"..{qa_env.head}" not in call["stdin"]
+    i = lines.index(f"Verified: {c}")
+    assert lines[i - 1] == f"Done head: {qa_env.head}"
+    assert issue_state.verified_sha(comment) == c
+
+
+def test_recheck_with_short_done_head_shows_the_full_sha(qa_env):
+    c = _commit_on_top(qa_env)
+    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer",
+                                 qa_env.done(head=qa_env.head[:7])])
+    comment, _ = qa_env.run(["ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: PASS"
+    assert f"Done head: {qa_env.head}" in lines
+    assert f"Verified: {c}" in lines
+    assert f"Commit range: {qa_env.base}..{c}\n" in qa_env.calls("codex")[0]["stdin"]
+
+
+def test_recheck_still_validates_verified_sha_against_head(qa_env):
+    c = _commit_on_top(qa_env)
+    comment, _ = qa_env.run(["short_sha", "short_sha"])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert f"expected HEAD {c}" in comment
+    assert len(qa_env.calls("codex")) == 2
+
+
+def _assert_not_an_ancestor(qa_env, comment, done_head, head, git_calls):
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
+    assert done_head in reason and head in reason
+    assert "not an ancestor" in reason
+    assert "new `## Engineer: DONE`" in reason
+    assert qa_env.calls("codex") == []
+    assert not any(args[:2] == ["worktree", "add"] for args in git_calls)
+    assert "Verified:" not in comment and "Done head:" not in comment
+    assert qa_env.code == 0
+
+
+def test_done_head_on_a_side_branch_is_invalid(qa_env):
+    # as after a rebase or an amend: the DONE head is not in the history of HEAD
+    git(qa_env.repo, "checkout", "-q", "-b", "side", qa_env.base)
+    (qa_env.repo / "side.txt").write_text("side\n")
+    git(qa_env.repo, "add", ".")
+    git(qa_env.repo, "commit", "-q", "-m", "side")
+    side = git(qa_env.repo, "rev-parse", "HEAD")
+    git(qa_env.repo, "checkout", "-q", "main")
+    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer",
+                                 qa_env.done(head=side)])
+    calls = _record_git(qa_env)
+    comment, _ = qa_env.run(["ok"])
+    _assert_not_an_ancestor(qa_env, comment, side, qa_env.head, calls)
+
+
+def test_head_reset_before_the_done_head_is_invalid(qa_env):
+    git(qa_env.repo, "reset", "-q", "--hard", qa_env.base)  # HEAD is now the parent of the DONE head
+    calls = _record_git(qa_env)
+    comment, _ = qa_env.run(["ok"])
+    _assert_not_an_ancestor(qa_env, comment, qa_env.head, qa_env.base, calls)
+
+
+def test_unknown_done_head_creates_no_worktree(qa_env):
+    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer",
+                                 qa_env.done(head="f" * 40)])
+    calls = _record_git(qa_env)
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert not any(args[:2] == ["worktree", "add"] for args in calls)
+
+
+def test_render_places_done_head_before_verified():
+    text = qa.render(good(), criteria=["a", "b"], marker="## QA: PASS", reason="", head=HEAD,
+                     done_head="d" * 40, retries=[])
+    lines = text.splitlines()
+    assert lines[lines.index(f"Verified: {HEAD}") - 1] == f"Done head: {'d' * 40}"
+    assert issue_state.verified_sha(text) == HEAD
 
 
 def test_newest_done_is_used(qa_env):
@@ -1135,10 +1241,11 @@ def test_redact_keeps_a_normal_pass_comment(secret_env, monkeypatch):
         "tests": {"command": "uv run --with pytest pytest", "result": "42 passed, 0 failed"},
         "verified_sha": head}
     text = qa.render(output, criteria=[CRIT_1, CRIT_2], marker="## QA: PASS", reason="", head=head,
-                     retries=["transient"])
+                     retries=["transient"], done_head="fedcba9876543210fedcba9876543210fedcba98")
     assert codex_exec.redact(text) == text
     lines = text.splitlines()
     assert lines[0] == "## QA: PASS"
+    assert "Done head: fedcba9876543210fedcba9876543210fedcba98" in lines
     assert f"Verified: {head}" in lines and "Checker: codex" in lines and "Retries: 1 (transient)" in lines
 
 
@@ -1149,7 +1256,7 @@ def test_normal_pass_comment_is_posted_unchanged(qa_env, secret_env):
         "tests": {"command": "uv run --with pytest pytest", "result": "3 passed, 0 failed"},
         "verified_sha": qa_env.head}
     assert comment == qa.render(output, criteria=[CRIT_1, CRIT_2], marker="## QA: PASS", reason="",
-                                head=qa_env.head, retries=[])
+                                head=qa_env.head, retries=[], done_head=qa_env.head)
 
 
 def test_one_post_path_through_redact():
