@@ -22,4 +22,4 @@ When you finish, post a comment on the issue. The first line is exactly `## PM: 
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue and list it under out of scope with a link to that issue, so it is clear what was moved and where it went.
+If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later` and list it under out of scope with a link to that issue, so it is clear what was moved and where it went.

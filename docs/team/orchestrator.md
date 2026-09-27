@@ -14,17 +14,21 @@ Run `git status --porcelain`. The output must be empty. If it is not empty, stop
 
 ## Launch a subagent
 
-Launch a new subagent for each step. Each subagent starts with a fresh context. Do not reuse a subagent from an earlier step.
+Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call.
 
 | Step | Agent | Input |
 |---|---|---|
 | Groom | `pm` | The issue number. After `## Engineer: BLOCKED`: also the URL of that comment |
 | Implement | `software-engineer` | The issue number. After `## QA: FAIL`: also the URL of that comment |
-| Verify | `qa-engineer` | The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
+| Verify | Bash command `scripts/qa-codex ROLE=qa ISSUE=<number>` | None. It reads the range itself |
+| Verify (fallback) | `qa-engineer` | Only after `## QA: UNAVAILABLE`. The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
 
-Prompt for each subagent:
+Run `scripts/qa-codex ROLE=qa ISSUE=<number>` as the whole Bash command, with the Bash tool's `run_in_background` option. No `&`, no `cd … &&`, no redirection, nothing in front of `scripts/`. Wait until it ends.
+
+Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer`, `qa` for `qa-engineer`:
 
 ```
+ROLE=<pm|engineer|qa> ISSUE=<number>
 Your role is defined in docs/team/<role>.md.
 Work on issue #<number>. Follow the process in docs/process.md.
 <input from the table, if any>
@@ -38,7 +42,9 @@ Each role posts a comment with a fixed first line:
 |---|---|
 | PM | `## PM: GROOMED` or `## PM: NEEDS OWNER` |
 | Engineer | `## Engineer: DONE` or `## Engineer: BLOCKED` |
-| QA | `## QA: PASS` or `## QA: FAIL` |
+| QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE` or `## QA: INVALID` |
+
+`## Launch: …` comments are hook receipts, not results.
 
 Read only the newest comment with the marker of the role. This returns its first line and its URL:
 
@@ -48,7 +54,7 @@ gh issue view <number> --json comments --jq '[.comments[] | {line: (.body | spli
 
 Use `## PM: `, `## Engineer: ` or `## QA: ` as the prefix. The line must be exactly one of the values in the table.
 
-Read the full comment only for `## QA: FAIL`, `## Engineer: BLOCKED`, `## Engineer: DONE` (for the commit range), and `## QA: PASS` (for the `Verified:` line). Replace `last` in the command with `last | .body`.
+Read the full comment only for `## QA: FAIL`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
 
 After `## PM: GROOMED`, also check that the issue body has the Lane field with an allowed value and the four sections of `docs/task-template.md`.
 
@@ -61,19 +67,28 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 | PM | `## PM: GROOMED` | Launch the engineer |
 | PM | `## PM: NEEDS OWNER` | Escalate the issue |
 | Engineer | `## Engineer: DONE` | Launch QA |
-| Engineer | `## Engineer: BLOCKED` | Count the returns. Launch the PM with the engineer comment, or escalate |
-| QA | `## QA: PASS` | Check the verified SHA, then close the issue |
-| QA | `## QA: FAIL` | Count the returns. Launch the engineer with the QA comment, or escalate |
+| Engineer | `## Engineer: BLOCKED` | Send back: launch the PM with the engineer comment (the hook denies at 3 returns) |
+| QA | `## QA: PASS` | Close the issue |
+| QA | `## QA: FAIL` | Send back: launch or continue the engineer with the QA comment (the hook denies at 3 returns) |
+| QA | `## QA: UNAVAILABLE` | Launch the `qa-engineer` fallback |
+| QA | `## QA: INVALID` | Escalate the issue |
 
-## Count the returns
+## Hooks
 
-A return is a `## QA: FAIL` or an `## Engineer: BLOCKED` comment. One counter covers both. The counter starts after the newest `## Owner: RESUME` comment. Without such a comment, it starts at the beginning of the issue.
+A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`. When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G8`) and what is missing. The deny message is the source of truth.
 
-```
-gh issue view <number> --json comments --jq '.comments | map(.body | split("\n")[0] | rtrimstr("\r")) | ((to_entries | map(select(.value == "## Owner: RESUME")) | last | .key) // -1) as $r | .[$r+1:] | map(select(. == "## QA: FAIL" or . == "## Engineer: BLOCKED")) | length'
-```
+The issue is pending when the last launched role ended without a result. Escalate the issue.
 
-If the counter is 3 or more, escalate the issue. If it is less than 3, send the issue back.
+What to do with a deny:
+
+- `G1` pending: escalate the issue
+- `G1` working tree not clean: stop the loop and ask the owner
+- `G1` command not in one of the two exact forms: rewrite the call in the exact form, or use the way around that the deny message names (a comment body from a file with `--body-file`, a commit message with `git commit -F`). This is not a return
+- `G6` verified SHA is not `HEAD`: run `qa-codex` again. This is not a return
+- `G7`: escalate the issue
+- Any other deny, including `G8` and `guard error`: escalate the issue with the deny message
+
+Do not work around a deny in any other way.
 
 ## Escalate an issue
 
@@ -85,16 +100,14 @@ The owner answers on the issue with a comment that starts with `## Owner: RESUME
 
 ## Close an issue
 
-1. Read the `Verified: <SHA>` line of the newest `## QA: PASS` comment.
-2. Run `git rev-parse HEAD`. If it is not equal to the verified SHA, launch QA again with the range `<base from the newest ## Engineer: DONE>..<current HEAD>`. This is not a return.
-3. If it is equal, close the issue: `gh issue close <number>`.
+Run exactly `gh issue close <number>` as the whole command. The hook checks the verified SHA.
 
 ## Definition of done
 
 For a closed issue:
 
-- The newest QA comment starts with `## QA: PASS`, and its `Verified:` SHA is equal to `git rev-parse HEAD` at close time
-- The PM, the engineer and QA did their steps as subagents. You did not do their work
+- The newest QA comment starts with `## QA: PASS`, and the hook allowed `gh issue close <number>`
+- The PM, the engineer and QA did their steps as subagents (QA also with `qa-codex`). You did not do their work
 
 For an escalated issue:
 
@@ -104,5 +117,5 @@ For an escalated issue:
 
 For the whole loop:
 
-- `gh issue list --state open --label ready` shows no issue, or the loop stopped because `git status --porcelain` was not empty
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue, or the loop stopped because `git status --porcelain` was not empty
 - Your final message lists the closed issues, the escalated issues with the reason, and the reason if the loop stopped early

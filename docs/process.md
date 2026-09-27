@@ -2,7 +2,7 @@
 
 This document tells how work is organized in this repo.
 
-Status: prose only. There are no hooks and no Jev gates yet. The kit is built with this prose process first.
+Status: hooks in `.claude/hooks/` check each launch of a role and each `gh issue close`, and deny the call when the issue is not in the right state. This prose stays the main description. There are no Jev gates yet.
 
 ## Work rules
 
@@ -53,3 +53,4 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
 - The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
+- After `## Owner: RESUME`, the issue goes back to the PM.
