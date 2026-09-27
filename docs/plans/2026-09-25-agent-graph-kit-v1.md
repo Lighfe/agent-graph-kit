@@ -629,11 +629,13 @@ Lane: default
 
 #### Goal
 
-`scripts/qa-codex ROLE=qa ISSUE=<n>` runs Codex QA on the range of the newest `## Engineer: DONE`, validates the JSON, and posts one QA comment. Each failure type follows spec 6.2. `docs/team/qa-engineer.md` describes the QA behavior of spec 7 for both checkers.
+`scripts/qa-codex ROLE=qa ISSUE=<n>` runs Codex QA on `<base>..HEAD`, where `<base>` comes from the newest `## Engineer: DONE`, validates the JSON, and posts one QA comment. Each failure type follows spec 6.2. `docs/team/qa-engineer.md` describes the QA behavior of spec 7 for both checkers.
 
 #### Acceptance criteria
 
-- [ ] With a fake `codex` that returns valid JSON, the script posts `## QA: PASS` or `## QA: FAIL`, derived from the criterion verdicts, with one line per criterion, `Tests:`, `Verified: <HEAD>` and `Checker: codex`
+- [ ] With a fake `codex` that returns valid JSON, the script posts `## QA: PASS` or `## QA: FAIL`, derived from the criterion verdicts, with one line per criterion, `Tests:`, `Done head: <DONE head>`, `Verified: <HEAD>` and `Checker: codex`
+- [ ] Re-check: if the DONE head is a strict ancestor of `HEAD` (DONE `Commits: A..B`, then a commit C), Codex verifies `A..C` in a worktree at C, and the comment has `Done head: <B>` and `Verified: <C>`
+- [ ] If the DONE head is not an ancestor of `HEAD` (after a rebase, an amend or a reset), the result is `## QA: INVALID` without a Codex run and without a worktree. The reason says that the engineer must post a new `## Engineer: DONE`
 - [ ] If any criterion verdict is `invalid`, the script posts `## QA: INVALID` and names the criterion and its reason
 - [ ] A transient error is retried up to 3 times with waits of 1, 3 and 10 minutes. If all retries fail, the result is `## QA: INVALID`
 - [ ] A timeout (default 30 minutes) is retried once, then the result is `## QA: INVALID`. On a timeout, the whole process group is killed
@@ -645,7 +647,7 @@ Lane: default
 - [ ] After retries, the footer has `Retries: <n> (<reasons>)`
 - [ ] If the comment cannot be posted, the script exits with a non-zero code
 - [ ] Codex receives the QA role file, the criteria and the range only. It does not receive the rest of the engineer comment
-- [ ] Codex runs in a temporary `git worktree` at the head of the range, and the worktree is removed after the run, also after a failure. A fake `codex` that writes a file leaves the main working tree clean
+- [ ] Codex runs in a temporary `git worktree` at `HEAD`, and the worktree is removed after the run, also after a failure. A fake `codex` that writes a file leaves the main working tree clean
 - [ ] If the worktree has a `frontend/` submodule, a pre-step runs before Codex, outside the sandbox: fetch the submodule commits, `npm ci` in `frontend/`, then the Playwright browser install. If a pre-step command fails, the result is `## QA: UNAVAILABLE` with the command and its first error line. Without `frontend/`, no pre-step runs
 - [ ] The `codex exec` command line has the localhost-only profile, the isolation flags, and an explicit model and reasoning effort (`medium`), as listed in Constraints
 - [ ] The failure reason comes from the message of the last `turn.failed` event on stdout (`--json`), or from stderr if there is none. It never contains the Codex banner or the prompt text
@@ -752,6 +754,7 @@ Comment rendered from valid JSON (the example is synthetic):
       Second signup printed a traceback
 
 Tests: `uv run --with pytest pytest`, 18 passed, 0 failed
+Done head: <40-char head of the DONE range>
 Verified: <40-char HEAD>
 Checker: codex
 Retries: 1 (timeout)
@@ -795,6 +798,7 @@ Retries: 1 (timeout)
    Also add tests for:
    - no acceptance criteria → INVALID, and codex is not called
    - no `Commits:` line → INVALID
+   - the ancestor check (`git merge-base --is-ancestor <done head> HEAD`): a DONE head equal to `HEAD` and one that is a strict ancestor are accepted (the prompt has `<base>..HEAD`); a DONE head on a side branch or after a reset of `HEAD` → INVALID, and codex is not called
    - a failing post → exit code ≠ 0
    - the footer `Retries: 2 (transient, transient)`
    - the prompt contains the criteria and the range, but not the text of the engineer summary
@@ -834,7 +838,7 @@ Retries: 1 (timeout)
 5. Implement `scripts/qa-codex`:
    - Header: `#!/usr/bin/env -S uv run --script` with PEP 723 `requires-python = ">=3.11"`, `dependencies = []`.
    - Import: insert `Path(__file__).resolve().parents[1] / ".claude" / "hooks"` into `sys.path`, then import `issue_state`. Import `codex_exec` from the script folder.
-   - Flow: read the issue, `HEAD`, the criteria and the range. Create the temporary worktree at the head of the range (`git worktree add --detach <tmp> <head>`), remove it in a `finally` block (`git worktree remove --force`). Run the frontend pre-step if the worktree has `frontend/`. Build the prompt from the role file, the numbered criteria ("copy each text exactly into `criteria[].text`"), and the range. Number the criteria from 1 in the prompt and ask for the number as `id`. Then run the retry loop:
+   - Flow: read the issue, `HEAD`, the criteria and the range. Check that the DONE head is `HEAD` or an ancestor of it (`git merge-base --is-ancestor <done head> HEAD`), else post `## QA: INVALID`. Create the temporary worktree at `HEAD` (`git worktree add --detach <tmp> HEAD`), remove it in a `finally` block (`git worktree remove --force`). Run the frontend pre-step if the worktree has `frontend/`. Build the prompt from the role file, the numbered criteria ("copy each text exactly into `criteria[].text`"), and the range `<base>..HEAD`. Number the criteria from 1 in the prompt and ask for the number as `id`. Then run the retry loop:
 
    ```python
    LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}

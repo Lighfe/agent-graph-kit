@@ -226,8 +226,8 @@ No warning shows when `disableAllHooks` is still present. If the owner forgets s
 
 Call: `qa-codex ROLE=qa ISSUE=<n>`. A Python script run with `uv run --script`.
 
-1. Read the issue body (the acceptance criteria) with `gh`. Read the range from the `Commits: <base>..<head>` line of the newest `## Engineer: DONE` comment. Do not pass on the rest of the engineer's comment.
-2. Create a temporary `git worktree` at the commit under test. Codex can write files in the working tree in every sandbox. In the main tree this would make G1 deny the next launch, and a PASS could apply to code that is not in `HEAD`. The worktree is deleted after the run.
+1. Read the issue body (the acceptance criteria) with `gh`. Read the range from the `Commits: <base>..<head>` line of the newest `## Engineer: DONE` comment. Do not pass on the rest of the engineer's comment. The DONE head (`<head>`) must be `HEAD` or an ancestor of `HEAD` (`git merge-base --is-ancestor`). QA then verifies `<base>..HEAD`. So a re-check after `HEAD` moved (G4, 5.4) needs no new DONE. If the DONE head is not an ancestor of `HEAD` (for example after a rebase), post `## QA: INVALID` without a Codex run. The engineer must post a new DONE.
+2. Create a temporary `git worktree` at `HEAD`. Codex can write files in the working tree in every sandbox. In the main tree this would make G1 deny the next launch, and a PASS could apply to code that is not in `HEAD`. The worktree is deleted after the run.
 3. Pre-step, outside the sandbox, with fixed commands and no LLM decision: in a repo with a frontend, fetch the submodule commits into the worktree, run `npm ci`, then install the Playwright browser. If the pre-step fails, the result is `## QA: UNAVAILABLE`. (`codex exec` cannot pause for an install, and the sandbox cannot reach the npm registry or write `$HOME`.)
 4. Run `codex exec` in the worktree with:
    - the localhost-only sandbox profile (S2: `--enable network_proxy` and a permissions profile `qa` that allows only `localhost` and `127.0.0.1`). QA tests the checked-out code and needs no GitHub. Codex runs outside the Claude Code hooks, so the sandbox is its only limit. `network_proxy` is experimental; check it after each Codex update,
@@ -235,7 +235,7 @@ Call: `qa-codex ROLE=qa ISSUE=<n>`. A Python script run with `uv run --script`.
    - the prompt: the QA role file, the criteria, and the range,
    - `--output-schema qa-result.schema.json` and `-o <file>` for the final message.
 5. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall verdict from the criterion verdicts: PASS only if every criterion passes.
-6. Render the issue comment from the JSON and post it with `gh`. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
+6. Render the issue comment from the JSON and post it with `gh`. A `Done head: <SHA>` line directly before `Verified:` names the DONE head. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
 
 The QA result schema contains: verdict (`pass` or `fail`), one entry per criterion (text, verdict, evidence), the tests (command and result, or "not run" with the reason), and the verified SHA. The rendered comment follows the format in `docs/team/qa-engineer.md`.
 
