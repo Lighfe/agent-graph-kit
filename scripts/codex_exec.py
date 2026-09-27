@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -244,6 +245,8 @@ def _kill_group(p: subprocess.Popen) -> None:
 # signal into an Interrupted exception, so `finally` blocks run (Python's default SIGTERM and
 # SIGHUP handling skips them). Later signals are ignored, so they cannot stop that cleanup.
 # start() registers each child it starts; kill_children() kills what is still registered.
+# Inside deferred() (the cleanup itself) a first signal is only recorded; it is raised when the
+# block ends, so the cleanup finishes.
 
 INTERRUPT_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
@@ -259,6 +262,7 @@ class Interrupted(BaseException):
 _children: set[subprocess.Popen] = set()
 _signum: int | None = None  # the first signal since catch_signals()
 _starting = False  # start() is between Popen and the registration of the child
+_deferring = False  # inside deferred(): a first signal is raised when the block ends
 
 
 def _on_signal(signum: int, frame) -> None:
@@ -266,9 +270,10 @@ def _on_signal(signum: int, frame) -> None:
     if _signum is not None:
         return  # a second signal: the cleanup of the first one goes on
     _signum = signum
-    if not _starting:
+    if not _starting and not _deferring:
         raise Interrupted(signum)
-    # else start() raises once the child is registered, so kill_children() can find it
+    # else start() raises once the child is registered, so kill_children() can find it,
+    # or deferred() raises once the cleanup is done
 
 
 def catch_signals() -> dict:
@@ -276,6 +281,21 @@ def catch_signals() -> dict:
     global _signum
     _signum = None
     return {s: signal.signal(s, _on_signal) for s in INTERRUPT_SIGNALS}
+
+
+@contextmanager
+def deferred():
+    """Run a cleanup block that a signal cannot stop. A first signal that arrives inside the block
+    is raised as Interrupted when the block ends; a signal from before the block is not raised again."""
+    global _deferring
+    outer, first = _deferring, _signum is None
+    _deferring = True
+    try:
+        yield
+    finally:
+        _deferring = outer
+        if first and not outer and _signum is not None:
+            raise Interrupted(_signum)  # noqa: B012 - the signal came during the cleanup
 
 
 def restore_signals(old: dict) -> None:

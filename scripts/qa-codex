@@ -285,8 +285,12 @@ def _reset_worktree(worktree: Path, head: str) -> str | None:
     return None
 
 
+_posted = False  # a comment was posted in this launch (set by _post, reset by main)
+
+
 def _post(issue: int, body: str) -> int:
     """The only place that posts a comment. The whole comment is redacted right before `gh`."""
+    global _posted
     try:
         p = subprocess.run(["gh", "issue", "comment", str(issue), "--body-file", "-"],
                            input=codex_exec.redact(body),
@@ -297,6 +301,7 @@ def _post(issue: int, body: str) -> int:
     if p.returncode != 0:
         print(f"qa-codex: cannot post the comment: {p.stderr.strip()}", file=sys.stderr)
         return 1
+    _posted = True
     return 0
 
 
@@ -334,14 +339,19 @@ def _env_int(name: str, default: int) -> int:
 
 def main(argv: list[str], sleep=time.sleep) -> int:
     """Run one QA launch. On SIGINT, SIGTERM or SIGHUP: kill the running child, remove the worktree,
-    post nothing and return 128 + the signal number (the issue stays pending, spec 5.3)."""
+    post nothing and return 128 + the signal number (the issue stays pending, spec 5.3). A signal
+    during the cleanup lets the cleanup finish first."""
+    global _posted
+    _posted = False
     old = codex_exec.catch_signals()
     try:
         return _main(argv, sleep)
     except codex_exec.Interrupted as e:
         codex_exec.kill_children()
+        # a signal during the cleanup can come after a comment was posted; it cannot be taken back
+        posted = "a comment was already posted" if _posted else "no comment posted"
         try:  # after SIGHUP the terminal may be gone
-            print(f"qa-codex: stopped by {signal.Signals(e.signum).name}; no comment posted", file=sys.stderr)
+            print(f"qa-codex: stopped by {signal.Signals(e.signum).name}; {posted}", file=sys.stderr)
         except OSError:
             pass
         return 128 + e.signum
@@ -432,10 +442,11 @@ def _main(argv: list[str], sleep) -> int:
             if error is not None:
                 return post(INVALID, error, retries=retries)
     finally:
-        codex_exec.kill_children()  # after an interrupt: no child may still write into the worktree
-        if worktree.exists() or _git("worktree", "list", cwd=repo).stdout.count(str(worktree)):
-            _remove_worktree(repo, worktree)
-        shutil.rmtree(tmp, ignore_errors=True)
+        with codex_exec.deferred():  # a signal here is raised after the cleanup, not in the middle
+            codex_exec.kill_children()  # after an interrupt: no child may still write into the worktree
+            if worktree.exists() or _git("worktree", "list", cwd=repo).stdout.count(str(worktree)):
+                _remove_worktree(repo, worktree)
+            shutil.rmtree(tmp, ignore_errors=True)
 
     entries = run.output["criteria"]
     invalid = [c for c in sorted(entries, key=lambda c: c["id"]) if c["verdict"] == "invalid"]

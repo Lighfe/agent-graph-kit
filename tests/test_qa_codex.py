@@ -799,6 +799,83 @@ def test_second_signal_does_not_stop_the_cleanup(qa_env, monkeypatch):
     _worktrees_gone(qa_env)
 
 
+# --- a signal during the cleanup (finally block of _main) --------------------------------
+
+
+def _signal_in(monkeypatch, module, name, *sigs):
+    """Wrap `module.name` so it sends `sigs` to this process, then runs. Returns the call args."""
+    real = getattr(module, name)
+    seen = []
+
+    def wrapped(*args):
+        seen.append(args)
+        for sig in sigs:
+            os.kill(os.getpid(), sig)
+        return real(*args)
+
+    monkeypatch.setattr(module, name, wrapped)
+    return seen
+
+
+def _removed(qa_env, worktree):
+    assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+    assert not worktree.exists() and not worktree.parent.exists()  # the worktree and its temp folder
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+def test_signal_during_worktree_removal_finishes_the_cleanup(qa_env, monkeypatch, sig):
+    seen = _signal_in(monkeypatch, qa, "_remove_worktree", sig)
+    comment, _ = qa_env.run(["ok"])
+    assert len(seen) == 1
+    _removed(qa_env, seen[0][1])
+    _worktrees_gone(qa_env)
+    assert qa_env.code == 128 + sig
+    assert comment is None and qa_env.comments() == []
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL  # the handlers are restored
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+def test_signal_during_kill_children_in_cleanup_finishes_the_cleanup(qa_env, monkeypatch, sig):
+    calls = []
+    real_kill = codex_exec.kill_children
+
+    def kill_children():
+        calls.append(1)
+        if len(calls) == 1:  # the first call is the one at the start of the finally block of _main
+            os.kill(os.getpid(), sig)
+        real_kill()
+
+    monkeypatch.setattr(codex_exec, "kill_children", kill_children)
+    comment, _ = qa_env.run(["ok"])
+    _worktrees_gone(qa_env)
+    assert qa_env.code == 128 + sig
+    assert comment is None and qa_env.comments() == []
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
+
+
+def test_second_signal_during_worktree_removal_keeps_the_first(qa_env, monkeypatch):
+    seen = _signal_in(monkeypatch, qa, "_remove_worktree", signal.SIGTERM, signal.SIGINT)
+    comment, _ = qa_env.run(["ok"])
+    assert len(seen) == 1
+    _removed(qa_env, seen[0][1])
+    assert qa_env.code == 128 + signal.SIGTERM
+    assert comment is None and qa_env.comments() == []
+
+
+def test_signal_during_cleanup_after_a_posted_comment(frontend_env, monkeypatch, capsys):
+    monkeypatch.setenv("FAKE_NPM_FAIL", "1")
+    seen = _signal_in(monkeypatch, qa, "_remove_worktree", signal.SIGTERM)
+    frontend_env.run(["ok"])
+    assert frontend_env.code == 128 + signal.SIGTERM
+    comments = frontend_env.comments()
+    assert len(comments) == 1 and comments[0].splitlines()[0] == "## QA: UNAVAILABLE"
+    assert len(seen) == 1
+    _removed(frontend_env, seen[0][1])
+    err = capsys.readouterr().err
+    assert "SIGTERM" in err
+    assert "no comment posted" not in err
+
+
 # --- gh failures and arguments -------------------------------------------------------
 
 
