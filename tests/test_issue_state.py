@@ -118,6 +118,44 @@ def test_parse_issue_without_comments_or_labels():
     assert iss.labels == frozenset() and iss.comments == ()
 
 
+def _without(key):
+    data = gh_json()
+    del data[key]
+    return data
+
+
+def _with(key, value):
+    return {**gh_json(), key: value}
+
+
+@pytest.mark.parametrize("data", [
+    _without("comments"),
+    _with("comments", None),
+    _with("comments", {"body": "## PM: GROOMED"}),
+    _with("comments", "## PM: GROOMED"),
+    _with("comments", 3),
+], ids=["missing", "null", "object", "string", "number"])
+def test_parse_issue_rejects_missing_or_non_list_comments(data):
+    with pytest.raises(ValueError):
+        parse_issue(data)
+
+
+@pytest.mark.parametrize("comment", [
+    "## PM: GROOMED", None, 5, ["## PM: GROOMED"],
+    {"id": "IC_1"}, {"body": None}, {"body": 5}, {"body": ["x"]},
+], ids=["string", "null", "number", "list", "no-body", "body-null", "body-number", "body-list"])
+def test_parse_issue_rejects_bad_comment_elements(comment):
+    data = gh_json()
+    data["comments"] = [data["comments"][0], comment]
+    with pytest.raises(ValueError):
+        parse_issue(data)
+
+
+def test_parse_issue_with_empty_comment_list():
+    iss = parse_issue(_with("comments", []))
+    assert iss.comments == () and iss.number == 12
+
+
 # --- first line, markers, CRLF -----------------------------------------------
 
 
@@ -219,7 +257,7 @@ def test_lane_values_with_crlf_and_trailing_spaces():
     assert lane(issue(body="Lane: default   \n## Goal")) == "default"
     assert lane(issue(body="Lane: frontend")) == "frontend"
     assert lane(issue(body="## Goal\nno lane")) is None
-    assert lane(issue(body="Lane: frontend\nLane: default")) == "frontend"
+    assert lane(issue(body="Lane: frontend\nLane: frontend")) == "frontend"
 
 
 def test_verified_sha_with_crlf_and_trailing_spaces():
@@ -235,6 +273,89 @@ def test_commits_range_with_crlf_and_trailing_spaces():
     assert commits_range(f"## Engineer: DONE\nCommits: {OLD}..{HEAD}  \n") == (OLD, HEAD)
     assert commits_range("## Engineer: DONE\nno range") is None
     assert commits_range("## Engineer: DONE\nCommits: onlyone") is None
+
+
+# Fenced examples and conflicting lines. Each value function gets the same text shape.
+
+VALUE_CASES = [
+    # (function, line with value A, line with value B, value A, value B)
+    (lambda t: lane(issue(body=t)), "Lane: default", "Lane: frontend", "default", "frontend"),
+    (verified_sha, f"Verified: {OLD}", f"Verified: {HEAD}", OLD, HEAD),
+    (commits_range, f"Commits: {OLD}..{HEAD}", f"Commits: {HEAD}..{OLD}", (OLD, HEAD), (HEAD, OLD)),
+]
+VALUE_IDS = ["lane", "verified", "commits"]
+
+
+def cases(test):
+    return pytest.mark.parametrize("value, a_line, b_line, a, b", VALUE_CASES, ids=VALUE_IDS)(test)
+
+
+@cases
+def test_value_in_backtick_fence_is_ignored(value, a_line, b_line, a, b):
+    assert value(f"## X\n```\n{b_line}\n```\n{a_line}\n") == a
+    assert value(f"## X\n{a_line}\n```\n{b_line}\n```\n") == a
+
+
+@cases
+def test_value_in_tilde_fence_is_ignored(value, a_line, b_line, a, b):
+    assert value(f"## X\n~~~\n{b_line}\n~~~\n{a_line}\n") == a
+    assert value(f"## X\n~~~~\n{b_line}\n~~~~~\n{a_line}\n") == a
+
+
+@cases
+def test_fence_closes_only_on_same_char_and_at_least_same_length(value, a_line, b_line, a, b):
+    # 4 backticks are not closed by 3; the value line after ``` is still inside.
+    assert value(f"````\n```\n{b_line}\n````\n{a_line}") == a
+    # ~~~ does not close a backtick fence, ``` does not close a tilde fence.
+    assert value(f"```\n~~~\n{b_line}\n```\n{a_line}") == a
+    assert value(f"~~~\n```\n{b_line}\n~~~\n{a_line}") == a
+    # a closing line with text after the run does not close.
+    assert value(f"```\n```x\n{b_line}\n```\n{a_line}") == a
+
+
+@cases
+def test_fence_with_info_string_or_indent_is_recognized(value, a_line, b_line, a, b):
+    assert value(f"```markdown\n{b_line}\n```\n{a_line}") == a
+    assert value(f"~~~ text\n{b_line}\n~~~\n{a_line}") == a
+    for indent in (" ", "  ", "   "):
+        assert value(f"{indent}```\n{b_line}\n{indent}```\n{a_line}") == a
+
+
+@cases
+def test_four_space_indent_is_not_a_fence(value, a_line, b_line, a, b):
+    # An indented code block, not a fence; the values stay readable and the same.
+    assert value(f"    ```\n{a_line}\n    ```\n{a_line}") == a
+
+
+@cases
+def test_fence_lines_with_crlf_are_recognized(value, a_line, b_line, a, b):
+    assert value(f"## X\r\n```\r\n{b_line}\r\n```\r\n{a_line}\r\n") == a
+    assert value(f"## X\r\n```markdown\r\n{b_line}\r\n``` \t\r\n{a_line}\r\n") == a
+
+
+@cases
+def test_unclosed_fence_hides_everything_after_it(value, a_line, b_line, a, b):
+    assert value(f"{a_line}\n```\n{b_line}\n") == a
+    assert value(f"{a_line}\n```\n{b_line}\n{b_line}\n") == a
+    assert value(f"## X\n```\n{a_line}\n") is None
+
+
+@cases
+def test_only_fenced_value_gives_none(value, a_line, b_line, a, b):
+    assert value(f"## X\n```\n{a_line}\n```\n") is None
+    assert value(f"## X\n~~~\n{a_line}\n~~~\nmore text\n") is None
+
+
+@cases
+def test_same_value_twice_gives_that_value(value, a_line, b_line, a, b):
+    assert value(f"{a_line}\n## X\n{a_line}\n") == a
+    assert value(f"{a_line}\r\n{a_line}   \r\n") == a
+
+
+@cases
+def test_different_values_give_none(value, a_line, b_line, a, b):
+    assert value(f"{a_line}\n{b_line}\n") is None
+    assert value(f"{b_line}\n## X\n{a_line}\n") is None
 
 
 def test_newest_done_returns_body_of_newest_valid_done():
@@ -359,6 +480,23 @@ def test_g3_denies_missing_lane():
     assert msg.startswith("G3:") and "Lane" in msg
 
 
+def test_g3_denies_conflicting_lanes_as_missing():
+    iss = issue(launch("pm"), "## PM: GROOMED", body="Lane: default\n## Goal\nLane: frontend\n")
+    msg = check(ENG, facts(iss))
+    assert msg.startswith("G3: issue body has no Lane line")
+
+
+def test_g3_denies_lane_only_inside_fence():
+    iss = issue(launch("pm"), "## PM: GROOMED", body="## Goal\n```markdown\nLane: default\n```\n")
+    msg = check(ENG, facts(iss))
+    assert msg.startswith("G3: issue body has no Lane line")
+
+
+def test_g3_allows_lane_outside_fence_with_other_lane_in_fence():
+    iss = issue(launch("pm"), "## PM: GROOMED", body="Lane: default\n```\nLane: frontend\n```\n")
+    assert check(ENG, facts(iss)) is None
+
+
 def test_g3_denies_unknown_lane():
     iss = issue(launch("pm"), "## PM: GROOMED", body="Lane: backend\n")
     assert check(ENG, facts(iss)).startswith("G3:")
@@ -392,6 +530,17 @@ def test_g4_denies_after_fail():
 
 def test_g4_allows_pass_without_verified_as_recheck():
     assert check(QA, facts(done(launch("qa"), "## QA: PASS\nno sha"))) is None
+
+
+def test_g4_denies_done_with_conflicting_commits_lines():
+    iss = groomed(launch("engineer"), f"## Engineer: DONE\nCommits: {OLD}..{HEAD}\nCommits: {HEAD}..{OLD}")
+    msg = check(QA, facts(iss))
+    assert msg.startswith("G4: the newest ## Engineer: DONE comment has no Commits: line")
+
+
+def test_g4_ignores_fenced_commits_line():
+    iss = groomed(launch("engineer"), f"## Engineer: DONE\n```\nCommits: {OLD}..{HEAD}\n```\n")
+    assert check(QA, facts(iss)).startswith("G4: the newest ## Engineer: DONE comment has no Commits: line")
 
 
 def test_g4_reads_commits_with_crlf():
@@ -437,6 +586,30 @@ def test_g6_denies_pass_without_verified():
 def test_g6_denies_when_current_result_is_not_pass():
     assert check(CLOSE, facts(done(launch("qa"), f"## QA: FAIL\nVerified: {HEAD}"))).startswith("G6:")
     assert check(CLOSE, facts(done())).startswith("G6:")
+
+
+def test_g6_denies_fenced_head_before_old_footer():
+    body = f"## QA: PASS\nExample:\n```\nVerified: {HEAD}\n```\nVerified: {OLD}\n"
+    msg = check(CLOSE, facts(done(launch("qa"), body)))
+    assert msg.startswith("G6:") and f"verified SHA is {OLD}" in msg
+
+
+def test_g6_denies_two_unfenced_verified_lines():
+    for body in (f"## QA: PASS\nVerified: {HEAD}\nVerified: {OLD}",
+                 f"## QA: PASS\nVerified: {OLD}\nVerified: {HEAD}"):
+        msg = check(CLOSE, facts(done(launch("qa"), body)))
+        assert msg.startswith("G6: verified SHA is missing")
+
+
+def test_g6_allows_verified_repeated_with_same_sha():
+    body = f"## QA: PASS\nVerified: {HEAD}\nfooter\nVerified: {HEAD}"
+    assert check(CLOSE, facts(done(launch("qa"), body))) is None
+
+
+def test_unclosed_fence_in_one_comment_does_not_hide_the_next_comment():
+    iss = done(launch("qa"), "## QA: FAIL\n```\nunclosed", launch("engineer", 2),
+               f"## Engineer: DONE\nCommits: {OLD}..{HEAD}", launch("qa", 2), f"## QA: PASS\nVerified: {HEAD}")
+    assert check(CLOSE, facts(iss)) is None
 
 
 def test_g6_reads_verified_with_crlf():

@@ -60,14 +60,32 @@ class Call:
 # --- parsing -------------------------------------------------------------------
 
 
+def _comment_bodies(data: dict) -> tuple[str, ...]:
+    """The comment bodies, or ValueError when the comment data is missing or malformed."""
+    comments = data.get("comments")
+    if not isinstance(comments, list):
+        raise ValueError(f"issue JSON has no comments list (got {type(comments).__name__})")
+    bodies = []
+    for n, c in enumerate(comments):
+        if not isinstance(c, dict) or not isinstance(c.get("body"), str):
+            raise ValueError(f"issue JSON comment {n} has no string body")
+        bodies.append(c["body"])
+    return tuple(bodies)
+
+
 def parse_issue(data: dict) -> Issue:
-    """Build an Issue from `gh issue view N --json number,state,labels,body,comments`."""
+    """Build an Issue from `gh issue view N --json number,state,labels,body,comments`.
+
+    Raises ValueError when `comments` is missing, not a list, or has an element
+    without a string `body`: missing comment data must not look like an issue
+    without comments.
+    """
     return Issue(
         number=int(data["number"]),
         open=data["state"] == "OPEN",
         labels=frozenset(label["name"] for label in data.get("labels") or ()),
         body=data.get("body") or "",
-        comments=tuple(c.get("body") or "" for c in data.get("comments") or ()),
+        comments=_comment_bodies(data),
     )
 
 
@@ -75,28 +93,53 @@ def first_line(body: str) -> str:
     return body.split("\n", 1)[0].rstrip()
 
 
-def _value(body: str, pattern: re.Pattern) -> re.Match | None:
-    """First line of `body` (CR and trailing spaces removed) that matches `pattern`."""
-    for line in body.split("\n"):
-        m = pattern.match(line.rstrip())
-        if m:
-            return m
-    return None
+_FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _unfenced_lines(text: str):
+    """Lines of one text outside fenced code blocks (the fence lines count as inside).
+
+    A fence opens on a line of 3+ backticks or 3+ tildes (at most 3 leading spaces,
+    any info string after it) and closes on a line of the same character, at least
+    as long, with only spaces or tabs after it. An unclosed fence runs to the end.
+    """
+    fence = None  # (character, length) of the open fence
+    for line in text.split("\n"):
+        bare = line.rstrip("\r")
+        if fence is None:
+            m = _FENCE_OPEN.match(bare)
+            if m:
+                fence = (m.group(1)[0], len(m.group(1)))
+            else:
+                yield line
+            continue
+        char, length = fence
+        close = re.match(r"^ {0,3}(" + re.escape(char) + r"{" + str(length) + r",})[ \t]*$", bare)
+        if close:
+            fence = None
+
+
+def _value(text: str, pattern: re.Pattern) -> tuple[str, ...] | None:
+    """The groups of the lines of `text` outside fences (CR and trailing spaces
+    removed) that match `pattern`. None when no line matches or when matching
+    lines disagree (an unknown value behaves like a missing one)."""
+    found = {m.groups() for line in _unfenced_lines(text) if (m := pattern.match(line.rstrip()))}
+    return found.pop() if len(found) == 1 else None
 
 
 def lane(issue: Issue) -> str | None:
     m = _value(issue.body, _LANE)
-    return m.group(1) if m else None
+    return m[0] if m else None
 
 
 def verified_sha(body: str) -> str | None:
     m = _value(body, _VERIFIED)
-    return m.group(1) if m else None
+    return m[0] if m else None
 
 
 def commits_range(body: str) -> tuple[str, str] | None:
     m = _value(body, _COMMITS)
-    return (m.group(1), m.group(2)) if m else None
+    return (m[0], m[1]) if m else None
 
 
 # --- validity, pending, current result (spec 5.3) --------------------------------

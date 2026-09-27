@@ -494,6 +494,15 @@ def test_check_deny_names_the_check(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+def test_null_comments_deny_with_guard_error_and_post_nothing(env):
+    data = json.loads(Path(env["FAKE_GH_ISSUE"]).read_text())
+    data["comments"] = None
+    Path(env["FAKE_GH_ISSUE"]).write_text(json.dumps(data))
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
+    assert code == 0 and deny_reason(out).startswith("guard error:")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
 @pytest.mark.parametrize("extra", [{"FAKE_GH_FAIL": "1"}, {"FAKE_GIT_FAIL": "1"}, {"FAKE_GIT_DIRTY": "1"},
                                    {"FAKE_GH_COMMENT_FAIL": "1"}])
 def test_failures_deny(env, extra):
