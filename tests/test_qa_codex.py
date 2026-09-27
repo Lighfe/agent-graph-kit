@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -94,7 +95,7 @@ class QaEnv:
         }
         for key, value in env.items():
             monkeypatch.setenv(key, value)
-        for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_NPM_FAIL", "GIT_DIR", "GIT_WORK_TREE"):
+        for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "GIT_DIR", "GIT_WORK_TREE"):
             monkeypatch.delenv(key, raising=False)
         self.repo = tmp / "repo"
         self.repo.mkdir()
@@ -458,6 +459,7 @@ def frontend_env(qa_env, monkeypatch):
     fe.mkdir()
     git(fe, "init", "-q", "-b", "main")
     (fe / "package.json").write_text('{"name": "synthetic-frontend"}\n')
+    (fe / ".gitignore").write_text("node_modules/\n")
     git(fe, "add", ".")
     git(fe, "commit", "-q", "-m", "frontend")
     git(qa_env.repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(fe), "frontend")
@@ -520,6 +522,175 @@ def test_no_frontend_no_pre_step(qa_env):
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
     assert [c["tool"] for c in qa_env.calls()] == ["codex"]
+
+
+# --- clean retries ---------------------------------------------------------------------
+
+
+def test_retry_starts_from_the_committed_state(frontend_env):
+    comment, slept = frontend_env.run(["dirty", "ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert "Retries: 1 (transient)" in comment.splitlines()
+    assert slept == [60]
+    first, second = frontend_env.calls("codex")
+    assert first["tree"]["frontend/package.json"] == '{"name": "synthetic-frontend"}\n'
+    tree = second["tree"]
+    assert tree["frontend/package.json"] == '{"name": "synthetic-frontend"}\n'
+    assert "frontend/untracked.txt" not in tree
+    assert "root-untracked.txt" not in tree
+    assert tree["frontend/node_modules/keep.txt"] == "installed\n"
+    assert [c["tool"] for c in frontend_env.calls()] == ["npm", "npx", "codex", "codex"]  # no second pre-step
+    assert len(git(frontend_env.repo, "worktree", "list").splitlines()) == 1
+
+
+def test_failing_reset_is_invalid(qa_env, monkeypatch):
+    real_git = qa._git
+
+    def failing_git(*args, cwd=None):
+        if args[0] == "clean":
+            return subprocess.CompletedProcess(["git", *args], 1, "", "fatal: synthetic clean failure\n")
+        return real_git(*args, cwd=cwd)
+
+    monkeypatch.setattr(qa, "_git", failing_git)
+    comment, _ = qa_env.run(["transient", "ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: INVALID"
+    reason = next(line for line in lines if line.startswith("Reason:"))
+    assert "`git clean -ffdq`" in reason and "synthetic clean failure" in reason
+    assert len(qa_env.calls("codex")) == 1
+    assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+
+
+def test_reset_covers_nested_submodules(qa_env, monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    repos = {}
+    for name, child in (("inner", None), ("middle", "inner"), ("outer", "middle")):
+        repo = qa_env.tmp / name
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+        (repo / f"{name}.txt").write_text(f"{name}\n")
+        (repo / ".gitignore").write_text("ignored/\n")
+        if child:
+            git(repo, "submodule", "add", "-q", str(repos[child]), child)
+            git(repo, "submodule", "update", "-q", "--init", "--recursive")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", name)
+        repos[name] = repo
+    clone = qa_env.tmp / "clone"
+    git(qa_env.tmp, "clone", "-q", "--recurse-submodules", str(repos["outer"]), str(clone))
+    head = git(clone, "rev-parse", "HEAD")
+    folders = {"outer": clone, "middle": clone / "middle", "inner": clone / "middle" / "inner"}
+    recorded = {name: git(folder, "rev-parse", "HEAD") for name, folder in folders.items()}
+    for name, folder in folders.items():
+        (folder / f"{name}.txt").write_text("changed\n")
+        (folder / "untracked.txt").write_text("untracked\n")
+        (folder / "ignored").mkdir()
+        (folder / "ignored" / "keep.txt").write_text("kept\n")
+    (folders["inner"] / "extra.txt").write_text("x\n")
+    git(folders["inner"], "add", ".")
+    git(folders["inner"], "commit", "-q", "-m", "moved the submodule HEAD")
+
+    assert qa._reset_worktree(clone, head) is None
+
+    for name, folder in folders.items():
+        assert git(folder, "rev-parse", "HEAD") == recorded[name]
+        assert (folder / f"{name}.txt").read_text() == f"{name}\n"
+        assert not (folder / "untracked.txt").exists()
+        assert (folder / "ignored" / "keep.txt").read_text() == "kept\n"
+    assert not (folders["inner"] / "extra.txt").exists()
+
+
+# --- interrupts -------------------------------------------------------------------------
+
+
+def _wait_for_pid(path, proc, limit=20):
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        assert proc.poll() is None, proc.communicate()
+        try:
+            return int(path.read_text())
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    raise AssertionError(f"no PID in {path}")
+
+
+def _interrupt(qa_env, pid_file, sig):
+    """Run qa-codex as a subprocess, send `sig` to it once the fake child runs. The child's PID."""
+    proc = subprocess.Popen([sys.executable, str(SCRIPT), "ROLE=qa", "ISSUE=7"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        pid = _wait_for_pid(pid_file, proc)
+        proc.send_signal(sig)
+        started = time.monotonic()
+        proc.communicate(timeout=10)
+        while alive(pid) and time.monotonic() - started < 10:
+            time.sleep(0.05)
+        assert time.monotonic() - started < 10
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    assert proc.returncode == 128 + sig
+    assert not alive(pid)
+    assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+    worktrees = qa_env.repo / ".git" / "worktrees"
+    assert not worktrees.exists() or list(worktrees.iterdir()) == []
+    assert qa_env.comments() == []
+    return pid
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+def test_interrupt_during_codex_cleans_up(qa_env, monkeypatch, sig):
+    monkeypatch.setenv("QA_CODEX_TIMEOUT", "600")
+    (qa_env.tmp / "modes").write_text("timeout\n")
+    _interrupt(qa_env, qa_env.tmp / "child.pid", sig)
+    assert len(qa_env.calls("codex")) == 1
+
+
+def test_interrupt_during_pre_step_cleans_up(frontend_env, monkeypatch):
+    monkeypatch.setenv("QA_PRESTEP_TIMEOUT", "600")
+    monkeypatch.setenv("FAKE_NPM_WAIT", str(frontend_env.tmp / "npm.pid"))
+    _interrupt(frontend_env, frontend_env.tmp / "npm.pid", signal.SIGTERM)
+    assert frontend_env.calls("codex") == []
+    assert [c["tool"] for c in frontend_env.calls()] == ["npm"]
+
+
+def _worktrees_gone(qa_env):
+    assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+    (call,) = qa_env.calls("codex")
+    worktree = Path(call["argv"][call["argv"].index("-C") + 1])
+    assert not worktree.exists() and not worktree.parent.exists()  # the worktree and its temp folder
+
+
+@pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+def test_interrupt_during_retry_wait_cleans_up(qa_env, sig):
+    (qa_env.tmp / "modes").write_text("transient\nok\n")
+    code = qa.main(["ROLE=qa", "ISSUE=7"], sleep=lambda s: os.kill(os.getpid(), sig) or time.sleep(1))
+    assert code == 128 + sig
+    assert qa_env.comments() == []
+    _worktrees_gone(qa_env)
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL  # the handlers are restored
+
+
+def test_second_signal_does_not_stop_the_cleanup(qa_env, monkeypatch):
+    real_remove = qa._remove_worktree
+    seen = []
+
+    def remove(repo, worktree):
+        os.kill(os.getpid(), signal.SIGINT)
+        os.kill(os.getpid(), signal.SIGTERM)
+        seen.append(worktree)
+        real_remove(repo, worktree)
+
+    monkeypatch.setattr(qa, "_remove_worktree", remove)
+    (qa_env.tmp / "modes").write_text("transient\nok\n")
+    code = qa.main(["ROLE=qa", "ISSUE=7"], sleep=lambda s: os.kill(os.getpid(), signal.SIGHUP) or time.sleep(1))
+    assert code == 128 + signal.SIGHUP
+    assert len(seen) == 1
+    assert qa_env.comments() == []
+    _worktrees_gone(qa_env)
 
 
 # --- gh failures and arguments -------------------------------------------------------

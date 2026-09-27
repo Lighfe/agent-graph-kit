@@ -191,8 +191,8 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
            *sandbox_args, "-C", str(cwd), "--output-schema", str(schema), "-o", str(out), "-"]
     try:
         try:
-            p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
+            p = start(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                      text=True)
         except FileNotFoundError:
             return CodexRun("unavailable", None, "codex is not installed")
         try:
@@ -200,6 +200,11 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
         except subprocess.TimeoutExpired:
             _kill_group(p)
             return CodexRun("timeout", None, f"no result after {_duration(timeout_s)}")
+        except BaseException:  # an interrupt (see catch_signals): no child outlives the caller
+            _kill_group(p)
+            raise
+        finally:
+            _children.discard(p)
         if p.returncode != 0:
             text = failure_text(stdout, stderr)
             reason = crash_reason(p.returncode, stdout, stderr) or failure_reason(stdout, stderr)
@@ -222,9 +227,76 @@ def _kill_group(p: subprocess.Popen) -> None:
     except ProcessLookupError:
         pass
     p.wait()
+    _children.discard(p)
     for stream in (p.stdin, p.stdout, p.stderr):
         if stream:
             try:
                 stream.close()
             except OSError:
                 pass
+
+
+# --- interrupts --------------------------------------------------------------------------
+#
+# On SIGINT, SIGTERM or SIGHUP the caller must kill the process group of its running child,
+# remove what it created and exit with 128 + the signal number. catch_signals() turns the first
+# signal into an Interrupted exception, so `finally` blocks run (Python's default SIGTERM and
+# SIGHUP handling skips them). Later signals are ignored, so they cannot stop that cleanup.
+# start() registers each child it starts; kill_children() kills what is still registered.
+
+INTERRUPT_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+class Interrupted(BaseException):
+    """Raised by the signal handler of catch_signals(). BaseException: no `except Exception` eats it."""
+
+    def __init__(self, signum: int):
+        super().__init__(signum)
+        self.signum = signum
+
+
+_children: set[subprocess.Popen] = set()
+_signum: int | None = None  # the first signal since catch_signals()
+_starting = False  # start() is between Popen and the registration of the child
+
+
+def _on_signal(signum: int, frame) -> None:
+    global _signum
+    if _signum is not None:
+        return  # a second signal: the cleanup of the first one goes on
+    _signum = signum
+    if not _starting:
+        raise Interrupted(signum)
+    # else start() raises once the child is registered, so kill_children() can find it
+
+
+def catch_signals() -> dict:
+    """Install the interrupt handler. Returns the old handlers for restore_signals()."""
+    global _signum
+    _signum = None
+    return {s: signal.signal(s, _on_signal) for s in INTERRUPT_SIGNALS}
+
+
+def restore_signals(old: dict) -> None:
+    for s, handler in old.items():
+        signal.signal(s, handler)
+
+
+def start(cmd: list[str], **kwargs) -> subprocess.Popen:
+    """Popen in a new session (its own process group), registered for kill_children()."""
+    global _starting
+    _starting = True
+    try:
+        p = subprocess.Popen(cmd, start_new_session=True, **kwargs)
+        _children.add(p)
+        return p
+    finally:
+        _starting = False
+        if _signum is not None:
+            raise Interrupted(_signum)  # noqa: B012 - the signal came while the child started
+
+
+def kill_children() -> None:
+    """Kill the process group of every registered child that is still there, and reap it."""
+    for p in list(_children):
+        _kill_group(p)

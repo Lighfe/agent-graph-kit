@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -202,8 +203,8 @@ def _git(*args: str, cwd: Path | str | None = None) -> subprocess.CompletedProce
 def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
     """Run one pre-step command in its own process group. None on success, else the error line."""
     try:
-        p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+        p = codex_exec.start(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
     except OSError as e:
         return f"{cmd[0]}: {e.strerror or e}"
     try:
@@ -211,6 +212,11 @@ def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
     except subprocess.TimeoutExpired:
         codex_exec._kill_group(p)
         return f"no result after {timeout_s} s"
+    except BaseException:  # an interrupt: kill the step before the worktree goes
+        codex_exec._kill_group(p)
+        raise
+    finally:
+        codex_exec._children.discard(p)
     if p.returncode == 0:
         return None
     lines = [line.strip() for line in (stderr + "\n" + stdout).splitlines() if line.strip()]
@@ -249,10 +255,25 @@ def _remove_worktree(repo: Path, worktree: Path) -> None:
         _git("worktree", "prune", cwd=repo)
 
 
-def _reset_worktree(worktree: Path) -> None:
-    """Undo what an attempt wrote before the next attempt (ignored files such as node_modules stay)."""
-    _git("reset", "--hard", "--quiet", cwd=worktree)
-    _git("clean", "-ffdq", cwd=worktree)
+RESET_STEPS: list[list[str]] = [
+    ["submodule", "foreach", "--quiet", "--recursive", 'git reset --hard --quiet "$sha1"'],
+    ["submodule", "foreach", "--quiet", "--recursive", "git clean -ffdq"],
+]
+
+
+def _reset_worktree(worktree: Path, head: str) -> str | None:
+    """Undo what an attempt wrote before the next attempt: the worktree back to `head`, every
+    initialized submodule (nested ones too) back to the commit its superproject records, untracked
+    files removed. Ignored files (node_modules) stay. None on success, else the reason, which names
+    the failing command. `foreach` runs in a submodule before its own submodules, so `$sha1` of a
+    nested one is read from a superproject that is already reset."""
+    for args in (["reset", "--hard", "--quiet", head], ["clean", "-ffdq"], *RESET_STEPS):
+        p = _git(*args, cwd=worktree)
+        if p.returncode != 0:
+            shown = " ".join(a if " " not in a else f"'{a}'" for a in args)
+            detail = codex_exec._one_line(p.stderr) or f"exit code {p.returncode}"
+            return f"cannot reset the worktree for the retry: `git {shown}` failed: {detail}"
+    return None
 
 
 def _post(issue: int, body: str) -> int:
@@ -303,6 +324,23 @@ def _env_int(name: str, default: int) -> int:
 
 
 def main(argv: list[str], sleep=time.sleep) -> int:
+    """Run one QA launch. On SIGINT, SIGTERM or SIGHUP: kill the running child, remove the worktree,
+    post nothing and return 128 + the signal number (the issue stays pending, spec 5.3)."""
+    old = codex_exec.catch_signals()
+    try:
+        return _main(argv, sleep)
+    except codex_exec.Interrupted as e:
+        codex_exec.kill_children()
+        try:  # after SIGHUP the terminal may be gone
+            print(f"qa-codex: stopped by {signal.Signals(e.signum).name}; no comment posted", file=sys.stderr)
+        except OSError:
+            pass
+        return 128 + e.signum
+    finally:
+        codex_exec.restore_signals(old)
+
+
+def _main(argv: list[str], sleep) -> int:
     number = _parse_args(argv)
     if number is None:
         print(USAGE, file=sys.stderr)
@@ -374,8 +412,11 @@ def main(argv: list[str], sleep=time.sleep) -> int:
                 sleep(WAITS[used["transient"]])
             used[status] += 1
             retries.append(status)
-            _reset_worktree(worktree)
+            error = _reset_worktree(worktree, head)
+            if error is not None:
+                return post(INVALID, error, retries=retries)
     finally:
+        codex_exec.kill_children()  # after an interrupt: no child may still write into the worktree
         if worktree.exists() or _git("worktree", "list", cwd=repo).stdout.count(str(worktree)):
             _remove_worktree(repo, worktree)
         shutil.rmtree(tmp, ignore_errors=True)

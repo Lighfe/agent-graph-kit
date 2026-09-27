@@ -3,9 +3,11 @@
 
 FAKE_TOOL_LOG=<path>   each call appends {"tool", "argv", "cwd", "files"} as one JSON line
 FAKE_NPM_FAIL=1        each call prints an error on stderr and exits 1
+FAKE_NPM_WAIT=<path>   each call starts a child `sleep 30`, writes its PID to <path> and waits for it
 """
 import json
 import os
+import subprocess
 import sys
 
 tool = os.path.basename(sys.argv[0])
@@ -16,4 +18,9 @@ if os.environ.get("FAKE_TOOL_LOG"):
 if os.environ.get("FAKE_NPM_FAIL") == "1":
     sys.stderr.write(f"\n{tool} ERR! synthetic failure\n{tool} ERR! second line\n")
     sys.exit(1)
+if os.environ.get("FAKE_NPM_WAIT"):
+    child = subprocess.Popen(["sleep", "30"])
+    with open(os.environ["FAKE_NPM_WAIT"], "w", encoding="utf-8") as f:
+        f.write(str(child.pid))
+    child.wait()
 sys.exit(0)

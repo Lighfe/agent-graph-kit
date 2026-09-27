@@ -4,7 +4,8 @@
 FAKE_CODEX_MODES=<path>   one mode per line; each call pops the first line (default mode: ok)
 FAKE_CODEX_N=<n>          number of criteria in the JSON (default 2)
 FAKE_CODEX_PID=<path>     mode timeout writes the PID of its child here
-FAKE_TOOL_LOG=<path>      each call appends {"tool", "argv", "cwd", "stdin"} as one JSON line
+FAKE_TOOL_LOG=<path>      each call appends {"tool", "argv", "cwd", "stdin", "tree"} as one JSON line;
+                          "tree" maps each file below the working directory (no `.git`) to its text
 
 Modes:
   ok           valid JSON in the -o file: every id 1..N passes, verified_sha = git rev-parse HEAD
@@ -21,6 +22,8 @@ Modes:
   nologin      turn.failed with the 401 text, exit 1
   unknown      turn.failed with an invalid-schema error, exit 1
   timeout      starts a child `sleep 30`, writes its PID, waits for it
+  dirty        changes frontend/package.json, adds frontend/untracked.txt, root-untracked.txt and
+               frontend/node_modules/keep.txt, then fails like transient
   crash        prints the banner and the prompt on stderr, then kills itself with SIGSEGV
   panic        prints a Rust panic on stderr after the banner and the prompt, exit 101
 The error modes print a banner and the prompt on stderr, as the real CLI does.
@@ -35,9 +38,25 @@ env = os.environ.get
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 
+
+
+def tree():
+    files = {}
+    for folder, dirs, names in os.walk("."):
+        dirs[:] = sorted(d for d in dirs if d != ".git")
+        for name in sorted(names):
+            if name == ".git":
+                continue
+            path = os.path.relpath(os.path.join(folder, name))
+            with open(path, encoding="utf-8", errors="replace") as f:
+                files[path] = f.read()
+    return files
+
+
 if env("FAKE_TOOL_LOG"):
     with open(env("FAKE_TOOL_LOG"), "a", encoding="utf-8") as f:
-        f.write(json.dumps({"tool": "codex", "argv": args, "cwd": os.getcwd(), "stdin": prompt}) + "\n")
+        f.write(json.dumps({"tool": "codex", "argv": args, "cwd": os.getcwd(), "stdin": prompt,
+                            "tree": tree()}) + "\n")
 
 mode = "ok"
 if env("FAKE_CODEX_MODES"):
@@ -59,6 +78,15 @@ ERRORS = {
     "unknown": ('{\n  "type": "error",\n  "error": {\n    "type": "invalid_request_error",\n'
                 '    "code": "invalid_json_schema"\n  }\n}'),
 }
+
+if mode == "dirty":
+    for path, text in (("frontend/package.json", '{"name": "changed by the fake codex"}\n'),
+                       ("frontend/untracked.txt", "untracked\n"), ("root-untracked.txt", "untracked\n"),
+                       ("frontend/node_modules/keep.txt", "installed\n")):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    mode = "transient"
 
 if mode in ERRORS:
     msg = ERRORS[mode]
