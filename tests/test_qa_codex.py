@@ -1270,3 +1270,103 @@ def test_one_post_path_through_redact():
 def test_prompt_forbids_quoting_secrets():
     prompt = qa.build_prompt([CRIT_1], "b" * 40, "a" * 40)
     assert "Do not quote secrets (keys, tokens, passwords) in your evidence" in prompt
+
+
+# --- multi-line secrets (#37) -------------------------------------------------------------
+# A synthetic secret of several unique lines in an env var whose name matches SECRET_NAME.
+# "Leaks": the whole value, or any one of its lines, is a substring of what `gh` receives.
+
+MULTI_SECRET = ("-----BEGIN FAKE KEY-----\nAAAAfakefakefake1111\nBBBBfakefakefake2222\n"
+                "-----END FAKE KEY-----")
+
+# A fake tool that writes SCRIPTED_STDERR and SCRIPTED_STDOUT (JSON strings) and exits 1.
+SCRIPTED_FAILURE = r'''#!/usr/bin/env python3
+import json, os, sys
+if not sys.stdin.isatty():
+    try:
+        sys.stdin.read()
+    except OSError:
+        pass
+sys.stdout.write(json.loads(os.environ.get("SCRIPTED_STDOUT", '""')))
+sys.stderr.write(json.loads(os.environ.get("SCRIPTED_STDERR", '""')))
+sys.exit(int(os.environ.get("SCRIPTED_EXIT", "1")))
+'''
+
+
+def _leaks(secret, text):
+    return secret in text or any(line in text for line in secret.splitlines())
+
+
+@pytest.fixture
+def multi_secret(monkeypatch):
+    monkeypatch.setenv("FAKE_API_KEY", MULTI_SECRET)
+    lines = MULTI_SECRET.splitlines()
+    assert len(lines) >= 3 and len(set(lines)) == len(lines) and all(len(x) >= 8 for x in lines)
+    return MULTI_SECRET
+
+
+def _scripted_failure(env, monkeypatch, tool, stdout="", stderr="", code=1):
+    _install(env, tool, SCRIPTED_FAILURE)
+    monkeypatch.setenv("SCRIPTED_STDOUT", json.dumps(stdout))
+    monkeypatch.setenv("SCRIPTED_STDERR", json.dumps(stderr))
+    monkeypatch.setenv("SCRIPTED_EXIT", str(code))
+
+
+@pytest.mark.parametrize("verdicts,marker", [(("pass", "pass"), "## QA: PASS"),
+                                             (("pass", "fail"), "## QA: FAIL"),
+                                             (("invalid", "pass"), "## QA: INVALID")])
+@pytest.mark.parametrize("where", [0, 1])
+def test_multi_line_secret_in_evidence_does_not_leak(qa_env, monkeypatch, multi_secret, verdicts, marker,
+                                                     where):
+    evidence = ["checked the form", "checked the error"]
+    evidence[where] = f"the log printed the key:\n{multi_secret}\nand then stopped"
+    _scripted(qa_env, monkeypatch, {"output": _output(tuple(evidence), verdicts)})
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == marker
+    assert "[redacted]" in comment
+    assert not _leaks(multi_secret, comment), comment
+    if marker == "## QA: INVALID":
+        reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
+        assert "criterion 1" in reason
+
+
+@pytest.mark.parametrize("stream", ["stderr", "stdout"])
+def test_multi_line_secret_in_pre_step_output_does_not_leak(frontend_env, monkeypatch, multi_secret, stream):
+    text = f"npm WARN setup\nnpm ERR! could not fetch with the key {multi_secret}\nnpm ERR! done\n"
+    _scripted_failure(frontend_env, monkeypatch, "npm", **{stream: text})
+    comment, _ = frontend_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "pre-step `npm ci` failed: npm ERR! could not fetch with the key [redacted]" in comment
+    assert not _leaks(multi_secret, comment), comment
+
+
+def test_multi_line_secret_in_codex_stderr_does_not_leak(qa_env, monkeypatch, multi_secret):
+    stderr = ("OpenAI Codex v0.153.4 (fake)\n--------\n"
+              f"ERROR: unexpected status 401 Unauthorized: key {multi_secret}\nmore\n")
+    _scripted_failure(qa_env, monkeypatch, "codex", stdout='{"type": "thread.started"}\n', stderr=stderr)
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "Reason: ERROR: unexpected status 401 Unauthorized: key [redacted]" in comment
+    assert not _leaks(multi_secret, comment), comment
+
+
+def test_failure_reason_redacts_before_picking_a_line(multi_secret):
+    stderr = f"banner\nERROR: rate limit exceeded: key {multi_secret}\n"
+    reason = codex_exec.failure_reason("", stderr)
+    assert reason == "ERROR: rate limit exceeded: key [redacted]"
+    last = codex_exec.failure_reason("", f"banner\nno pattern here {multi_secret}\n")
+    assert "[redacted]" in last and not _leaks(multi_secret, last)
+
+
+def test_panic_reason_redacts_before_picking_the_line(multi_secret):
+    stderr = f"banner\nthread 'main' panicked at x.rs:1:2: key {multi_secret}\n"
+    reason = codex_exec.crash_reason(101, "", stderr)
+    assert reason == "codex crashed (panic): thread 'main' panicked at x.rs:1:2: key [redacted]"
+    assert codex_exec.classify_failure(101, stderr) == "transient"
+
+
+def test_multi_line_reason_is_still_cut_to_reason_max(multi_secret):
+    stderr = "ERROR: rate limit exceeded: " + "x" * codex_exec.REASON_MAX + f" {multi_secret}\n"
+    reason = codex_exec.failure_reason("", stderr)
+    assert len(reason) <= codex_exec.REASON_MAX and reason.endswith("...")
+    assert not _leaks(multi_secret, reason)

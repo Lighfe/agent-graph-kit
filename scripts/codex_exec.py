@@ -157,7 +157,7 @@ def crash_reason(returncode: int, stdout: str, stderr: str) -> str | None:
     text = failure_text(stdout, stderr)
     if _table_status(text) is not None:
         return None
-    return _crash(returncode, text)
+    return _crash(returncode, redact(text))  # redact before the panic line is picked
 
 
 def _one_line(text: str) -> str:
@@ -172,7 +172,8 @@ def failure_reason(stdout: str, stderr: str) -> str:
     message = _turn_failed(stdout)
     if message is not None:
         return _one_line(message) or "codex failed without a message"
-    lines = [line for line in stderr.splitlines() if line.strip()]
+    # redact the whole stderr before a line is picked: a multi-line secret spans lines
+    lines = [line for line in redact(stderr).splitlines() if line.strip()]
     for line in lines:
         if any(p.search(line) for _, p in FAILURE_PATTERNS):
             return _one_line(line)

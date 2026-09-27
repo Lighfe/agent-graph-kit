@@ -187,7 +187,9 @@ def render(output: dict | None, *, criteria: list[str], marker: str, reason: str
             first, *rest = text.split("\n")
             lines.append(f"- [{'x' if verdict == 'pass' else ' '}] {first} - {verdict.upper()}")
             lines += rest  # the issue's own text, nested bullets included
-            lines += ["      " + e.strip() for e in entry["evidence"].splitlines() if e.strip()]
+            # redact before the indent: an indented multi-line secret no longer matches (P5)
+            evidence = codex_exec.redact(entry["evidence"])
+            lines += ["      " + e.strip() for e in evidence.splitlines() if e.strip()]
         lines += ["", _tests_line(output["tests"])]
         if done_head:
             lines.append(f"Done head: {done_head}")  # the DONE head; `Verified:` stays HEAD (G6)
@@ -224,9 +226,11 @@ def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
         codex_exec._children.discard(p)
     if p.returncode == 0:
         return None
-    lines = [line.strip() for line in (stderr + "\n" + stdout).splitlines() if line.strip()]
+    # redact the raw text before a line is picked (a multi-line secret spans lines), and before the cut
+    text = codex_exec.redact(stderr) + "\n" + codex_exec.redact(stdout)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     line = next((x for x in lines if _ERROR_LINE.search(x)), lines[0] if lines else f"exit code {p.returncode}")
-    return codex_exec.redact(line)[:codex_exec.REASON_MAX]  # redact before the cut
+    return line[:codex_exec.REASON_MAX]
 
 
 def _has_frontend_submodule(worktree: Path) -> bool:
@@ -436,7 +440,8 @@ def _main(argv: list[str], sleep) -> int:
     entries = run.output["criteria"]
     invalid = [c for c in sorted(entries, key=lambda c: c["id"]) if c["verdict"] == "invalid"]
     if invalid:
-        reason = "; ".join(f"criterion {c['id']} could not be verified: {' '.join(c['evidence'].split())}"
+        reason = "; ".join(f"criterion {c['id']} could not be verified: "
+                           f"{' '.join(codex_exec.redact(c['evidence']).split())}"
                            for c in invalid)
         return post(INVALID, reason, run.output, retries)
     marker = PASS if all(c["verdict"] == "pass" for c in entries) else FAIL
