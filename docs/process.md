@@ -35,8 +35,9 @@ A groomed issue uses the template in `docs/task-template.md`.
 4. If the engineer reports a blocked criterion, back to step 2 with the engineer comment as input
 5. QA verifies it
 6. On FAIL, back to step 3 with the QA comment as input
-7. On PASS, close the issue
-8. Repeat until no open issue has the label `ready`
+7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
+8. On PASS, close the issue
+9. Repeat until no open issue has the label `ready`
 
 Stop condition for `/goal`: no open issue has the label `ready`.
 
@@ -46,9 +47,11 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 - The engineer does not close the issue
 - QA does not fix the code, only outputs PASS or FAIL
 - The orchestrator closes the issue only after QA outputs PASS, and only if the SHA that QA verified is the current `HEAD`
-- A return is a QA FAIL or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue. The count starts after the newest `## Owner: RESUME` comment
+- A return is a QA FAIL, a QA UNVERIFIABLE or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue. The count starts after the newest `## Owner: RESUME` comment
 - A launch that Claude Code denied before it ran (the hook posts `## Launch not started: …`) is not pending and not a return
 - If the PM cannot resolve a blocked criterion, escalate the issue
+- `## QA: UNVERIFIABLE` means QA could not check a criterion because of a tool or sandbox limit of the checker. The PM makes the criterion checkable with the same intent. The PM escalates (`## PM: NEEDS OWNER`) when making a criterion checkable changes its intent or scope, or needs an edit of the project settings files (`.claude/settings*.json`), `.claude/hooks/` or the QA sandbox
+- `## QA: INVALID` has other causes (for example no usable commit range, or retries used up) and is escalated
 - Before the next issue, the working tree must be clean (`git status --porcelain` is empty). If not, stop the whole loop and ask the owner
 
 ## Escalation

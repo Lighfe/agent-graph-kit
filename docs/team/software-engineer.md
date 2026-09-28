@@ -18,6 +18,8 @@ Definition of done:
 - The work is committed
 - The issue is still open, with a comment saying what you did. The first line of the comment is exactly `## Engineer: DONE`. The comment contains the line `Commits: <base SHA>..<head SHA>`
 
+After a regroom that followed `## QA: UNVERIFIABLE`, the PM may only have made criteria checkable. If the code already meets the regroomed criteria, no commit is needed: make no commit, and post a new `## Engineer: DONE` whose `Commits:` line starts at the base of the previous `## Engineer: DONE` and ends at `HEAD`. Say in the comment that no code change was needed.
+
 If a criterion is blocked (wrong, impossible, contradictory), comment on the issue and stop. The first line of the comment is exactly `## Engineer: BLOCKED`. Name the criterion and the reason. Do not continue to QA.
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.

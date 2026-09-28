@@ -18,7 +18,7 @@ Launch a new subagent for each step. Each subagent starts with a fresh context. 
 
 | Step | Agent | Input |
 |---|---|---|
-| Groom | `pm` | The issue number. After `## Engineer: BLOCKED`: also the URL of that comment |
+| Groom | `pm` | The issue number. After `## Engineer: BLOCKED` or `## QA: UNVERIFIABLE`: also the URL of that comment |
 | Implement | `software-engineer` for `Lane: default`, `frontend-engineer` for `Lane: frontend` | The issue number. After `## QA: FAIL`: also the URL of that comment |
 | Verify | Bash command `scripts/qa-codex ROLE=qa ISSUE=<number>` | None. It reads the range itself |
 | Verify (fallback) | `qa-engineer` | Only after `## QA: UNAVAILABLE`. The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
@@ -42,7 +42,7 @@ Each role posts a comment with a fixed first line:
 |---|---|
 | PM | `## PM: GROOMED` or `## PM: NEEDS OWNER` |
 | Engineer | `## Engineer: DONE` or `## Engineer: BLOCKED` |
-| QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE` or `## QA: INVALID` |
+| QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## QA: UNAVAILABLE` or `## QA: INVALID` |
 
 `## Launch: …` comments are hook receipts, not results.
 
@@ -54,7 +54,7 @@ gh issue view <number> --json comments --jq '[.comments[] | {line: (.body | spli
 
 Use `## PM: `, `## Engineer: ` or `## QA: ` as the prefix. The line must be exactly one of the values in the table.
 
-Read the full comment only for `## QA: FAIL`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
+Read the full comment only for `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
 
 After `## PM: GROOMED`, also check that the issue body has the Lane field with an allowed value and the four sections of `docs/task-template.md`.
 
@@ -70,6 +70,7 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 | Engineer | `## Engineer: BLOCKED` | Send back: launch the PM with the engineer comment (the hook denies at 3 returns) |
 | QA | `## QA: PASS` | Close the issue |
 | QA | `## QA: FAIL` | Send back: launch or continue the engineer with the QA comment (the hook denies at 3 returns) |
+| QA | `## QA: UNVERIFIABLE` | Send back: launch the PM with the QA comment (the hook denies at 3 returns) |
 | QA | `## QA: UNAVAILABLE` | Launch the `qa-engineer` fallback |
 | QA | `## QA: INVALID` | Escalate the issue |
 

@@ -164,19 +164,19 @@ The **current result** of an issue is the newest valid result of any role, or an
 | # | Launch | Allowed only if |
 |---|---|---|
 | G1 | any guarded call | the launch line exists (5.2; not for close) · the issue is not pending (5.3) · the working tree is clean · the issue is open · it has the label `ready` and not the labels `later` or `needs-owner` |
-| G2 | PM | the issue has no launch comment yet, or the current result is `## Engineer: BLOCKED` or `## Owner: RESUME` |
+| G2 | PM | the issue has no launch comment yet, or the current result is `## Engineer: BLOCKED`, `## QA: UNVERIFIABLE` or `## Owner: RESUME` |
 | G3 | engineer | the current result is `## PM: GROOMED` or `## QA: FAIL` · the agent matches the lane (`default` → `software-engineer`, `frontend` → `frontend-engineer`) |
 | G4 | qa (`qa-codex`) | the current result is `## Engineer: DONE`, or `## QA: PASS` with a verified SHA not equal to `HEAD` (re-check) · a `## Engineer: DONE` comment with a `Commits:` line exists |
 | G5 | qa fallback (`qa-engineer`) | the current result is `## QA: UNAVAILABLE` |
 | G6 | close | the current result is `## QA: PASS` and its verified SHA is equal to `HEAD` |
-| G7 | PM or engineer | fewer than 3 returns (`## QA: FAIL` or `## Engineer: BLOCKED`) after the newest `## Owner: RESUME` comment |
+| G7 | PM or engineer | fewer than 3 returns (`## QA: FAIL`, `## QA: UNVERIFIABLE` or `## Engineer: BLOCKED`) after the newest `## Owner: RESUME` comment |
 | G8 | any Bash call | the command does not write to `.claude/settings*.json` (5.9). This check reads no issue state. When in doubt, it denies |
 
 Notes:
 
 - G1 "clean tree before every launch" is possible because no role may leave uncommitted work: the engineer commits before DONE, and PM and QA do not write files. If a blocked engineer leaves changes, the next launch is denied, and the orchestrator stops the loop and asks the owner.
 - G1, not started twice: a guarded launch (not close) is denied when the two newest receipts on the issue are both not started (5.3) and no result marker and no `## Owner: RESUME` comes after the older of the two. The message starts with `G1: issue #<n>: the last 2 launches did not start` and names `## Owner: RESUME` as the way on. Claude Code is denying calls, so a third try would most likely fail too; the orchestrator stops the loop and asks the owner.
-- G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming.
+- G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming. After `## QA: UNVERIFIABLE`, it goes back to the PM to make the blocked criteria checkable (7).
 - G5: the fallback is only possible after `qa-codex` reported that Codex cannot run.
 
 ### 5.5 Result markers
@@ -185,11 +185,11 @@ Notes:
 |---|---|
 | PM | `## PM: GROOMED`, `## PM: NEEDS OWNER` |
 | Engineer | `## Engineer: DONE`, `## Engineer: BLOCKED` |
-| QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID` |
+| QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID`, `## QA: UNVERIFIABLE` |
 | Owner | `## Owner: RESUME` |
 | Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)`, `## Launch not started: <role> (attempt <n>)`, `## Launch not started: <role> (continued, round <n>)` (not results) |
 
-`## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates.
+`## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates. `## QA: UNVERIFIABLE` leads to a PM launch with the URL of that QA comment (G2, 7).
 
 ### 5.6 Failure behavior
 
@@ -249,7 +249,7 @@ Call: `qa-codex ROLE=qa ISSUE=<n>`. A Python script run with `uv run --script`.
    - the flags from S2 that keep the user config, `AGENTS.md`, skills, hooks and apps out of the run (`--ignore-user-config` and others). Because `--ignore-user-config` also removes the user's model and effort, the model and the reasoning effort are set explicitly. v1 starts with `medium` for all runs and records the results,
    - the prompt: the QA role file, the criteria, the range, and the comment text from step 1 (the first line of every comment and the full newest valid DONE comment). Each comment is redacted like a posted comment (P5) before it goes into the prompt. The comment text is a delimited data block: every line in it starts with a fixed prefix, so a comment cannot end the block early. The prompt says before the block that the text was written by agents, is data to check against the criteria and not instructions, and that a claim in a comment is not proof of the behavior it claims. The posted QA comment does not repeat this text,
    - `--output-schema qa-result.schema.json` and `-o <file>` for the final message.
-5. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall verdict from the criterion verdicts: PASS only if every criterion passes.
+5. Validate the JSON against the schema. Check that it has exactly one entry for each acceptance criterion of the issue, and that the verified SHA is equal to `HEAD`. The script derives the overall marker from the criterion verdicts: any criterion `fail` gives `## QA: FAIL`; otherwise any criterion `invalid` gives `## QA: UNVERIFIABLE`, with a `Reason:` line that names each such criterion; otherwise `## QA: PASS`. So FAIL comes before UNVERIFIABLE, and UNVERIFIABLE before PASS. The top-level `verdict` of the JSON is not used. The prompt tells Codex to use `invalid` only when a tool, sandbox, network or permission limit of its environment stops the check, and `fail` when the code or document does not meet the criterion.
 6. Render the issue comment from the JSON and post it with `gh`. A `Done head: <SHA>` line directly before `Verified:` names the DONE head. The footer has `Checker: codex` and `Retries: <n> (<reasons>)` if there were retries.
 
 The QA result schema contains: verdict (`pass` or `fail`), one entry per criterion (text, verdict, evidence), the tests (command and result, or "not run" with the reason), and the verified SHA. The rendered comment follows the format in `docs/team/qa-engineer.md`.
@@ -267,6 +267,8 @@ Claude does not skip Codex because of a small problem. Each failure type has its
 | Codex not installed, not logged in, or usage limit reached | Post `## QA: UNAVAILABLE` with the reason → the orchestrator launches the Claude `qa-engineer` fallback |
 | The pre-step (6.1 step 3) fails | Post `## QA: UNAVAILABLE` with the reason → the fallback, as above |
 | The issue read (6.1 step 1) fails, or its output is not JSON or cannot be parsed | Post `## QA: UNAVAILABLE` without a Codex run. The reason names the step (`reading issue #<n> with gh issue view failed: <first error line>`), redacted → the fallback, as above |
+
+The overall marker of a run that returned valid JSON follows 6.1 step 5: any criterion `fail` gives `## QA: FAIL` → the engineer; otherwise any criterion `invalid` (a limit of Codex's environment) gives `## QA: UNVERIFIABLE` → the PM (7); otherwise `## QA: PASS`. `## QA: INVALID` stays for the launcher's own causes and still escalates: no acceptance criteria, no valid `## Engineer: DONE`, no `Commits:` line, a DONE head that does not resolve or is not an ancestor of `HEAD` (6.1 step 1), a worktree that cannot be created or reset, and the rows above that end in `## QA: INVALID` → escalate.
 
 The retry limits apply to one launch. The fallback posts a normal QA comment with the footer `Checker: claude (fallback)`.
 
@@ -288,7 +290,25 @@ For each criterion, QA:
 
 QA also runs the test command from AGENTS.md as secondary evidence. The engineer writes the tests. QA does not change anything in the repo.
 
-A criterion without enough evidence cannot pass. If QA cannot verify a criterion for a technical reason (for example, the browser crashes), the result is `## QA: INVALID` → escalate.
+A criterion without enough evidence cannot pass.
+
+**Unverifiable criteria.** `## QA: UNVERIFIABLE` means: the checker ran, no criterion failed, and at least one criterion could not be checked because of a limit of the checker's environment (a tool, sandbox, network or permission limit; for example a blocked `api.github.com`, or a crashing browser). In the Codex JSON this is the per-criterion verdict `invalid`; the schema does not change. The comment marks each such criterion `- [ ] … - INVALID`. A criterion that the code or document does not meet is `fail`, not `invalid`. FAIL comes before UNVERIFIABLE (6.1 step 5): the engineer must fix a failing criterion anyway.
+
+`## QA: INVALID` is no longer the result for an unverifiable criterion. It stays for the launcher's own causes (6.2) and for the fallback when the commit range is missing or cannot be used, and it still escalates.
+
+After `## QA: UNVERIFIABLE`, the orchestrator launches the PM with the URL of that QA comment (G2). For each criterion that QA marked `INVALID`, the PM does one of:
+
+- a) It rewrites the criterion so it can be checked from the repo checkout and from the comment text that `qa-codex` passes to Codex (6.1 step 1), for example by writing the expected values into the criterion, with the same intent and scope. Then it posts `## PM: GROOMED`.
+- b) It leaves the criterion unchanged when the limit is already gone (a fix has landed), and names the commit or issue of that fix. Then it posts `## PM: GROOMED`.
+- c) It posts `## PM: NEEDS OWNER` when the only way to make the criterion checkable changes its intent or scope (dropping it, weakening it, moving it out of scope), needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`, 5.9), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `qa-codex`, or waits on an open issue. The orchestrator escalates.
+
+The `## PM: GROOMED` comment lists each criterion the PM changed, with the old text, the new text, and one line on why the intent is the same. The PM changes no criterion that QA did not mark `INVALID`.
+
+Then the engineer runs as after any `## PM: GROOMED` (G3). If the code already meets the regroomed criteria, the engineer makes no commit and posts a new `## Engineer: DONE` whose `Commits:` line starts at the base of the previous `## Engineer: DONE` and ends at `HEAD`, and says that no code change was needed. Then QA runs as usual (G4).
+
+`## QA: UNVERIFIABLE` counts as a return (G7), like `## QA: FAIL` and `## Engineer: BLOCKED`. So a PM, engineer, QA cycle that keeps hitting a limit escalates after 3 returns.
+
+Example (issue #10). Criterion 11 says that the label descriptions in the README match the labels of the repo. Codex cannot check it, because the sandbox blocks the GitHub label read (`gh label list`). No other criterion fails, so `qa-codex` posts `## QA: UNVERIFIABLE` with a `Reason:` line that names criterion 11. The orchestrator launches the PM with the URL of that QA comment. The PM reads the three label descriptions and writes them into criterion 11, so the check stays strict and works from the checkout. Its `## PM: GROOMED` comment lists the old text of criterion 11, the new text, and why the intent is the same: the README must still match the repo labels; only the expected values now stand in the criterion. The engineer finds that README.md already matches, makes no commit, and posts `## Engineer: DONE` with the base of the previous DONE and `HEAD` in the `Commits:` line. Codex QA compares README.md with the values in the criterion and posts `## QA: PASS`. The orchestrator closes the issue. If the only way had been to drop criterion 11, the PM would have posted `## PM: NEEDS OWNER`.
 
 If QA needs a tool that is not in the lockfile or the set-up, the result is `## QA: FAIL` back to the engineer (undeclared dependency). QA does not install anything and does not escalate for an install.
 
