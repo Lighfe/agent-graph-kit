@@ -9,6 +9,7 @@ Status: hooks in `.claude/hooks/` check each launch of a role and each `gh issue
 - Tasks are GitHub issues, one at a time
 - Read the acceptance criteria before starting and before closing
 - Commit regularly
+- Do not read old reviews in `docs/reviews/` unless the owner points to one.
 
 ## Roles
 
