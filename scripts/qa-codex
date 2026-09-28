@@ -49,8 +49,12 @@ QA_SANDBOX = [
 # `$HOME/.cache/uv`, and the profile blocks PyPI. The pre-step fills a cache for this run (in the
 # run's temp folder, next to the worktree: under /tmp or $TMPDIR, writable in the sandbox), and
 # Codex's commands get it offline through `shell_environment_policy.set`.
+# The fill runs outside the sandbox, so it must not touch the reviewed project (#49): `--no-project`
+# and `--no-config` stop uv from discovering, reading or building the project and its uv config
+# (`pyproject.toml`, `uv.toml`), and its working directory is the run temp folder, not the worktree
+# (uv searches a `.venv` upward, never down into `worktree/`). Repository code runs only in the sandbox.
 UV_CACHE = "uv-cache"
-UV_FILL = ["uv", "run", "--with", "pytest", "pytest", "--version"]
+UV_FILL = ["uv", "run", "--no-project", "--no-config", "--with", "pytest", "pytest", "--version"]
 DEFAULT_TIMEOUT_S = 1800
 DEFAULT_PRESTEP_TIMEOUT_S = 1800
 LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}
@@ -249,7 +253,9 @@ def _has_frontend_submodule(worktree: Path) -> bool:
 def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> str | None:
     """Spec 6.1 step 3, outside the sandbox. None on success (or nothing to do), else the reason.
     With a frontend: the submodule, `npm ci` and the browser. With `uv_cache` (uv is on PATH):
-    fill that cache with pytest for the test command in the sandbox."""
+    fill that cache with pytest for the test command in the sandbox, with `UV_FILL` run in the run
+    temp folder (the parent of the worktree), not in the worktree. The fill does not discover, read
+    or build the reviewed project or its uv config, so that code runs only in the sandbox."""
     steps: list[tuple[str, list[str], Path, dict | None]] = []
     if _has_frontend_submodule(worktree):
         frontend = worktree / "frontend"
@@ -260,7 +266,7 @@ def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> st
             ("npx playwright install chromium", ["npx", "playwright", "install", "chromium"], frontend, None),
         ]
     if uv_cache is not None:
-        steps.append((" ".join(UV_FILL), UV_FILL, worktree, {**os.environ, "UV_CACHE_DIR": str(uv_cache)}))
+        steps.append((" ".join(UV_FILL), UV_FILL, worktree.parent, {**os.environ, "UV_CACHE_DIR": str(uv_cache)}))
     for label, cmd, cwd, env in steps:
         error = _run_step(cmd, cwd, timeout_s, env)
         if error is not None:

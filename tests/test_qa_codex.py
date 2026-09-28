@@ -639,7 +639,7 @@ def test_no_frontend_no_pre_step(qa_env):
 
 # --- the uv pre-step (test command in the sandbox, #43) ----------------------------------
 
-UV_FILL = ["run", "--with", "pytest", "pytest", "--version"]
+UV_FILL = ["run", "--no-project", "--no-config", "--with", "pytest", "pytest", "--version"]
 
 
 def _codex_argv(env):
@@ -659,7 +659,8 @@ def test_uv_pre_step_fills_a_per_run_cache_and_codex_gets_it(qa_env):
     argv = _codex_argv(qa_env)
     worktree = Path(argv[argv.index("-C") + 1])
     assert uv["argv"] == UV_FILL
-    assert Path(uv["cwd"]) == worktree
+    assert Path(uv["cwd"]) == worktree.parent  # the run temp folder, not the reviewed checkout
+    assert "worktree" in uv["files"] and "README.md" not in uv["files"]
     cache = Path(uv["cache"])
     assert cache == worktree.parent / "uv-cache"  # next to the worktree, in the run's temp folder
     assert not cache.resolve().is_relative_to(Path.home().resolve())
@@ -706,13 +707,44 @@ def test_uv_pre_step_failure_is_unavailable(qa_env, monkeypatch):
     lines = comment.splitlines()
     assert lines[0] == "## QA: UNAVAILABLE"
     reason = next(line for line in lines if line.startswith("Reason:"))
-    assert "pre-step `uv run --with pytest pytest --version` failed" in reason
+    assert "pre-step `uv run --no-project --no-config --with pytest pytest --version` failed" in reason
     assert "error: Failed to fetch" in reason and "second line" not in reason
     assert qa_env.code == 0
     assert qa_env.calls("codex") == []
     (uv,) = qa_env.calls("uv")
+    assert uv["argv"] == UV_FILL
+    assert Path(uv["cwd"]) == Path(uv["cache"]).parent  # the run temp folder
     assert not Path(uv["cache"]).exists()
     assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+
+
+REAL_UV = shutil.which("uv")
+
+
+@pytest.mark.skipif(REAL_UV is None, reason="the real `uv` is not on PATH")
+def test_uv_fill_does_not_build_the_reviewed_project(tmp_path, monkeypatch):
+    """Real `uv`, offline, empty cache: the fill must not import the worktree's build backend (#49)."""
+    run = tmp_path / "run-temp-folder"
+    worktree = run / "worktree"
+    worktree.mkdir(parents=True)
+    marker = tmp_path / "backend-was-imported"
+    (worktree / "pyproject.toml").write_text(
+        '[build-system]\nrequires = []\nbuild-backend = "synthetic_backend"\nbackend-path = ["."]\n\n'
+        '[project]\nname = "synthetic-project"\nversion = "0.0.1"\n')
+    # repository code: it runs as soon as uv imports the in-tree build backend
+    (worktree / "synthetic_backend.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n"
+        "def build_wheel(*a, **k):\n    raise RuntimeError('synthetic')\n"
+        "def build_editable(*a, **k):\n    raise RuntimeError('synthetic')\n")
+    (worktree / "uv.toml").write_text("# synthetic repository config\nnative-tls = false\n")
+    cache = run / "uv-cache"
+    cache.mkdir()
+    for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_CONFIG_FILE", "UV_NO_CONFIG", "UV_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("UV_OFFLINE", "1")  # no network
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    qa.pre_step(worktree, 120, cache)  # the fill may fail offline; only the marker counts
+    assert not marker.exists()
 
 
 def test_no_uv_runs_as_before(qa_env, monkeypatch):
