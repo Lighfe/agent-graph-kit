@@ -1,9 +1,9 @@
 """Tests for scripts/qa-codex and scripts/codex_exec.py.
 
 Each flow test runs `main([...], sleep=recorded.append)` in a temporary git repo, with the
-fakes `gh`, `codex`, `npm` and `npx` from tests/fakes/ first on PATH (and `uv`, only where a test
-puts it there). No real `gh`, `codex` or `uv` runs and no test uses the network. All issue data is
-synthetic.
+fakes `gh`, `codex`, `npm` and `npx` from tests/fakes/ first on PATH (and `uv` and `bun`, only where
+a test puts them there). No real `gh`, `codex`, `npm`, `npx`, `bun` or `uv` runs and no test uses the
+network (except the one marked test with the real `uv`, offline). All issue data is synthetic.
 """
 
 import importlib.util
@@ -98,7 +98,7 @@ class QaEnv:
         for key, value in env.items():
             monkeypatch.setenv(key, value)
         for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_GH_VIEW_FAIL", "FAKE_GH_STDERR",
-                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
+                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_BUN_FAIL", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
             monkeypatch.delenv(key, raising=False)
         self.repo = tmp / "repo"
         self.repo.mkdir()
@@ -117,6 +117,11 @@ class QaEnv:
     def with_uv(self):
         """Put the fake `uv` on PATH (it is not there by default: a run without `uv`)."""
         (self.bin / "uv").symlink_to(FAKES / "uv")
+        return self
+
+    def with_bun(self):
+        """Put the fake `bun` on PATH (it is not there by default)."""
+        (self.bin / "bun").symlink_to(FAKES / "bun")
         return self
 
     def done(self, head=None):
@@ -725,13 +730,19 @@ def test_worktree_is_removed_after_failure(qa_env, modes):
 # --- the frontend pre-step ----------------------------------------------------------
 
 
-@pytest.fixture
-def frontend_env(qa_env, monkeypatch):
+NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
+BUN_LOCKFILES = ("bun.lock", "bun.lockb")
+
+
+def add_frontend(qa_env, monkeypatch, lockfiles):
+    """A `frontend` submodule whose commit has package.json and the given (synthetic) lockfiles."""
     fe = qa_env.tmp / "fe"
     fe.mkdir()
     git(fe, "init", "-q", "-b", "main")
     (fe / "package.json").write_text('{"name": "synthetic-frontend"}\n')
     (fe / ".gitignore").write_text("node_modules/\n")
+    for name in lockfiles:
+        (fe / name).write_text("synthetic lockfile\n")
     git(fe, "add", ".")
     git(fe, "commit", "-q", "-m", "frontend")
     git(qa_env.repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(fe), "frontend")
@@ -743,6 +754,11 @@ def frontend_env(qa_env, monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
     return qa_env
+
+
+@pytest.fixture
+def frontend_env(qa_env, monkeypatch):
+    return add_frontend(qa_env, monkeypatch, ["package-lock.json"])
 
 
 def test_frontend_pre_step_runs_before_codex(frontend_env):
@@ -785,6 +801,7 @@ def test_frontend_fetch_failure_is_unavailable(frontend_env, monkeypatch):
 
 
 def test_no_frontend_no_pre_step(qa_env):
+    """A plain `frontend/` folder (not a submodule) without any lockfile: no lockfile check."""
     (qa_env.repo / "frontend").mkdir()
     (qa_env.repo / "frontend" / "package.json").write_text("{}\n")
     git(qa_env.repo, "add", ".")
@@ -794,6 +811,108 @@ def test_no_frontend_no_pre_step(qa_env):
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
     assert [c["tool"] for c in qa_env.calls()] == ["codex"]
+
+
+# --- the install command follows the lockfile (#58) ------------------------------------------
+
+
+def _reason(comment):
+    return next(line for line in comment.splitlines() if line.startswith("Reason:"))
+
+
+def _without_bun_on_path(monkeypatch):
+    path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "bun").exists())
+    monkeypatch.setenv("PATH", path)
+    assert shutil.which("bun") is None
+
+
+@pytest.mark.parametrize("lockfile", BUN_LOCKFILES)
+def test_bun_lockfile_runs_bun_install(qa_env, monkeypatch, lockfile):
+    env = add_frontend(qa_env, monkeypatch, [lockfile]).with_bun()
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    calls = env.calls()
+    assert [c["tool"] for c in calls] == ["bun", "npx", "codex"]  # no npm
+    worktree = Path(calls[2]["argv"][calls[2]["argv"].index("-C") + 1])
+    assert calls[0]["argv"] == ["install", "--frozen-lockfile"]
+    assert calls[1]["argv"] == ["playwright", "install", "chromium"]  # unchanged after bun
+    for call in calls[:2]:
+        assert Path(call["cwd"]) == worktree / "frontend"
+        assert lockfile in call["files"]  # checked after the submodule update
+
+
+def test_bun_install_failure_is_unavailable(qa_env, monkeypatch):
+    env = add_frontend(qa_env, monkeypatch, ["bun.lock"]).with_bun().with_uv()
+    monkeypatch.setenv("FAKE_BUN_FAIL", "1")
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _reason(comment) == ("Reason: pre-step `bun install --frozen-lockfile` failed: "
+                                "error: lockfile had changes, but lockfile is frozen")
+    assert [c["tool"] for c in env.calls()] == ["bun"]  # no npm, npx, uv or codex
+    assert env.code == 0
+    assert len(git(env.repo, "worktree", "list").splitlines()) == 1
+
+
+@pytest.mark.parametrize("lockfiles", [["package-lock.json"], ["npm-shrinkwrap.json"],
+                                       ["package-lock.json", "bun.lock"], ["npm-shrinkwrap.json", "bun.lockb"],
+                                       ["package-lock.json", "bun.lock", "bun.lockb"]])
+def test_npm_lockfile_runs_npm_ci(qa_env, monkeypatch, lockfiles):
+    env = add_frontend(qa_env, monkeypatch, lockfiles).with_bun()
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    calls = env.calls()
+    assert [c["tool"] for c in calls] == ["npm", "npx", "codex"]  # bun is on PATH, but not called
+    assert calls[0]["argv"] == ["ci"]
+    assert calls[1]["argv"] == ["playwright", "install", "chromium"]
+
+
+@pytest.mark.parametrize("lockfiles", [[], ["yarn.lock"], ["pnpm-lock.yaml"], ["yarn.lock", "pnpm-lock.yaml"]])
+def test_no_npm_or_bun_lockfile_is_unavailable(qa_env, monkeypatch, lockfiles):
+    env = add_frontend(qa_env, monkeypatch, lockfiles).with_bun().with_uv()
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    reason = _reason(comment)
+    for name in ("`package-lock.json`", "`npm-shrinkwrap.json`", "`bun.lock`", "`bun.lockb`"):
+        assert name in reason
+    assert env.calls() == []  # no install, no Playwright step, no uv fill, no codex
+    assert env.code == 0
+    assert len(git(env.repo, "worktree", "list").splitlines()) == 1
+
+
+@pytest.mark.parametrize("lockfile", BUN_LOCKFILES)
+def test_bun_lockfile_without_bun_on_path_is_unavailable(qa_env, monkeypatch, lockfile):
+    env = add_frontend(qa_env, monkeypatch, [lockfile]).with_uv()
+    _without_bun_on_path(monkeypatch)
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    reason = _reason(comment)
+    assert "`bun`" in reason and "PATH" in reason
+    assert env.calls() == []  # no install, no Playwright step, no uv fill, no codex
+    assert env.code == 0
+
+
+def test_lockfile_check_comes_after_the_submodule_update(qa_env, monkeypatch):
+    """A failing submodule update is reported as before, not as a missing lockfile."""
+    env = add_frontend(qa_env, monkeypatch, ["bun.lock"]).with_bun()
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "never")
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "pre-step `git submodule update --init frontend` failed" in _reason(comment)
+    assert env.calls() == []
+
+
+def test_uv_fill_is_unchanged_after_bun_install(qa_env, monkeypatch):
+    env = add_frontend(qa_env, monkeypatch, ["bun.lock"]).with_bun().with_uv()
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in env.calls()] == ["bun", "npx", "uv", "codex"]
+    (uv,) = env.calls("uv")
+    argv = _codex_argv(env)
+    worktree = Path(argv[argv.index("-C") + 1])
+    assert uv["argv"] == UV_FILL
+    assert Path(uv["cwd"]) == worktree.parent
+    assert Path(uv["cache"]) == worktree.parent / "uv-cache"
+    assert ("-c", _env_flag(Path(uv["cache"]))) in list(zip(argv, argv[1:]))
 
 
 # --- the uv pre-step (test command in the sandbox, #43) ----------------------------------
