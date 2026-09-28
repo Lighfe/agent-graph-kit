@@ -18,7 +18,7 @@ v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lan
 
 ## Set up the kit in a project
 
-Run these steps in the root of the new project (the git root), in a terminal outside Claude Code. Do not run them from a Claude Code session: the kit's guard hooks deny the `cp` of `.claude/settings.json` (`G8:`) and every command that names `scripts/qa-codex` (`G1:`), and the Auto mode classifier denies the copy into `.claude/` and the `git submodule add`. The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
+Run these steps in the root of the new project (the git root; see "Project repo" for a new, empty repo), in a terminal outside Claude Code. Do not run them from a Claude Code session: the kit's guard hooks deny the `cp` of `.claude/settings.json` (`G8:`) and every command that names `scripts/qa-codex` (`G1:`), and the Auto mode classifier denies the copy into `.claude/` and the `git submodule add`. The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
 
 ### Prerequisites
 
@@ -26,6 +26,18 @@ Run these steps in the root of the new project (the git root), in a terminal out
 - `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
 - Codex CLI, logged in (`codex login`)
 - Frontend lane only: the Claude Code plugin `lovable`. The tool names in `.claude/agents/frontend-engineer.md` depend on it.
+
+### Project repo
+
+The project is a git repo with a GitHub remote `origin` and a branch `main`. The loop keeps its tasks in the GitHub issues of that repo, and the `gh` commands below act on it. To start from a new, empty GitHub repo, create it on GitHub (or with `gh repo create`), then clone it and put the clone on `main`:
+
+```bash
+git clone https://github.com/<owner>/example-app.git
+cd example-app
+git checkout -B main   # an empty clone starts on the branch of init.defaultBranch, which may not be main
+```
+
+The clone has no commit yet. The first commit and push are in "Start".
 
 ### Copy
 
@@ -70,7 +82,8 @@ __pycache__/
 
 ### Adjust
 
-- `AGENTS.md`: the project description, and the test command (the line `Test command: ...`)
+- `AGENTS.md`: the first line (`# <project name>`), the project description (replace the two kit sentences at the top: "This repo will become a Claude Code plugin ..." and "Now, it is in bootstrap."), and the test command (the line `Test command: ...`)
+- `AGENTS.md`: remove or reword the lines that are only true for this kit repo: `docs/specs/` - the design of the kit (under "Documents"), the key name `TYPESAFE_API_KEY` (under "Public repo"), and the line about `docs/references/local/` (under "Public repo")
 - Frontend lane only: the `frontend/` submodule (see "Frontend lane" below) and the `frontend` lane. Add the line `Lovable project: <id>` to `AGENTS.md`; the `frontend-engineer` reads the Lovable project id from it. Without a Lovable project, the PM must not use `Lane: frontend`.
 
 ### Codex trust entry
@@ -110,7 +123,7 @@ gh label create later --description "Out of scope for the current implementation
 
 ### Start
 
-1. Commit the copied files.
+1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
 2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder (spec 5.9). The hooks apply from the next tool call after `.claude/settings.json` is in place.
 3. Final step: run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
 
