@@ -1,5 +1,5 @@
 Lane: default
-<!-- Only allowed value until the spec defines more lanes. -->
+<!-- default, or frontend (only in a repo with a Lovable submodule in frontend/) -->
 
 ## Goal
 

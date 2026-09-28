@@ -19,13 +19,13 @@ Launch a new subagent for each step. Each subagent starts with a fresh context. 
 | Step | Agent | Input |
 |---|---|---|
 | Groom | `pm` | The issue number. After `## Engineer: BLOCKED`: also the URL of that comment |
-| Implement | `software-engineer` | The issue number. After `## QA: FAIL`: also the URL of that comment |
+| Implement | `software-engineer` for `Lane: default`, `frontend-engineer` for `Lane: frontend` | The issue number. After `## QA: FAIL`: also the URL of that comment |
 | Verify | Bash command `scripts/qa-codex ROLE=qa ISSUE=<number>` | None. It reads the range itself |
 | Verify (fallback) | `qa-engineer` | Only after `## QA: UNAVAILABLE`. The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
 
 Run `scripts/qa-codex ROLE=qa ISSUE=<number>` as the whole Bash command, with the Bash tool's `run_in_background` option. No `&`, no `cd … &&`, no redirection, nothing in front of `scripts/`. Wait until it ends.
 
-Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer`, `qa` for `qa-engineer`:
+Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer` and for `frontend-engineer`, `qa` for `qa-engineer`. The guard accepts only `pm`, `engineer` and `qa`, so the launch line of `frontend-engineer` is `ROLE=engineer`:
 
 ```
 ROLE=<pm|engineer|qa> ISSUE=<number>
