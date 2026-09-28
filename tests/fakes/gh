@@ -6,6 +6,7 @@ FAKE_GH_LOG=<path>       `gh issue comment` appends {"issue": n, "body": ...} as
 FAKE_GH_CALLS=<path>     every call appends its argv as one JSON line
 FAKE_GH_FAIL=1           every call exits 1
 FAKE_GH_COMMENT_FAIL=1   only `gh issue comment` exits 1
+FAKE_GH_VIEW_FAIL=1      only `gh issue view` exits 1
 FAKE_GH_SLEEP=<s>        sleep before answering
 FAKE_GH_STDERR=<text>    stderr of a failing call
 """
@@ -36,6 +37,8 @@ if env("FAKE_GH_FAIL") == "1":
     fail()
 
 if args[:2] == ["issue", "view"]:
+    if env("FAKE_GH_VIEW_FAIL") == "1":
+        fail()
     with open(env("FAKE_GH_ISSUE"), encoding="utf-8") as f:
         sys.stdout.write(f.read())
     sys.exit(0)
@@ -48,10 +51,15 @@ if args[:2] == ["issue", "comment"] and args[3:] == ["--body-file", "-"]:
         append(env("FAKE_GH_LOG"), {"issue": int(args[2]), "body": body})
     if env("FAKE_GH_ISSUE"):
         with open(env("FAKE_GH_ISSUE"), encoding="utf-8") as f:
-            data = json.load(f)
-        data["comments"].append({"body": body})
-        with open(env("FAKE_GH_ISSUE"), "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            text = f.read()
+        try:
+            data = json.loads(text)
+            data["comments"].append({"body": body})
+        except (ValueError, KeyError, TypeError, AttributeError):
+            data = None  # a test issue that `gh issue view` must fail to parse: keep it as it is
+        if data is not None:
+            with open(env("FAKE_GH_ISSUE"), "w", encoding="utf-8") as f:
+                json.dump(data, f)
     sys.exit(0)
 
 sys.stderr.write(f"fake gh: unsupported call {args}\n")
