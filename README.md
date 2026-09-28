@@ -26,6 +26,7 @@ Run these steps in the root of the new project (the git root; see "Project repo"
 - `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
 - Codex CLI, logged in (`codex login`)
 - Frontend lane only: the Claude Code plugin `lovable`. The tool names in `.claude/agents/frontend-engineer.md` depend on it.
+- Frontend lane only: the tools for the install command of `frontend/`. The QA pre-step picks it from the lockfile in `frontend/`: with an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) it runs `npm ci`, else with a bun lockfile (`bun.lock` or `bun.lockb`) it runs `bun install --frozen-lockfile`, else it posts `## QA: UNAVAILABLE`. So an npm frontend needs `npm` and `npx`, and a bun frontend needs `bun` on `PATH` (and `npx` for the Playwright browser step)
 
 ### Project repo
 
@@ -110,6 +111,8 @@ Frontend lane only. No MCP tool can make the GitHub connection of a Lovable proj
    ```
 
 Nobody edits `frontend/` locally. All frontend changes go through Lovable.
+
+The QA pre-step installs the frontend dependencies with the install command that follows the lockfile in `frontend/`: an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) gives `npm ci`, else a bun lockfile (`bun.lock` or `bun.lockb`) gives `bun install --frozen-lockfile`, else the result is `## QA: UNAVAILABLE`. If both kinds exist, `npm ci` runs. A bun frontend (Lovable projects often use bun) needs `bun` on `PATH`; without it, the result is `## QA: UNAVAILABLE`.
 
 ### Labels
 
