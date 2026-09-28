@@ -1481,6 +1481,55 @@ def test_prompt_forbids_quoting_secrets():
     assert "Do not quote secrets (keys, tokens, passwords) in your evidence" in prompt
 
 
+# Single lines of a multi-line secret (#39). All values are synthetic.
+SYNTH_LINES = ["synthLine1-aaaaaaaaaaaa", "synthLine2-bbbbbbbbbbbb", "synthLine3-cccccccccccc",
+               "synthLine4-dddddddddddd"]
+
+
+def test_redact_one_line_of_a_multi_line_secret():
+    value = "\n".join(SYNTH_LINES)
+    assert len(SYNTH_LINES) >= 4 and all(len(x) >= codex_exec.SECRET_MIN for x in SYNTH_LINES)
+    text = f"evidence: {SYNTH_LINES[2]} end"
+    assert codex_exec.redact(text, environ={"SYNTHETIC_PRIVATE_KEY": value}) == "evidence: [redacted] end"
+
+
+@pytest.mark.parametrize("value,line", [
+    ("synthHead-000000\n    synthIndented-11111\nsynthTail-222222", "synthIndented-11111"),
+    ("synthHead-000000\t \r\nsynthCrlfLine-33333\r\nsynthTail-222222", "synthHead-000000"),
+    ("synthHead-000000\r\nsynthCrlfLine-33333\r\nsynthTail-222222", "synthCrlfLine-33333"),
+])
+def test_redact_value_line_is_stripped(value, line):
+    text = f"a\n  {line}\t\nb"
+    assert codex_exec.redact(text, environ={"SYNTHETIC_PRIVATE_KEY": value}) == "a\n  [redacted]\t\nb"
+
+
+def test_redact_keeps_a_short_value_line():
+    value = "synthLongLine-0001\n  short7 \nsynthLongLine-0002"
+    assert len("short7") < codex_exec.SECRET_MIN
+    text = "the word short7 stays"
+    assert codex_exec.redact(text, environ={"SYNTHETIC_PRIVATE_KEY": value}) == text
+
+
+def test_redact_keeps_lines_of_a_multi_line_non_secret_name():
+    value = "\n".join(SYNTH_LINES)
+    text = f"x {SYNTH_LINES[0]} y {SYNTH_LINES[2]} z"
+    assert codex_exec.redact(text, environ={"SYNTHETIC_PLAIN_VALUE": value}) == text
+
+
+def test_redact_whole_multi_line_value_once():
+    value = "\n".join(SYNTH_LINES)
+    text = f"before\n{value}\nafter"
+    result = codex_exec.redact(text, environ={"SYNTHETIC_PRIVATE_KEY": value})
+    assert result == "before\n[redacted]\nafter"
+    assert result.count("[redacted]") == 1
+
+
+def test_redact_single_line_secret_unchanged():
+    text = f"a {ENV_SECRET} b"
+    assert codex_exec.redact(text, environ={"SYNTHETIC_API_KEY": ENV_SECRET}) == "a [redacted] b"
+    assert codex_exec._secret_values({"SYNTHETIC_API_KEY": ENV_SECRET}) == [ENV_SECRET]
+
+
 # --- multi-line secrets (#37) -------------------------------------------------------------
 # A synthetic secret of several unique lines in an env var whose name matches SECRET_NAME.
 # "Leaks": the whole value, or any one of its lines, is a substring of what `gh` receives.

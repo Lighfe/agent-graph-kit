@@ -72,12 +72,14 @@ SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile(rx, re.IGNORECASE),
 
 def _secret_values(environ) -> list[str]:
     """Values of secret-looking env vars (and their whitespace-joined, JSON- and repr-escaped
-    forms), at least SECRET_MIN characters, longest first."""
+    forms, and each stripped line of a multi-line value), at least SECRET_MIN characters, longest
+    first, so a longer form is always replaced before a shorter one."""
     values: set[str] = set()
     for name, value in environ.items():
         if not SECRET_NAME.search(name) or len(value) < SECRET_MIN:
             continue
-        for form in (value, " ".join(value.split()), json.dumps(value)[1:-1], repr(value)[1:-1]):
+        lines = [line.strip() for line in value.splitlines()]
+        for form in (value, " ".join(value.split()), json.dumps(value)[1:-1], repr(value)[1:-1], *lines):
             if len(form) >= SECRET_MIN:
                 values.add(form)
     return sorted(values, key=len, reverse=True)
