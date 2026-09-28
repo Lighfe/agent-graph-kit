@@ -55,3 +55,28 @@ def test_deny_rules_protect_both_settings_files():
     for name in (".claude/settings.json", ".claude/settings.local.json"):
         assert fnmatchcase(name, anchored), name
     assert not fnmatchcase(".claude/hooks/guard.py", anchored)
+
+
+def test_permission_denied_hook_runs_not_started():
+    entries = load()["hooks"]["PermissionDenied"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert set(entry["matcher"].split("|")) == {"Agent", "Bash", "SendMessage"}
+    assert len(entry["hooks"]) == 1
+    hook = entry["hooks"][0]
+    assert hook["type"] == "command"
+    assert hook["timeout"] == 120
+    assert "uv run --script" in hook["command"]
+    assert ".claude/hooks/not_started.py" in hook["command"]
+
+
+def test_pre_tool_use_entry_is_unchanged():
+    assert load()["hooks"]["PreToolUse"] == [{
+        "matcher": "Agent|Bash|SendMessage",
+        "hooks": [{
+            "type": "command",
+            "command": "uv run --script \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" "
+                       "|| { echo 'guard hook failed: call denied' >&2; exit 2; }",
+            "timeout": 120,
+        }],
+    }]

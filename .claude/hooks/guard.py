@@ -648,9 +648,16 @@ def classify(event: dict) -> Call | None:
     return _classify_bash(tool_input)
 
 
+def event_call_hash(event: dict) -> str | None:
+    """The call hash of the event's tool_use_id, or None when it has no string tool_use_id."""
+    tool_use_id = event.get("tool_use_id") if isinstance(event, dict) else None
+    return issue_state.call_hash(tool_use_id) if isinstance(tool_use_id, str) else None
+
+
 def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext) -> str | None:
     """Deny reason, or None to let the call through. `lock()` is held from reading
-    the facts until the launch comment is posted (spec 5.7)."""
+    the facts until the launch comment is posted (spec 5.7). The launch comment has a
+    `Call:` line when the event has a string tool_use_id (spec 5.3)."""
     try:
         call = classify(event)
     except Deny as e:
@@ -663,7 +670,8 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext) -
         if reason:
             return reason
         if call.role != "close":
-            post_comment(call.issue, issue_state.launch_comment(call, issue_state.attempt(facts.issue, call.role)))
+            post_comment(call.issue, issue_state.launch_comment(
+                call, issue_state.attempt(facts.issue, call.role), event_call_hash(event)))
     return None
 
 
@@ -709,12 +717,16 @@ class _IO:
             raise Deny(f"guard error: {name} failed with exit code {p.returncode}: {_first_line(p.stderr)}")
         return p.stdout
 
-    def read_facts(self, number: int) -> issue_state.Facts:
+    def read_issue(self, number: int) -> issue_state.Issue:
         data = json.loads(self.run(["gh", "issue", "view", str(number), "--json",
                                     "number,state,labels,body,comments"]))
+        return issue_state.parse_issue(data)
+
+    def read_facts(self, number: int) -> issue_state.Facts:
+        iss = self.read_issue(number)
         head = self.run(["git", "rev-parse", "HEAD"]).strip()
         clean = self.run(["git", "status", "--porcelain"]).strip() == ""
-        return issue_state.Facts(issue=issue_state.parse_issue(data), head=head, clean=clean)
+        return issue_state.Facts(issue=iss, head=head, clean=clean)
 
     def post_comment(self, number: int, body: str) -> None:
         self.run(["gh", "issue", "comment", str(number), "--body-file", "-"], stdin=body)

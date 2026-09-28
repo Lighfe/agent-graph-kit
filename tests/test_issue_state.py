@@ -792,3 +792,173 @@ def test_deny_messages_start_with_check_id_and_name_expectation():
         msg = check(call, f)
         assert msg.startswith(gid), msg
         assert "expected" in msg, msg
+
+
+# --- not-started receipts (issue #48) ------------------------------------------
+
+from helpers import not_started  # noqa: E402
+from issue_state import call_hash, not_started_comment  # noqa: E402
+
+X = "0123456789ab"
+Y = "ba9876543210"
+
+
+def test_call_hash_is_first_12_hex_of_sha256():
+    import hashlib
+    assert call_hash("toolu_synthetic_1") == hashlib.sha256(b"toolu_synthetic_1").hexdigest()[:12]
+    assert len(call_hash("toolu_synthetic_1")) == 12
+
+
+def test_launch_comment_with_call_line():
+    assert launch_comment(PM, 1, X) == f"## Launch: pm (attempt 1)\nAgent: pm\nCall: {X}"
+    call = Call(role="engineer", agent="eng-1", issue=7, continued=True)
+    assert launch_comment(call, 2, X) == f"## Launch: engineer (continued, round 2)\nAgent: eng-1\nCall: {X}"
+    assert launch_comment(PM, 1, None) == "## Launch: pm (attempt 1)\nAgent: pm"
+
+
+def test_43_case_not_started_receipt_is_not_pending():
+    iss = issue(launch("pm", call=X), not_started("pm", 1, X))
+    assert not is_pending(iss)
+    assert check(PM, facts(iss)) is None
+    assert attempt(iss, "pm") == 2
+
+
+@pytest.mark.parametrize("comments", [
+    (launch("pm", call=X),),  # no not-started comment
+    (launch("pm", call=X), "## PM: working, then stopped"),  # #39 case: started, ended without a result
+])
+def test_started_receipt_without_result_is_still_pending(comments):
+    iss = issue(*comments)
+    assert is_pending(iss)
+    assert check(PM, facts(iss)).startswith("G1: issue #7 is pending")
+
+
+def test_not_started_pm_after_blocked_keeps_blocked_as_current():
+    iss = issue(launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: BLOCKED\nwhy",
+                launch("pm", 2, call=X), not_started("pm", 2, X))
+    assert current_result(iss) == (3, "## Engineer: BLOCKED")
+    assert check(PM, facts(iss)) is None
+    assert returns_since_resume(iss) == 1
+
+
+def test_not_started_engineer_after_fail_adds_no_return():
+    iss = done(launch("qa"), "## QA: FAIL", launch("engineer", 2, call=X), not_started("engineer", 2, X))
+    assert check(ENG, facts(iss)) is None
+    assert returns_since_resume(iss) == 1
+    assert attempt(iss, "engineer") == 3
+
+
+def test_not_started_comment_is_not_a_result_receipt_or_resume():
+    line = not_started("pm", 1, X)
+    iss = issue(line)
+    assert not is_pending(iss) and current_result(iss) is None
+    assert attempt(iss, "pm") == 1
+    assert check(PM, facts(iss)) is None  # G2: no launch comment yet
+
+
+@pytest.mark.parametrize("marker", [
+    not_started("pm", 1, Y),  # other Call value
+    not_started("engineer", 1, X),  # other role
+    not_started("pm", 2, X),  # other attempt number
+    not_started("pm", 1, X, continued=True),  # continuation instead of attempt
+])
+def test_not_started_comment_that_matches_no_receipt_has_no_effect(marker):
+    iss = issue(launch("pm", call=X), marker)
+    assert is_pending(iss)
+
+
+def test_not_started_comment_before_the_receipt_has_no_effect():
+    iss = issue(not_started("pm", 1, X), launch("pm", call=X))
+    assert is_pending(iss)
+
+
+def test_receipt_without_call_line_cannot_be_not_started():
+    iss = issue(launch("pm"), not_started("pm", 1, X))
+    assert is_pending(iss)
+
+
+def test_not_started_continuation():
+    iss = done(launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1", call=X),
+               not_started("engineer", 2, X, continued=True))
+    assert not is_pending(iss)
+    assert current_result(iss)[1] == "## QA: FAIL"
+
+
+# criterion 7: two not-started launches in a row
+
+
+def two_not_started(*between):
+    return issue(launch("pm", 1, call=X), not_started("pm", 1, X), *between,
+                 launch("pm", 2, call=Y), not_started("pm", 2, Y))
+
+
+def test_g1_denies_after_two_not_started_launches():
+    msg = check(PM, facts(two_not_started()))
+    assert msg.startswith("G1: issue #7: the last 2 launches did not start")
+    assert RESUME in msg
+
+
+@pytest.mark.parametrize("call", [PM, ENG, QA, QA_FALLBACK, Call(role="engineer", agent="e", issue=7, continued=True)])
+def test_g1_two_not_started_denies_every_launch(call):
+    assert check(call, facts(two_not_started())).startswith("G1: issue #7: the last 2 launches did not start")
+
+
+def test_g1_two_not_started_does_not_deny_close():
+    msg = check(CLOSE, facts(two_not_started()))
+    assert not msg.startswith("G1:")
+
+
+def test_g1_allows_after_one_not_started_launch():
+    assert check(PM, facts(issue(launch("pm", 1, call=X), not_started("pm", 1, X)))) is None
+
+
+def test_g1_allows_two_not_started_with_a_result_between():
+    iss = issue(launch("pm", 1, call=X), not_started("pm", 1, X), "## Engineer: BLOCKED",
+                launch("pm", 2, call=Y), not_started("pm", 2, Y))
+    assert check(PM, facts(iss)) is None
+
+
+def test_g1_allows_two_not_started_followed_by_resume():
+    iss = issue(*two_not_started().comments, RESUME)
+    assert check(PM, facts(iss)) is None
+
+
+def test_g1_two_newest_receipts_must_both_be_not_started():
+    iss = issue(launch("pm", 1, call=X), not_started("pm", 1, X), "## PM: GROOMED",
+                launch("engineer", 1, call=Y), "## Engineer: BLOCKED",
+                launch("pm", 2, call="c0ffee000000"), not_started("pm", 2, "c0ffee000000"))
+    assert check(PM, facts(iss)) is None
+
+
+# not_started_comment (the pure decision of not_started.py)
+
+
+def test_not_started_comment_for_matching_receipt():
+    iss = issue(launch("pm", call=X))
+    assert not_started_comment(iss, X, "Auto mode could not evaluate this action and is blocking it for safety\nmore") == (
+        f"## Launch not started: pm (attempt 1)\nCall: {X}\n"
+        "Reason: Auto mode could not evaluate this action and is blocking it for safety")
+
+
+def test_not_started_comment_for_continuation():
+    iss = done(launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1", call=X))
+    assert not_started_comment(iss, X, "Classifier unavailable").startswith(
+        f"## Launch not started: engineer (continued, round 2)\nCall: {X}\n")
+
+
+def test_not_started_comment_cuts_reason_to_200():
+    iss = issue(launch("pm", call=X))
+    assert not_started_comment(iss, X, "r" * 300).endswith("Reason: " + "r" * 200)
+
+
+@pytest.mark.parametrize("comments", [
+    (launch("pm", call=Y),),  # other Call
+    (launch("pm"),),  # no Call line
+    (launch("pm", call=X), launch("engineer", call=Y)),  # not the newest receipt
+    (launch("pm", call=X), "## PM: GROOMED"),  # valid result
+    (launch("pm", call=X), RESUME),  # resume after it
+    (launch("pm", call=X), not_started("pm", 1, X)),  # already marked
+    (),  # no receipt
+])
+def test_not_started_comment_none(comments):
+    assert not_started_comment(issue(*comments), X, "Classifier unavailable") is None

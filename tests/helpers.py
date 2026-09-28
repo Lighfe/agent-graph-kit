@@ -4,13 +4,20 @@ HEAD = "a" * 40
 OLD = "b" * 40
 
 
-def launch(role, n=1, agent=None):
+def launch(role, n=1, agent=None, call=None):
     agent = agent or {"pm": "pm", "engineer": "software-engineer", "qa": "qa-codex"}[role]
-    return f"## Launch: {role} (attempt {n})\nAgent: {agent}"
+    text = f"## Launch: {role} (attempt {n})\nAgent: {agent}"
+    return f"{text}\nCall: {call}" if call else text
 
 
-def cont(role, n, agent):
-    return f"## Launch: {role} (continued, round {n})\nAgent: {agent}"
+def cont(role, n, agent, call=None):
+    text = f"## Launch: {role} (continued, round {n})\nAgent: {agent}"
+    return f"{text}\nCall: {call}" if call else text
+
+
+def not_started(role, n, call, continued=False, reason="Classifier unavailable"):
+    kind = f"continued, round {n}" if continued else f"attempt {n}"
+    return f"## Launch not started: {role} ({kind})\nCall: {call}\nReason: {reason}"
 
 
 def issue(*comments, labels=("ready",), body="Lane: default\n", open=True):

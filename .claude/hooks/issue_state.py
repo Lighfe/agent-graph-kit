@@ -8,6 +8,7 @@ Comment order is the order of the `gh` comments array (plan decision).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -28,6 +29,12 @@ STOP_RESULTS = (NEEDS_OWNER, INVALID)
 MAX_RETURNS = 3
 
 LAUNCH = re.compile(r"^## Launch: (pm|engineer|qa) \((?:attempt|continued, round) (\d+)\)$")
+# A receipt that Claude Code denied before the launch ran (PermissionDenied hook, spec 5.3)
+NOT_STARTED = re.compile(r"^## Launch not started: ((?:pm|engineer|qa) \((?:attempt|continued, round) \d+\))$")
+_RECEIPT_KEY = re.compile(r"^## Launch: ((?:pm|engineer|qa) \((?:attempt|continued, round) \d+\))$")
+_CALL = re.compile(r"^Call: (\S+)$")
+CALL_HASH_LEN = 12
+REASON_MAX = 200
 _LANE = re.compile(r"^Lane: (\S+)$")
 _VERIFIED = re.compile(r"^Verified: (\S+)$")
 _COMMITS = re.compile(r"^Commits: (\S+?)\.\.(\S+)$")
@@ -145,8 +152,42 @@ def commits_range(body: str) -> tuple[str, str] | None:
 # --- validity, pending, current result (spec 5.3) --------------------------------
 
 
-def _lines(issue: Issue) -> list[str]:
+def call_hash(tool_use_id: str) -> str:
+    """The first 12 hex characters of the SHA-256 of a tool_use_id. The raw id is never posted."""
+    return hashlib.sha256(tool_use_id.encode("utf-8")).hexdigest()[:CALL_HASH_LEN]
+
+
+def _call_value(body: str) -> str | None:
+    m = _value(body, _CALL)
+    return m[0] if m else None
+
+
+def _not_started(issue: Issue) -> set[int]:
+    """Indexes of the receipts that are not started: a later not-started comment has the same
+    `<role> (…)` part and the same Call: value. A receipt without a Call: line is never not started."""
+    marks = []  # (index, key, call) of the not-started comments
+    for j, body in enumerate(issue.comments):
+        m = NOT_STARTED.match(first_line(body))
+        if m and (value := _call_value(body)):
+            marks.append((j, m.group(1), value))
+    voided = set()
+    for i, body in enumerate(issue.comments):
+        m = _RECEIPT_KEY.match(first_line(body))
+        if m and (value := _call_value(body)) and any(
+                j > i and key == m.group(1) and call == value for j, key, call in marks):
+            voided.add(i)
+    return voided
+
+
+def _raw_lines(issue: Issue) -> list[str]:
     return [first_line(c) for c in issue.comments]
+
+
+def _lines(issue: Issue) -> list[str]:
+    """First lines of the comments. A receipt that is not started counts for nothing here:
+    its line is blank. Only `attempt` reads the raw lines."""
+    voided = _not_started(issue)
+    return ["" if i in voided else line for i, line in enumerate(_raw_lines(issue))]
 
 
 def _result_role(line: str) -> str | None:
@@ -209,12 +250,40 @@ def newest_done(issue: Issue) -> str | None:
 
 
 def attempt(issue: Issue, role: str) -> int:
-    return sum(1 for line in _lines(issue) if _launch_role(line) == role) + 1
+    """A receipt that is not started still counts here, so the next launch gets the next number."""
+    return sum(1 for line in _raw_lines(issue) if _launch_role(line) == role) + 1
 
 
-def launch_comment(call: Call, attempt: int) -> str:
+def launch_comment(call: Call, attempt: int, call_hash: str | None = None) -> str:
     kind = f"continued, round {attempt}" if call.continued else f"attempt {attempt}"
-    return f"## Launch: {call.role} ({kind})\nAgent: {call.agent}"
+    text = f"## Launch: {call.role} ({kind})\nAgent: {call.agent}"
+    return f"{text}\nCall: {call_hash}" if call_hash else text
+
+
+def not_started_comment(issue: Issue, call_hash: str, reason: str, role: str | None = None) -> str | None:
+    """The not-started comment for the newest receipt, or None when it must not be posted:
+    the newest receipt has no Call: line equal to call_hash (or another role than `role`),
+    has a result of its role or a RESUME after it, or is already not started."""
+    raw = _raw_lines(issue)
+    j = _newest_launch(raw)
+    if j is None or j in _not_started(issue) or _call_value(issue.comments[j]) != call_hash:
+        return None
+    receipt_role = _launch_role(raw[j])
+    if role is not None and receipt_role != role:
+        return None
+    if any(line == RESUME or _result_role(line) == receipt_role for line in raw[j + 1:]):
+        return None
+    key = raw[j][len("## Launch: "):]
+    return f"## Launch not started: {key}\nCall: {call_hash}\nReason: {first_line(reason)[:REASON_MAX]}"
+
+
+def _two_not_started(issue: Issue) -> bool:
+    """The two newest receipts are both not started, and no result and no RESUME follows the older one."""
+    raw = _raw_lines(issue)
+    receipts = [i for i, line in enumerate(raw) if _launch_role(line)]
+    if len(receipts) < 2 or not set(receipts[-2:]) <= _not_started(issue):
+        return False
+    return not any(line == RESUME or _result_role(line) for line in raw[receipts[-2] + 1:])
 
 
 # --- checks (spec 5.4) -----------------------------------------------------------
@@ -241,6 +310,9 @@ def g1(call: Call, facts: Facts) -> str | None:
             return f"G1: issue #{iss.number} has the label {label}, expected no label later or needs-owner"
     if not facts.clean:
         return "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+    if call.role != "close" and _two_not_started(iss):
+        return (f"G1: issue #{iss.number}: the last 2 launches did not start (Claude Code denied them "
+                f"before they ran), expected a launch that starts; stop the loop, the owner posts {RESUME}")
     if is_pending(iss):
         lines = _lines(iss)
         j = _newest_launch(lines)

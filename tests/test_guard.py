@@ -369,6 +369,23 @@ def test_decide_allowed_launch_posts_one_launch_comment():
     assert fio.posts == [(7, "## Launch: pm (attempt 1)\nAgent: pm")]
 
 
+def test_decide_launch_with_tool_use_id_posts_call_line():
+    import hashlib
+    fio = FakeIO(issue())
+    event = {**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": "toolu_synthetic_1"}
+    assert decide(event, fio.read_facts, fio.post_comment) is None
+    expected = hashlib.sha256("toolu_synthetic_1".encode()).hexdigest()[:12]
+    assert fio.posts == [(7, f"## Launch: pm (attempt 1)\nAgent: pm\nCall: {expected}")]
+
+
+@pytest.mark.parametrize("tool_use_id", [5, None, ["toolu_synthetic_1"], {"id": "x"}])
+def test_decide_launch_with_non_string_tool_use_id_has_no_call_line(tool_use_id):
+    fio = FakeIO(issue())
+    event = {**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": tool_use_id}
+    assert decide(event, fio.read_facts, fio.post_comment) is None
+    assert fio.posts == [(7, "## Launch: pm (attempt 1)\nAgent: pm")]
+
+
 def test_decide_qa_codex_posts_agent_qa_codex():
     fio = FakeIO(issue(launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: DONE\nCommits: a..b"))
     assert decide(bash("scripts/qa-codex ROLE=qa ISSUE=7"), fio.read_facts, fio.post_comment) is None
@@ -456,6 +473,14 @@ def test_allowed_launch_posts_one_comment_and_prints_nothing(env):
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 1)\nAgent: pm"}]
+
+
+def test_allowed_launch_with_tool_use_id_posts_call_line(env):
+    import hashlib
+    code, out = run_guard({**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": "toolu_synthetic_1"}, env)
+    assert (code, out) == (0, "")
+    h = hashlib.sha256(b"toolu_synthetic_1").hexdigest()[:12]
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": f"## Launch: pm (attempt 1)\nAgent: pm\nCall: {h}"}]
 
 
 def test_allowed_close_prints_nothing_and_posts_nothing(env):
