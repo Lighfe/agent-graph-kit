@@ -65,7 +65,8 @@ def test_constants_match_spec():
     assert MARKERS == {
         "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER"),
         "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
-        "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID"),
+        "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID",
+               "## QA: UNVERIFIABLE"),
     }
     assert RESUME == "## Owner: RESUME"
     assert AGENT_LANE == {"default": "software-engineer", "frontend": "frontend-engineer"}
@@ -962,3 +963,109 @@ def test_not_started_comment_cuts_reason_to_200():
 ])
 def test_not_started_comment_none(comments):
     assert not_started_comment(issue(*comments), X, "Classifier unavailable") is None
+
+
+# --- QA: UNVERIFIABLE (issue #55) ----------------------------------------------
+
+UNVERIFIABLE = "## QA: UNVERIFIABLE"
+INVALID = "## QA: INVALID"
+
+
+def unverifiable(*more):
+    return done(launch("qa"), f"{UNVERIFIABLE}\nReason: criterion 2 could not be verified", *more)
+
+
+def test_unverifiable_is_a_qa_result_marker_that_ends_pending():
+    before = done(launch("qa"))
+    assert is_pending(before)
+    iss = unverifiable()
+    assert not is_pending(iss)
+    assert current_result(iss) == (5, UNVERIFIABLE)
+
+
+def test_not_started_comment_none_after_unverifiable():
+    iss = done(launch("qa", call=X), f"{UNVERIFIABLE}\nReason: x")
+    assert not_started_comment(iss, X, "Classifier unavailable") is None
+
+
+def test_g2_allows_pm_after_unverifiable():
+    assert check(PM, facts(unverifiable())) is None
+
+
+@pytest.mark.parametrize("call, gid", [
+    (ENG, "G3:"),
+    (QA, "G4:"),
+    (QA_FALLBACK, "G5:"),
+    (CLOSE, "G6:"),
+])
+def test_unverifiable_denies_engineer_qa_fallback_and_close(call, gid):
+    msg = check(call, facts(unverifiable()))
+    assert msg is not None and msg.startswith(gid), msg
+    assert f"current result is {UNVERIFIABLE}" in msg, msg
+
+
+def test_g2_deny_message_names_unverifiable_as_allowed():
+    msg = check(PM, facts(groomed()))
+    assert msg.startswith("G2:") and UNVERIFIABLE in msg
+
+
+def three_unverifiable():
+    return (launch("pm"), "## PM: GROOMED",
+            launch("engineer"), DONE, launch("qa"), UNVERIFIABLE,
+            launch("pm", 2), "## PM: GROOMED", launch("engineer", 2), DONE, launch("qa", 2), UNVERIFIABLE,
+            launch("pm", 3), "## PM: GROOMED", launch("engineer", 3), DONE, launch("qa", 3), UNVERIFIABLE)
+
+
+def test_g7_three_unverifiable_deny_pm_and_engineer():
+    iss = issue(*three_unverifiable())
+    assert returns_since_resume(iss) == 3
+    msg = check(PM, facts(iss))
+    assert msg.startswith("G7:") and UNVERIFIABLE in msg, msg
+    # the engineer is denied too; G3 comes first while UNVERIFIABLE is the current result
+    assert check(ENG, facts(iss)) is not None
+    # after a later GROOMED only G7 stops the engineer
+    regroomed = issue(*three_unverifiable(), launch("pm", 4), "## PM: GROOMED")
+    msg = check(ENG, facts(regroomed))
+    assert msg.startswith("G7:") and UNVERIFIABLE in msg, msg
+
+
+def test_g7_two_unverifiable_allow_pm():
+    iss = issue(*three_unverifiable()[:12])
+    assert returns_since_resume(iss) == 2
+    assert check(PM, facts(iss)) is None
+
+
+def test_g7_unverifiable_count_starts_after_newest_resume():
+    iss = issue(*three_unverifiable(), RESUME)
+    assert returns_since_resume(iss) == 0
+    assert check(PM, facts(iss)) is None
+
+
+def test_g7_mix_of_fail_unverifiable_and_blocked_is_three_returns():
+    iss = done(launch("qa"), "## QA: FAIL",
+               launch("engineer", 2), DONE, launch("qa", 2), UNVERIFIABLE,
+               launch("pm", 2), "## PM: GROOMED", launch("engineer", 3), "## Engineer: BLOCKED")
+    assert returns_since_resume(iss) == 3
+    assert check(PM, facts(iss)).startswith("G7:")
+
+
+def test_g7_ignores_unverifiable_without_qa_launch():
+    assert returns_since_resume(issue(launch("pm"), UNVERIFIABLE)) == 0
+
+
+@pytest.mark.parametrize("call, gid", [
+    (PM, "G2:"),
+    (ENG, "G3:"),
+    (QA, "G4:"),
+    (QA_FALLBACK, "G5:"),
+])
+def test_invalid_still_escalates(call, gid):
+    iss = done(launch("qa"), f"{INVALID}\nReason: retries used up")
+    msg = check(call, facts(iss))
+    assert msg is not None and msg.startswith(gid), msg
+    assert INVALID in msg
+
+
+def test_invalid_is_not_a_return():
+    iss = done(launch("qa"), INVALID, launch("qa", 2), INVALID, launch("qa", 3), INVALID)
+    assert returns_since_resume(iss) == 0

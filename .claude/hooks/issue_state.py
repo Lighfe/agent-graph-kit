@@ -16,15 +16,17 @@ from dataclasses import dataclass
 MARKERS: dict[str, tuple[str, ...]] = {
     "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER"),
     "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
-    "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID"),
+    "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID", "## QA: UNVERIFIABLE"),
 }
 RESUME = "## Owner: RESUME"
 AGENT_LANE = {"default": "software-engineer", "frontend": "frontend-engineer"}
 
 GROOMED, NEEDS_OWNER = MARKERS["pm"]
 DONE, BLOCKED = MARKERS["engineer"]
-PASS, FAIL, UNAVAILABLE, INVALID = MARKERS["qa"]
-RETURNS = (FAIL, BLOCKED)
+PASS, FAIL, UNAVAILABLE, INVALID, UNVERIFIABLE = MARKERS["qa"]
+# A return sends the issue back (spec 5.4 G7): FAIL and BLOCKED, and UNVERIFIABLE (a limit of the
+# checker's environment, back to the PM, spec 7). INVALID is not a return: it escalates.
+RETURNS = (FAIL, UNVERIFIABLE, BLOCKED)
 STOP_RESULTS = (NEEDS_OWNER, INVALID)
 MAX_RETURNS = 3
 
@@ -324,9 +326,10 @@ def g1(call: Call, facts: Facts) -> str | None:
 def g2(call: Call, facts: Facts) -> str | None:
     lines = _lines(facts.issue)
     _, marker, found = _current(facts.issue)
-    if _newest_launch(lines) is None or marker in (BLOCKED, RESUME):
+    if _newest_launch(lines) is None or marker in (BLOCKED, UNVERIFIABLE, RESUME):
         return None
-    return f"G2: current result is {found}, expected no launch comment yet, {BLOCKED} or {RESUME}"
+    return (f"G2: current result is {found}, "
+            f"expected no launch comment yet, {BLOCKED}, {UNVERIFIABLE} or {RESUME}")
 
 
 def g3(call: Call, facts: Facts) -> str | None:
@@ -384,7 +387,7 @@ def g7(call: Call, facts: Facts) -> str | None:
     n = returns_since_resume(facts.issue)
     if n < MAX_RETURNS:
         return None
-    return (f"G7: {n} returns ({FAIL} or {BLOCKED}) since the newest {RESUME}, "
+    return (f"G7: {n} returns ({FAIL}, {UNVERIFIABLE} or {BLOCKED}) since the newest {RESUME}, "
             f"expected fewer than {MAX_RETURNS}")
 
 
