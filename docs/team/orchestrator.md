@@ -77,11 +77,16 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 
 A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`. When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G8`) and what is missing. The deny message is the source of truth.
 
-The issue is pending when the last launched role ended without a result. Escalate the issue.
+The hook comments are `## Launch: …` and `## Launch not started: …`. They are not results.
+
+The issue is pending when the last launched role ended without a result. Escalate the issue, as before. This also holds when the role started and then could not act.
+
+When auto mode denies a launch, the `qa-codex` call or a `SendMessage` continuation before it runs, a second hook posts `## Launch not started: <role> (…)` for that receipt. The launch never happened: launch the same step again. This is not a return.
 
 What to do with a deny:
 
 - `G1` pending: escalate the issue
+- `G1 … the last 2 launches did not start`: stop the loop and ask the owner. Claude Code is denying the calls; the issue itself is fine
 - `G1` working tree not clean: stop the loop and ask the owner
 - `G1` command not in one of the two exact forms: rewrite the call in the exact form, or use the way around that the deny message names (a comment body from a file with `--body-file`, a commit message with `git commit -F`). This is not a return
 - `G6` verified SHA is not `HEAD`: run `qa-codex` again. This is not a return

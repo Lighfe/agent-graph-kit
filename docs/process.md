@@ -47,6 +47,7 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 - QA does not fix the code, only outputs PASS or FAIL
 - The orchestrator closes the issue only after QA outputs PASS, and only if the SHA that QA verified is the current `HEAD`
 - A return is a QA FAIL or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue. The count starts after the newest `## Owner: RESUME` comment
+- A launch that Claude Code denied before it ran (the hook posts `## Launch not started: …`) is not pending and not a return
 - If the PM cannot resolve a blocked criterion, escalate the issue
 - Before the next issue, the working tree must be clean (`git status --porcelain` is empty). If not, stop the whole loop and ask the owner
 

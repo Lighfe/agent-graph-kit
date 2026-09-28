@@ -131,7 +131,20 @@ When the hook allows a launch, it posts a launch comment on the issue before the
 ```
 ## Launch: engineer (attempt 3)
 Agent: software-engineer
+Call: 3f2a9c01b7de
 ```
+
+The `Call:` line is the **call hash**: the first 12 hex characters of the SHA-256 of the event's `tool_use_id`. The raw id is not posted. An event without a string `tool_use_id` gets a receipt without a `Call:` line.
+
+**Not started.** The guard runs before the permission check, so it cannot see a later denial. When auto mode denies the call (also without a classifier verdict), Claude Code runs the `PermissionDenied` hook (5.7) with the same `tool_use_id`. If the newest receipt on the issue has the matching `Call:` line, no valid result and no `## Owner: RESUME` after it, and is not yet marked, the hook posts a **not-started comment**:
+
+```
+## Launch not started: engineer (attempt 3)
+Call: 3f2a9c01b7de
+Reason: Auto mode could not evaluate this action and is blocking it for safety
+```
+
+A receipt is **not started** when a later not-started comment has the same `<role> (…)` part and the same `Call:` value. Such a receipt counts for nothing (pending, validity, current result, G2, returns) except the attempt number: the next launch of that role gets the next number. A not-started comment is not a result, not a receipt and not `## Owner: RESUME`. A not-started comment that matches no receipt changes nothing.
 
 **Continuation.** The orchestrator may continue a role agent with `SendMessage` instead of a new launch, for example to give the same engineer the QA feedback with its own context. The message carries the same launch line. The hook runs the same checks as for a launch of that role and posts a launch comment of the form `## Launch: <role> (continued, round <n>)`. For validity, pending and returns, a continued comment counts as a launch comment. The `SendMessage` input names the target agent, not its type, so the agent part of G3 applies only to a new launch.
 
@@ -142,7 +155,7 @@ A result comment is **valid** only if both are true:
 
 An old result from an earlier attempt is ignored automatically.
 
-The issue is **pending** if the newest launch comment has no valid result after it and no `## Owner: RESUME` comment after it. While the issue is pending, every guarded call on it is denied. A late result cannot be mixed up with a newer attempt, because no newer attempt can start. If a launched role ends without a result, the orchestrator escalates. The owner continues with `## Owner: RESUME`.
+The issue is **pending** if the newest launch comment has no valid result after it and no `## Owner: RESUME` comment after it. While the issue is pending, every guarded call on it is denied. A late result cannot be mixed up with a newer attempt, because no newer attempt can start. If a launched role ends without a result, the orchestrator escalates. The owner continues with `## Owner: RESUME`. This also holds for a role that started and then could not act (for example, every one of its calls was denied): it did start, so its receipt is not voided and the issue stays pending ([#52](https://github.com/Lighfe/agent-graph-kit/issues/52)).
 
 The **current result** of an issue is the newest valid result of any role, or an `## Owner: RESUME` comment, if that is newer.
 
@@ -162,6 +175,7 @@ The **current result** of an issue is the newest valid result of any role, or an
 Notes:
 
 - G1 "clean tree before every launch" is possible because no role may leave uncommitted work: the engineer commits before DONE, and PM and QA do not write files. If a blocked engineer leaves changes, the next launch is denied, and the orchestrator stops the loop and asks the owner.
+- G1, not started twice: a guarded launch (not close) is denied when the two newest receipts on the issue are both not started (5.3) and no result marker and no `## Owner: RESUME` comes after the older of the two. The message starts with `G1: issue #<n>: the last 2 launches did not start` and names `## Owner: RESUME` as the way on. Claude Code is denying calls, so a third try would most likely fail too; the orchestrator stops the loop and asks the owner.
 - G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming.
 - G5: the fallback is only possible after `qa-codex` reported that Codex cannot run.
 
@@ -173,7 +187,7 @@ Notes:
 | Engineer | `## Engineer: DONE`, `## Engineer: BLOCKED` |
 | QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID` |
 | Owner | `## Owner: RESUME` |
-| Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)` |
+| Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)`, `## Launch not started: <role> (attempt <n>)`, `## Launch not started: <role> (continued, round <n>)` (not results) |
 
 `## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates.
 
@@ -191,6 +205,7 @@ Notes:
 - The launch comments are the receipts. There is no separate log.
 - Hooks of two calls in one message can run at the same time (S1). The guard holds an exclusive file lock from reading the facts until the launch comment is posted, so the second call sees the first launch comment and is denied as pending.
 - Matcher: `Agent|Bash|SendMessage`. The command wrapper is POSIX `sh` and turns a crash or a missing `uv` into a deny (`… || { echo '…' >&2; exit 2; }`).
+- `PermissionDenied` hook (`.claude/hooks/not_started.py`, same matcher, no wrapper): Claude Code runs it when auto mode denies a call. It classifies the call with the guard's rules and, for a denied launch of `pm`, `engineer` or `qa` (also `qa-codex` and a continuation), posts the not-started comment (5.3). It holds the same lock as the guard from reading the issue until the comment is posted, within the same deadline, so a receipt and its not-started comment cannot interleave with another launch. It cannot block anything; it prints nothing to stdout and always exits 0.
 
 ### 5.8 Prose changes
 
@@ -216,7 +231,7 @@ No warning shows when `disableAllHooks` is still present. If the owner forgets s
 - `permissions.deny` rules for `Edit` and `Write` on `.claude/settings*.json`.
 - The guard denies `Bash` commands that write to `.claude/settings*.json`.
 
-**Allow rules.** The guard posts the launch comment before the permission check. If a prompt or a missing allow rule then stops the call, the issue stays pending without a real problem. So the project settings allow `Bash(scripts/qa-codex ROLE=qa ISSUE=*)` and `Bash(gh issue close *)`. Claude Code then does not ask the owner before these two calls. The guard still runs first, and its deny still stops the call. Project allow rules apply only after the folder is trusted.
+**Allow rules.** The guard posts the launch comment before the permission check. If a prompt or a missing allow rule then stops the call, the issue stays pending without a real problem. So the project settings allow `Bash(scripts/qa-codex ROLE=qa ISSUE=*)` and `Bash(gh issue close *)`. Claude Code then does not ask the owner before these two calls. An auto mode denial is handled by the `PermissionDenied` hook (5.3, 5.7): the receipt is marked not started. A denial that fires no `PermissionDenied` event (a manual "No", a `permissions.deny` rule, another `PreToolUse` hook, Esc) still leaves the issue pending ([#53](https://github.com/Lighfe/agent-graph-kit/issues/53)). The guard still runs first, and its deny still stops the call. Project allow rules apply only after the folder is trusted.
 
 **Acceptance test.** After the owner has deleted `disableAllHooks`, and before the next real issue gets `ready`, the owner runs a checklist (`docs/checks/hook-activation.md`) in an interactive session in the VS Code extension (the surface of the loop), on a throwaway issue. The owner types the prompts and checks each result. An agent does not test its own gates. If a step fails, the loop does not start. The checklist covers: the guard is listed in `/hooks`; a launch without a launch line is denied; a `SendMessage` continuation with and without the line (and whether the extension has `SendMessage` at all); writes of `disableAllHooks` with `Edit` and with `Bash` are denied; a guarded `qa-codex` call shows no permission prompt; whether `disableAllHooks` in the local file also stops user-level hooks. If the extension blocks `SendMessage`, the owner runs the loop with `claude` in the VS Code integrated terminal.
 
