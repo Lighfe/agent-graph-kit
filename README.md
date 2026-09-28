@@ -18,7 +18,7 @@ v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lan
 
 ## Set up the kit in a project
 
-Run these steps in the root of the new project (the git root). The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
+Run these steps in the root of the new project (the git root), in a terminal outside Claude Code. Do not run them from a Claude Code session: the kit's guard hooks deny the `cp` of `.claude/settings.json` (`G8:`) and every command that names `scripts/qa-codex` (`G1:`), and the Auto mode classifier denies the copy into `.claude/` and the `git submodule add`. The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
 
 ### Prerequisites
 
@@ -59,7 +59,14 @@ If the new project already has its own `.claude/settings.json`: do not overwrite
 
 If the new project already has a `.claude/skills` folder: move its skills into `.agents/skills/` first, then delete the empty `.claude/skills` folder, then run `ln -s`. If the folder still exists, `ln -s` creates the link inside that folder instead of replacing it.
 
-Also add `.claude/settings.local.json` to the `.gitignore` of the project. It is local only.
+Also add these lines to the `.gitignore` of the project:
+
+```gitignore
+.claude/settings.local.json
+__pycache__/
+```
+
+`.claude/settings.local.json` is local only. `cp -r` also copies the kit's local `__pycache__/` folders (in `.claude/hooks/` and `.agents/skills/codex-review/`); do not commit them.
 
 ### Adjust
 
