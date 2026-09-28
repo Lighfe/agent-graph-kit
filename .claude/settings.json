@@ -21,6 +21,18 @@
           }
         ]
       }
-    ]
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "Agent|Bash|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --script \"$CLAUDE_PROJECT_DIR/.claude/hooks/not_started.py\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]  
   }
 }
