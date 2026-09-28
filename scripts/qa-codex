@@ -62,6 +62,7 @@ LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}
 WAITS = (60, 180, 600)
 
 PASS, FAIL, UNAVAILABLE, INVALID = issue_state.PASS, issue_state.FAIL, issue_state.UNAVAILABLE, issue_state.INVALID
+UNVERIFIABLE = issue_state.UNVERIFIABLE
 USAGE = "usage: qa-codex ROLE=qa ISSUE=<n>"
 
 _AC_HEADING = re.compile(r"^##\s+Acceptance criteria\s*$", re.IGNORECASE)
@@ -104,6 +105,10 @@ def parse_criteria(body: str) -> list[str]:
             current = None
     return ["\n".join(item).strip("\n") for item in items]
 
+
+# The prompt rule for the per-criterion verdict `invalid` (#55, spec 7): it maps to `## QA: UNVERIFIABLE`.
+INVALID_RULE = ("Use `invalid` only when a tool, sandbox, network or permission limit of your environment "
+                "stops the check, and `fail` when the code or document does not meet the criterion.")
 
 COMMENTS_BEGIN = "BEGIN ISSUE COMMENTS"
 COMMENTS_END = "END ISSUE COMMENTS"
@@ -159,6 +164,7 @@ def build_prompt(criteria: list[str], base: str, head: str, comments: tuple[str,
         + comment_block(comments, done_index) + "\n\n"
         "Return only the JSON that the output schema asks for: exactly one entry for each criterion "
         "above, with its number as `id`, the verdict `pass`, `fail` or `invalid`, and your evidence. "
+        f"{INVALID_RULE} "
         "Set `verified_sha` to the full output of `git rev-parse HEAD`. "
         "Do not quote secrets (keys, tokens, passwords) in your evidence; name them instead.\n"
     )
@@ -531,15 +537,18 @@ def _main(argv: list[str], sleep) -> int:
                 _remove_worktree(repo, worktree)
             shutil.rmtree(tmp, ignore_errors=True)
 
+    # The overall marker (spec 6.2): any `fail` gives FAIL, else any `invalid` (a limit of the
+    # checker's environment) gives UNVERIFIABLE, else PASS.
     entries = run.output["criteria"]
+    if any(c["verdict"] == "fail" for c in entries):
+        return post(FAIL, "", run.output, retries)
     invalid = [c for c in sorted(entries, key=lambda c: c["id"]) if c["verdict"] == "invalid"]
     if invalid:
         reason = "; ".join(f"criterion {c['id']} could not be verified: "
                            f"{' '.join(codex_exec.redact(c['evidence']).split())}"
                            for c in invalid)
-        return post(INVALID, reason, run.output, retries)
-    marker = PASS if all(c["verdict"] == "pass" for c in entries) else FAIL
-    return post(marker, "", run.output, retries)
+        return post(UNVERIFIABLE, reason, run.output, retries)
+    return post(PASS, "", run.output, retries)
 
 
 if __name__ == "__main__":

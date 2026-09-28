@@ -12,11 +12,18 @@ Do not install anything. If you need a tool that is not in the lockfile or the s
 
 Start the app and run the browser check in one command. A background process does not survive into your next command.
 
-Your output is a verdict: PASS, FAIL or INVALID. It is FAIL if a single acceptance criterion fails. It is INVALID if you cannot verify a criterion for a technical reason (for example, the browser crashes). Say what failed. Post it as a comment on the issue.
+Your output is a verdict: PASS, FAIL, UNVERIFIABLE or INVALID.
+
+- FAIL if a single acceptance criterion fails: the code or document does not meet it
+- Otherwise UNVERIFIABLE if you could not check at least one criterion. It is UNVERIFIABLE if a limit of your environment stops the check: a tool, sandbox, network or permission limit (for example, the browser crashes or `api.github.com` is blocked). Mark each such criterion `- [ ] … - INVALID` and say what stopped you. The issue then goes back to the PM, who makes the criterion checkable
+- Otherwise PASS
+- INVALID only when the commit range is missing or cannot be used (no `Commits: <base>..<head>` line, or a head that does not resolve)
+
+FAIL comes before UNVERIFIABLE, and UNVERIFIABLE before PASS. Say what failed or what stopped you. Post it as a comment on the issue.
 
 When `scripts/qa-codex` runs you, return only the JSON that the schema asks for. Do not post a comment. Give each criterion's number as `id`.
 
-The first line is exactly `## QA: PASS`, `## QA: FAIL` or `## QA: INVALID`. Each criterion line starts with `- [x]` (PASS) or `- [ ]` (FAIL). The comment contains the line `Verified: <SHA>`, where `<SHA>` is the output of `git rev-parse HEAD` when you checked.
+The first line is exactly `## QA: PASS`, `## QA: FAIL`, `## QA: UNVERIFIABLE` or `## QA: INVALID`. Each criterion line starts with `- [x]` (PASS) or `- [ ]` (FAIL or INVALID). The comment contains the line `Verified: <SHA>`, where `<SHA>` is the output of `git rev-parse HEAD` when you checked.
 
 Example:
 
@@ -34,9 +41,9 @@ Checker: claude (fallback)
 
 Definition of done:
 
-- The first line of the comment is exactly `## QA: PASS`, `## QA: FAIL` or `## QA: INVALID`
+- The first line of the comment is exactly `## QA: PASS`, `## QA: FAIL`, `## QA: UNVERIFIABLE` or `## QA: INVALID`
 - Every acceptance criterion has a verdict against it
-- Every FAIL says what you did and what happened
+- Every FAIL says what you did and what happened. Every criterion marked INVALID says which limit stopped the check
 - The test command and its result are included, or `Tests: not run (no test suite)`
 - The `Verified: <SHA>` line is included
 - The footer `Checker: claude (fallback)` is included

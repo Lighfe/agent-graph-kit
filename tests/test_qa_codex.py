@@ -161,7 +161,7 @@ def qa_env(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("modes,marker,sleeps", [
     (["ok"], "## QA: PASS", []),
-    (["invalid"], "## QA: INVALID", []),
+    (["invalid"], "## QA: UNVERIFIABLE", []),
     (["transient", "ok"], "## QA: PASS", [60]),
     (["transient"] * 4, "## QA: INVALID", [60, 180, 600]),
     (["crash", "ok"], "## QA: PASS", [60]),
@@ -219,7 +219,7 @@ def test_top_level_verdict_is_ignored(qa_env):
 
 def test_invalid_criterion_is_named_with_reason(qa_env):
     comment, _ = qa_env.run(["invalid"])
-    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert comment.splitlines()[0] == "## QA: UNVERIFIABLE"
     assert f"- [ ] {CRIT_1} - INVALID" in comment
     assert "criterion 1" in comment and "the browser crashed" in comment
 
@@ -1481,8 +1481,9 @@ def test_qa_role_file_has_spec_7_behavior():
         "git diff --submodule=diff <base>..<head>",
         "Do not install anything",
         "the criterion fails (undeclared dependency)",
-        "PASS, FAIL or INVALID",
-        "It is INVALID if you cannot verify a criterion for a technical reason",
+        "PASS, FAIL, UNVERIFIABLE or INVALID",
+        "It is UNVERIFIABLE if a limit of your environment",
+        "`## QA: UNVERIFIABLE`",
         "`## QA: INVALID`",
         "When `scripts/qa-codex` runs you, return only the JSON that the schema asks for. Do not post a comment.",
         "Give each criterion's number as `id`",
@@ -1578,7 +1579,7 @@ def test_invalid_criterion_reason_is_redacted(qa_env, monkeypatch, secret_env):
     _scripted(qa_env, monkeypatch, {"output": _output((f"cannot log in with {secret_env}", "ok"),
                                                       ("invalid", "pass"))})
     comment, _ = qa_env.run([])
-    assert comment.splitlines()[0] == "## QA: INVALID"
+    assert comment.splitlines()[0] == "## QA: UNVERIFIABLE"
     reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
     assert "criterion 1" in reason and "[redacted]" in reason
     assert secret_env not in comment
@@ -1805,7 +1806,7 @@ def _scripted_failure(env, monkeypatch, tool, stdout="", stderr="", code=1):
 
 @pytest.mark.parametrize("verdicts,marker", [(("pass", "pass"), "## QA: PASS"),
                                              (("pass", "fail"), "## QA: FAIL"),
-                                             (("invalid", "pass"), "## QA: INVALID")])
+                                             (("invalid", "pass"), "## QA: UNVERIFIABLE")])
 @pytest.mark.parametrize("where", [0, 1])
 def test_multi_line_secret_in_evidence_does_not_leak(qa_env, monkeypatch, multi_secret, verdicts, marker,
                                                      where):
@@ -1816,7 +1817,7 @@ def test_multi_line_secret_in_evidence_does_not_leak(qa_env, monkeypatch, multi_
     assert comment.splitlines()[0] == marker
     assert "[redacted]" in comment
     assert not _leaks(multi_secret, comment), comment
-    if marker == "## QA: INVALID":
+    if marker == "## QA: UNVERIFIABLE":
         reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
         assert "criterion 1" in reason
 
@@ -1861,3 +1862,63 @@ def test_multi_line_reason_is_still_cut_to_reason_max(multi_secret):
     reason = codex_exec.failure_reason("", stderr)
     assert len(reason) <= codex_exec.REASON_MAX and reason.endswith("...")
     assert not _leaks(multi_secret, reason)
+
+
+# --- overall marker with per-criterion `invalid` (issue #55, spec 6.2) ----------------------
+
+
+def test_prompt_limits_invalid_to_environment_limits(qa_env):
+    qa_env.run(["ok"])
+    (call,) = qa_env.calls("codex")
+    rule = ("Use `invalid` only when a tool, sandbox, network or permission limit of your environment "
+            "stops the check, and `fail` when the code or document does not meet the criterion.")
+    assert rule in call["stdin"]
+    assert rule in qa.build_prompt(["x"], "a", "b")
+
+
+@pytest.mark.parametrize("verdicts,marker", [
+    (("pass", "invalid"), "## QA: UNVERIFIABLE"),
+    (("invalid", "invalid"), "## QA: UNVERIFIABLE"),
+    (("fail", "invalid"), "## QA: FAIL"),
+    (("invalid", "fail"), "## QA: FAIL"),
+    (("pass", "pass"), "## QA: PASS"),
+])
+def test_overall_marker_fail_before_unverifiable_before_pass(qa_env, monkeypatch, verdicts, marker):
+    evidence = tuple(f"evidence {i}" for i in (1, 2))
+    _scripted(qa_env, monkeypatch, {"output": _output(evidence, verdicts)})
+    comment, _ = qa_env.run([])
+    lines = comment.splitlines()
+    assert lines[0] == marker
+    assert qa_env.code == 0 and len(qa_env.comments()) == 1
+    assert f"Verified: {qa_env.head}" in lines
+
+
+def test_unverifiable_reason_names_criterion_2(qa_env, monkeypatch):
+    _scripted(qa_env, monkeypatch, {"output": _output(("ok", "the sandbox blocks api.github.com"),
+                                                      ("pass", "invalid"))})
+    comment, _ = qa_env.run([])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: UNVERIFIABLE"
+    reason = next(line for line in lines if line.startswith("Reason:"))
+    assert "criterion 2" in reason and "the sandbox blocks api.github.com" in reason
+    assert "criterion 1" not in reason
+    assert f"- [x] {CRIT_1} - PASS" in lines
+    assert "- [ ] A duplicate username shows a visible error: - INVALID" in lines
+
+
+def test_unverifiable_reason_names_every_invalid_criterion(qa_env, monkeypatch):
+    _scripted(qa_env, monkeypatch, {"output": _output(("no browser", "no network"), ("invalid", "invalid"))})
+    comment, _ = qa_env.run([])
+    reason = next(line for line in comment.splitlines() if line.startswith("Reason:"))
+    assert "criterion 1 could not be verified: no browser" in reason
+    assert "criterion 2 could not be verified: no network" in reason
+
+
+def test_fail_with_invalid_still_shows_the_invalid_criterion(qa_env, monkeypatch):
+    _scripted(qa_env, monkeypatch, {"output": _output(("a traceback", "no network"), ("fail", "invalid"))})
+    comment, _ = qa_env.run([])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: FAIL"
+    assert f"- [ ] {CRIT_1} - FAIL" in lines
+    assert "- [ ] A duplicate username shows a visible error: - INVALID" in lines
+    assert "      no network" in lines
