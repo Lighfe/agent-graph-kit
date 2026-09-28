@@ -1,8 +1,9 @@
 """Tests for scripts/qa-codex and scripts/codex_exec.py.
 
 Each flow test runs `main([...], sleep=recorded.append)` in a temporary git repo, with the
-fakes `gh`, `codex`, `npm` and `npx` from tests/fakes/ first on PATH. No real `gh` or
-`codex` runs and no test uses the network. All issue data is synthetic.
+fakes `gh`, `codex`, `npm` and `npx` from tests/fakes/ first on PATH (and `uv`, only where a test
+puts it there). No real `gh`, `codex` or `uv` runs and no test uses the network. All issue data is
+synthetic.
 """
 
 import importlib.util
@@ -96,7 +97,8 @@ class QaEnv:
         }
         for key, value in env.items():
             monkeypatch.setenv(key, value)
-        for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "GIT_DIR", "GIT_WORK_TREE"):
+        for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_UV_FAIL",
+                    "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
             monkeypatch.delenv(key, raising=False)
         self.repo = tmp / "repo"
         self.repo.mkdir()
@@ -111,6 +113,11 @@ class QaEnv:
         self.head = git(self.repo, "rev-parse", "HEAD")
         monkeypatch.chdir(self.repo)
         self.write_issue()
+
+    def with_uv(self):
+        """Put the fake `uv` on PATH (it is not there by default: a run without `uv`)."""
+        (self.bin / "uv").symlink_to(FAKES / "uv")
+        return self
 
     def done(self, head=None):
         return (f"## Engineer: DONE\n\n{ENGINEER_SUMMARY}\n\n"
@@ -628,6 +635,131 @@ def test_no_frontend_no_pre_step(qa_env):
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
     assert [c["tool"] for c in qa_env.calls()] == ["codex"]
+
+
+# --- the uv pre-step (test command in the sandbox, #43) ----------------------------------
+
+UV_FILL = ["run", "--with", "pytest", "pytest", "--version"]
+
+
+def _codex_argv(env):
+    (call,) = env.calls("codex")
+    return call["argv"]
+
+
+def _env_flag(cache):
+    return f'shell_environment_policy.set={{UV_CACHE_DIR="{cache}",UV_OFFLINE="1"}}'
+
+
+def test_uv_pre_step_fills_a_per_run_cache_and_codex_gets_it(qa_env):
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in qa_env.calls()] == ["uv", "codex"]
+    (uv,) = qa_env.calls("uv")
+    argv = _codex_argv(qa_env)
+    worktree = Path(argv[argv.index("-C") + 1])
+    assert uv["argv"] == UV_FILL
+    assert Path(uv["cwd"]) == worktree
+    cache = Path(uv["cache"])
+    assert cache == worktree.parent / "uv-cache"  # next to the worktree, in the run's temp folder
+    assert not cache.resolve().is_relative_to(Path.home().resolve())
+    pairs = list(zip(argv, argv[1:]))
+    assert ("-c", _env_flag(cache)) in pairs  # the environment of the commands Codex runs
+    assert not cache.exists() and not worktree.exists()  # removed after the run
+
+
+def test_uv_env_flag_is_valid_toml():
+    import tomllib
+    cache = Path("/tmp/qa-codex-synthetic dir/uv-cache")
+    flag, value = qa.uv_env_args(cache)
+    assert flag == "-c"
+    key, toml_value = value.split("=", 1)
+    assert key == "shell_environment_policy.set"
+    # codex takes a value that does not parse as TOML as a raw string, so it must parse
+    assert tomllib.loads("v = " + toml_value)["v"] == {"UV_CACHE_DIR": str(cache), "UV_OFFLINE": "1"}
+
+
+def test_uv_pre_step_keeps_the_sandbox_limits(qa_env):
+    qa_env.with_uv().run(["ok"])
+    argv = _codex_argv(qa_env)
+    joined = " ".join(argv)
+    assert qa.QA_SANDBOX == [
+        "--enable", "network_proxy",
+        "-c", 'permissions.qa={extends=":workspace",network={enabled=true,allow_local_binding=true,'
+              'domains={"localhost"="allow","127.0.0.1"="allow"}}}',
+        "-c", 'default_permissions="qa"',
+    ]
+    start = argv.index("--enable")
+    assert argv[start:start + len(qa.QA_SANDBOX)] == qa.QA_SANDBOX
+    for word in ("network_access", "danger-full-access", "workspace-write", "writable_roots", "full_network"):
+        assert word not in joined
+    assert "-s" not in argv and "--sandbox" not in argv
+    assert argv.count("--enable") == 1
+    # the only new flag: the environment of the commands Codex runs, no other config key
+    extra = [a for a in argv[start + len(qa.QA_SANDBOX):] if a.startswith("shell_environment_policy")]
+    assert len(extra) == 1 and joined.count("shell_environment_policy") == 1
+
+
+def test_uv_pre_step_failure_is_unavailable(qa_env, monkeypatch):
+    monkeypatch.setenv("FAKE_UV_FAIL", "1")
+    comment, _ = qa_env.with_uv().run(["ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: UNAVAILABLE"
+    reason = next(line for line in lines if line.startswith("Reason:"))
+    assert "pre-step `uv run --with pytest pytest --version` failed" in reason
+    assert "error: Failed to fetch" in reason and "second line" not in reason
+    assert qa_env.code == 0
+    assert qa_env.calls("codex") == []
+    (uv,) = qa_env.calls("uv")
+    assert not Path(uv["cache"]).exists()
+    assert len(git(qa_env.repo, "worktree", "list").splitlines()) == 1
+
+
+def test_no_uv_runs_as_before(qa_env, monkeypatch):
+    path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "uv").exists())
+    monkeypatch.setenv("PATH", path)
+    assert shutil.which("uv") is None
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in qa_env.calls()] == ["codex"]
+    joined = " ".join(_codex_argv(qa_env))
+    assert "shell_environment_policy" not in joined and "UV_" not in joined
+
+
+def test_uv_pre_step_runs_after_the_frontend_pre_step(frontend_env):
+    comment, _ = frontend_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in frontend_env.calls()] == ["npm", "npx", "uv", "codex"]
+
+
+def test_retry_keeps_the_cache(qa_env):
+    comment, _ = qa_env.with_uv().run(["transient", "ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in qa_env.calls()] == ["uv", "codex", "codex"]  # filled once
+    (uv,) = qa_env.calls("uv")
+    for call in qa_env.calls("codex"):
+        assert ("-c", _env_flag(uv["cache"])) in list(zip(call["argv"], call["argv"][1:]))
+
+
+def test_interrupt_during_uv_pre_step_removes_the_cache(qa_env, monkeypatch):
+    qa_env.with_uv()
+    monkeypatch.setenv("QA_PRESTEP_TIMEOUT", "600")
+    monkeypatch.setenv("FAKE_UV_WAIT", str(qa_env.tmp / "uv.pid"))
+    _interrupt(qa_env, qa_env.tmp / "uv.pid", signal.SIGINT)
+    assert qa_env.calls("codex") == []
+    (uv,) = qa_env.calls("uv")
+    cache = Path(uv["cache"])
+    assert not cache.exists() and not cache.parent.exists()
+
+
+def test_interrupt_during_codex_removes_the_cache(qa_env, monkeypatch):
+    qa_env.with_uv()
+    monkeypatch.setenv("QA_CODEX_TIMEOUT", "600")
+    (qa_env.tmp / "modes").write_text("timeout\n")
+    _interrupt(qa_env, qa_env.tmp / "child.pid", signal.SIGINT)
+    (uv,) = qa_env.calls("uv")
+    assert not Path(uv["cache"]).exists()
+    _worktrees_gone(qa_env)
 
 
 # --- clean retries ---------------------------------------------------------------------

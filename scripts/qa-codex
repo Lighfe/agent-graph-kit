@@ -45,6 +45,12 @@ QA_SANDBOX = [
           'domains={"localhost"="allow","127.0.0.1"="allow"}}}',
     "-c", 'default_permissions="qa"',
 ]
+# The test command inside the sandbox (#43): `$HOME` is read-only there, so uv cannot use its cache
+# `$HOME/.cache/uv`, and the profile blocks PyPI. The pre-step fills a cache for this run (in the
+# run's temp folder, next to the worktree: under /tmp or $TMPDIR, writable in the sandbox), and
+# Codex's commands get it offline through `shell_environment_policy.set`.
+UV_CACHE = "uv-cache"
+UV_FILL = ["uv", "run", "--with", "pytest", "pytest", "--version"]
 DEFAULT_TIMEOUT_S = 1800
 DEFAULT_PRESTEP_TIMEOUT_S = 1800
 LIMITS = {"transient": 3, "timeout": 1, "invalid_output": 1}
@@ -207,11 +213,11 @@ def _git(*args: str, cwd: Path | str | None = None) -> subprocess.CompletedProce
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
 
-def _run_step(cmd: list[str], cwd: Path, timeout_s: int) -> str | None:
+def _run_step(cmd: list[str], cwd: Path, timeout_s: int, env: dict | None = None) -> str | None:
     """Run one pre-step command in its own process group. None on success, else the error line."""
     try:
         p = codex_exec.start(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
+                             stderr=subprocess.PIPE, text=True, env=env)
     except OSError as e:
         return f"{cmd[0]}: {e.strerror or e}"
     try:
@@ -240,22 +246,33 @@ def _has_frontend_submodule(worktree: Path) -> bool:
     return any(line.split(" ", 1)[-1].strip() == "frontend" for line in p.stdout.splitlines())
 
 
-def pre_step(worktree: Path, timeout_s: int) -> str | None:
-    """Spec 6.1 step 3, outside the sandbox. None on success (or no frontend), else the reason."""
-    if not _has_frontend_submodule(worktree):
-        return None
-    frontend = worktree / "frontend"
-    steps = [
-        ("git submodule update --init frontend",
-         ["git", "-C", str(worktree), "submodule", "update", "--init", "--", "frontend"], worktree),
-        ("npm ci", ["npm", "ci"], frontend),
-        ("npx playwright install chromium", ["npx", "playwright", "install", "chromium"], frontend),
-    ]
-    for label, cmd, cwd in steps:
-        error = _run_step(cmd, cwd, timeout_s)
+def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> str | None:
+    """Spec 6.1 step 3, outside the sandbox. None on success (or nothing to do), else the reason.
+    With a frontend: the submodule, `npm ci` and the browser. With `uv_cache` (uv is on PATH):
+    fill that cache with pytest for the test command in the sandbox."""
+    steps: list[tuple[str, list[str], Path, dict | None]] = []
+    if _has_frontend_submodule(worktree):
+        frontend = worktree / "frontend"
+        steps += [
+            ("git submodule update --init frontend",
+             ["git", "-C", str(worktree), "submodule", "update", "--init", "--", "frontend"], worktree, None),
+            ("npm ci", ["npm", "ci"], frontend, None),
+            ("npx playwright install chromium", ["npx", "playwright", "install", "chromium"], frontend, None),
+        ]
+    if uv_cache is not None:
+        steps.append((" ".join(UV_FILL), UV_FILL, worktree, {**os.environ, "UV_CACHE_DIR": str(uv_cache)}))
+    for label, cmd, cwd, env in steps:
+        error = _run_step(cmd, cwd, timeout_s, env)
         if error is not None:
             return f"pre-step `{label}` failed: {error}"
     return None
+
+
+def uv_env_args(uv_cache: Path) -> list[str]:
+    """The flag that gives the commands Codex runs the per-run cache, offline (the profile blocks
+    PyPI). A config value, so the default filter of the inherited environment cannot drop it."""
+    return ["-c", f"shell_environment_policy.set={{UV_CACHE_DIR={json.dumps(str(uv_cache))},"
+                  f'UV_OFFLINE="1"}}']
 
 
 def _remove_worktree(repo: Path, worktree: Path) -> None:
@@ -415,14 +432,16 @@ def _main(argv: list[str], sleep) -> int:
         added = _git("worktree", "add", "--detach", "--quiet", str(worktree), head, cwd=repo)
         if added.returncode != 0:
             return post(INVALID, f"cannot create the worktree: {codex_exec._one_line(added.stderr)}")
-        error = pre_step(worktree, prestep_timeout)
+        uv_cache = tmp / UV_CACHE if shutil.which("uv") else None  # no uv: run as before
+        error = pre_step(worktree, prestep_timeout, uv_cache)
         if error is not None:
             return post(UNAVAILABLE, error)
+        sandbox = QA_SANDBOX + (uv_env_args(uv_cache) if uv_cache is not None else [])
         prompt = build_prompt(criteria, base, head)
         used: Counter = Counter()
         retries: list[str] = []
         while True:
-            run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox_args=QA_SANDBOX, model=QA_MODEL,
+            run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox_args=sandbox, model=QA_MODEL,
                                        effort=QA_EFFORT, timeout_s=timeout, cwd=worktree)
             status, reason = run.status, run.reason
             if status == "ok":
