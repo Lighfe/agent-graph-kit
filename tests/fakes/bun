@@ -3,6 +3,7 @@
 
 FAKE_TOOL_LOG=<path>   each call appends {"tool", "argv", "cwd", "files"} as one JSON line
 FAKE_BUN_FAIL=1        each call prints an error on stderr and exits 1
+FAKE_BUN_X_FAIL=1      each `bun x` call fails like `bun x --no-install` without the bin installed
 """
 import json
 import os
@@ -15,5 +16,9 @@ if os.environ.get("FAKE_TOOL_LOG"):
 if os.environ.get("FAKE_BUN_FAIL") == "1":
     sys.stderr.write("bun install v1.2.0 (synthetic)\n\n"
                      "error: lockfile had changes, but lockfile is frozen\nsecond line\n")
+    sys.exit(1)
+if os.environ.get("FAKE_BUN_X_FAIL") == "1" and sys.argv[1:2] == ["x"]:
+    sys.stderr.write("error: Could not find an existing 'playwright' binary to run. "
+                     "Stopping because --no-install was passed.\n")
     sys.exit(1)
 sys.exit(0)

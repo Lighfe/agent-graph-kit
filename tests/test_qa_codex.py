@@ -98,7 +98,7 @@ class QaEnv:
         for key, value in env.items():
             monkeypatch.setenv(key, value)
         for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_GH_VIEW_FAIL", "FAKE_GH_STDERR",
-                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_BUN_FAIL", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
+                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_NPX_FAIL", "FAKE_BUN_FAIL", "FAKE_BUN_X_FAIL", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
             monkeypatch.delenv(key, raising=False)
         self.repo = tmp / "repo"
         self.repo.mkdir()
@@ -734,12 +734,22 @@ NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
 BUN_LOCKFILES = ("bun.lock", "bun.lockb")
 
 
-def add_frontend(qa_env, monkeypatch, lockfiles):
-    """A `frontend` submodule whose commit has package.json and the given (synthetic) lockfiles."""
+# A synthetic package.json with a Playwright dependency (#59)
+PACKAGE_JSON = '{"name": "synthetic-frontend", "devDependencies": {"@playwright/test": "^1.0.0"}}\n'
+NPX_BROWSER = ["--no", "playwright", "install", "chromium"]
+BUN_BROWSER = ["x", "--no-install", "playwright", "install", "chromium"]
+
+
+def add_frontend(qa_env, monkeypatch, lockfiles, package_json=PACKAGE_JSON):
+    """A `frontend` submodule whose commit has package.json (text or bytes; None: no package.json)
+    and the given (synthetic) lockfiles."""
     fe = qa_env.tmp / "fe"
     fe.mkdir()
     git(fe, "init", "-q", "-b", "main")
-    (fe / "package.json").write_text('{"name": "synthetic-frontend"}\n')
+    if isinstance(package_json, bytes):
+        (fe / "package.json").write_bytes(package_json)
+    elif package_json is not None:
+        (fe / "package.json").write_text(package_json)
     (fe / ".gitignore").write_text("node_modules/\n")
     for name in lockfiles:
         (fe / name).write_text("synthetic lockfile\n")
@@ -768,7 +778,7 @@ def test_frontend_pre_step_runs_before_codex(frontend_env):
     assert [c["tool"] for c in calls] == ["npm", "npx", "codex"]
     worktree = Path(calls[2]["argv"][calls[2]["argv"].index("-C") + 1])
     assert calls[0]["argv"] == ["ci"]
-    assert calls[1]["argv"] == ["playwright", "install", "chromium"]
+    assert calls[1]["argv"] == NPX_BROWSER
     for call in calls[:2]:
         assert Path(call["cwd"]) == worktree / "frontend"
         assert "package.json" in call["files"]  # the submodule commits were fetched
@@ -832,10 +842,10 @@ def test_bun_lockfile_runs_bun_install(qa_env, monkeypatch, lockfile):
     comment, _ = env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
     calls = env.calls()
-    assert [c["tool"] for c in calls] == ["bun", "npx", "codex"]  # no npm
+    assert [c["tool"] for c in calls] == ["bun", "bun", "codex"]  # no npm, no npx
     worktree = Path(calls[2]["argv"][calls[2]["argv"].index("-C") + 1])
     assert calls[0]["argv"] == ["install", "--frozen-lockfile"]
-    assert calls[1]["argv"] == ["playwright", "install", "chromium"]  # unchanged after bun
+    assert calls[1]["argv"] == BUN_BROWSER
     for call in calls[:2]:
         assert Path(call["cwd"]) == worktree / "frontend"
         assert lockfile in call["files"]  # checked after the submodule update
@@ -863,7 +873,7 @@ def test_npm_lockfile_runs_npm_ci(qa_env, monkeypatch, lockfiles):
     calls = env.calls()
     assert [c["tool"] for c in calls] == ["npm", "npx", "codex"]  # bun is on PATH, but not called
     assert calls[0]["argv"] == ["ci"]
-    assert calls[1]["argv"] == ["playwright", "install", "chromium"]
+    assert calls[1]["argv"] == NPX_BROWSER
 
 
 @pytest.mark.parametrize("lockfiles", [[], ["yarn.lock"], ["pnpm-lock.yaml"], ["yarn.lock", "pnpm-lock.yaml"]])
@@ -905,7 +915,7 @@ def test_uv_fill_is_unchanged_after_bun_install(qa_env, monkeypatch):
     env = add_frontend(qa_env, monkeypatch, ["bun.lock"]).with_bun().with_uv()
     comment, _ = env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
-    assert [c["tool"] for c in env.calls()] == ["bun", "npx", "uv", "codex"]
+    assert [c["tool"] for c in env.calls()] == ["bun", "bun", "uv", "codex"]
     (uv,) = env.calls("uv")
     argv = _codex_argv(env)
     worktree = Path(argv[argv.index("-C") + 1])
@@ -913,6 +923,166 @@ def test_uv_fill_is_unchanged_after_bun_install(qa_env, monkeypatch):
     assert Path(uv["cwd"]) == worktree.parent
     assert Path(uv["cache"]) == worktree.parent / "uv-cache"
     assert ("-c", _env_flag(Path(uv["cache"]))) in list(zip(argv, argv[1:]))
+
+
+# --- the browser step uses the frontend's own Playwright dependency (#59) --------------------
+
+
+def test_npx_browser_step_failure_is_unavailable(qa_env, monkeypatch):
+    env = add_frontend(qa_env, monkeypatch, ["package-lock.json"]).with_bun().with_uv()
+    monkeypatch.setenv("FAKE_NPX_FAIL", "1")
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _reason(comment) == ("Reason: pre-step `npx --no playwright install chromium` failed: "
+                                "npx ERR! synthetic failure")
+    calls = env.calls()
+    assert [c["tool"] for c in calls] == ["npm", "npx"]  # no uv fill, no codex
+    assert calls[1]["argv"] == NPX_BROWSER
+    assert env.code == 0
+    assert len(git(env.repo, "worktree", "list").splitlines()) == 1
+
+
+def test_bun_browser_step_failure_is_unavailable(qa_env, monkeypatch):
+    env = add_frontend(qa_env, monkeypatch, ["bun.lock"]).with_bun().with_uv()
+    monkeypatch.setenv("FAKE_BUN_X_FAIL", "1")
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _reason(comment) == ("Reason: pre-step `bun x --no-install playwright install chromium` failed: "
+                                "error: Could not find an existing 'playwright' binary to run. "
+                                "Stopping because --no-install was passed.")
+    calls = env.calls()
+    assert [c["tool"] for c in calls] == ["bun", "bun"]  # no npm, npx, uv fill or codex
+    assert calls[0]["argv"] == ["install", "--frozen-lockfile"]
+    assert calls[1]["argv"] == BUN_BROWSER
+    assert env.code == 0
+
+
+NO_PLAYWRIGHT = {
+    "no dependency fields": '{"name": "synthetic-frontend"}\n',
+    "empty fields": '{"dependencies": {}, "devDependencies": {}}\n',
+    "only peerDependencies": '{"peerDependencies": {"@playwright/test": "^1.0.0"}}\n',
+    "only optionalDependencies": '{"optionalDependencies": {"playwright": "^1.0.0"}}\n',
+    "only playwright-core (dev)": '{"devDependencies": {"playwright-core": "^1.0.0"}}\n',
+    "only playwright-core": '{"dependencies": {"playwright-core": "^1.0.0"}}\n',
+    "a field that is a list": '{"devDependencies": ["@playwright/test", "playwright"]}\n',
+    "a field that is a string": '{"devDependencies": "@playwright/test"}\n',
+}
+
+
+def _lockfile_env(qa_env, monkeypatch, lockfile, package_json=PACKAGE_JSON):
+    return add_frontend(qa_env, monkeypatch, [lockfile], package_json).with_bun().with_uv()
+
+
+@pytest.mark.parametrize("lockfile", ["package-lock.json", "bun.lock"])
+@pytest.mark.parametrize("package_json", NO_PLAYWRIGHT.values(), ids=NO_PLAYWRIGHT.keys())
+def test_no_playwright_dependency_is_unavailable(qa_env, monkeypatch, lockfile, package_json):
+    env = _lockfile_env(qa_env, monkeypatch, lockfile, package_json)
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    reason = _reason(comment)
+    for part in ("package.json", "`playwright`", "`@playwright/test`"):
+        assert part in reason
+    assert reason == ("Reason: pre-step: `frontend/package.json` has no Playwright dependency "
+                      "(`playwright` or `@playwright/test` in `dependencies` or `devDependencies`)")
+    assert env.calls() == []  # no install, no browser step, no uv fill, no codex
+    assert env.code == 0
+    assert len(git(env.repo, "worktree", "list").splitlines()) == 1
+
+
+BAD_PACKAGE_JSON = {
+    "missing": None,
+    "not JSON": "{ not json\n",
+    "empty file": "",
+    "a list": '["@playwright/test"]\n',
+    "a string": '"@playwright/test"\n',
+    "null": "null\n",
+    "not UTF-8": b'{"devDependencies": {"\xff": "1"}}\n',
+}
+
+
+@pytest.mark.parametrize("lockfile", ["package-lock.json", "bun.lock"])
+@pytest.mark.parametrize("package_json", BAD_PACKAGE_JSON.values(), ids=BAD_PACKAGE_JSON.keys())
+def test_missing_or_bad_package_json_is_unavailable(qa_env, monkeypatch, lockfile, package_json):
+    env = _lockfile_env(qa_env, monkeypatch, lockfile, package_json)
+    comment, _ = env.run(["ok"])
+    assert env.code == 0  # no traceback
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "package.json" in _reason(comment)
+    assert env.calls() == []  # no install, no browser step, no uv fill, no codex
+    assert len(git(env.repo, "worktree", "list").splitlines()) == 1
+
+
+HAS_PLAYWRIGHT = {
+    "@playwright/test in devDependencies": '{"devDependencies": {"@playwright/test": "^1.63.0"}}\n',
+    "playwright in devDependencies": '{"devDependencies": {"playwright": "^1.63.0"}}\n',
+    "@playwright/test in dependencies": '{"dependencies": {"@playwright/test": "^1.63.0"}}\n',
+}
+
+
+@pytest.mark.parametrize("lockfile,install,browser", [("package-lock.json", ("npm", ["ci"]), ("npx", NPX_BROWSER)),
+                                                     ("bun.lock", ("bun", ["install", "--frozen-lockfile"]),
+                                                      ("bun", BUN_BROWSER))])
+@pytest.mark.parametrize("package_json", HAS_PLAYWRIGHT.values(), ids=HAS_PLAYWRIGHT.keys())
+def test_playwright_dependency_counts_in_either_field(qa_env, monkeypatch, lockfile, install, browser,
+                                                      package_json):
+    env = _lockfile_env(qa_env, monkeypatch, lockfile, package_json)
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    calls = env.calls()
+    assert [(c["tool"], c["argv"]) for c in calls[:2]] == [install, browser]
+    assert [c["tool"] for c in calls[2:]] == ["uv", "codex"]
+
+
+@pytest.mark.parametrize("lockfiles", [[], ["yarn.lock"]])
+def test_lockfile_check_comes_before_the_playwright_check(qa_env, monkeypatch, lockfiles):
+    env = add_frontend(qa_env, monkeypatch, lockfiles, '{"name": "no-playwright"}\n').with_bun()
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "has none of the lockfiles" in _reason(comment)
+    assert "Playwright" not in _reason(comment)
+    assert env.calls() == []
+
+
+def test_bun_on_path_check_comes_before_the_playwright_check(qa_env, monkeypatch):
+    env = add_frontend(qa_env, monkeypatch, ["bun.lock"], None).with_uv()
+    _without_bun_on_path(monkeypatch)
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _reason(comment) == "Reason: pre-step: `frontend/` has a bun lockfile, but `bun` is not on PATH"
+    assert env.calls() == []
+
+
+def test_playwright_check_reads_the_recorded_commit_not_the_local_frontend(qa_env, monkeypatch):
+    """The recorded submodule commit has no Playwright dependency; the local `frontend/` of the
+    repo has one (uncommitted). The check reads the worktree's checkout of the recorded commit."""
+    env = add_frontend(qa_env, monkeypatch, ["package-lock.json"], '{"name": "no-playwright"}\n').with_uv()
+    (env.repo / "frontend" / "package.json").write_text(PACKAGE_JSON)
+    comment, _ = env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "has no Playwright dependency" in _reason(comment)
+    assert env.calls() == []
+
+
+def test_no_frontend_submodule_no_package_json_check(qa_env):
+    """A plain `frontend/` folder (not a submodule) with an invalid package.json and a lockfile."""
+    (qa_env.repo / "frontend").mkdir()
+    (qa_env.repo / "frontend" / "package.json").write_text("{ not json\n")
+    (qa_env.repo / "frontend" / "package-lock.json").write_text("synthetic lockfile\n")
+    git(qa_env.repo, "add", ".")
+    git(qa_env.repo, "commit", "-q", "-m", "plain frontend folder, not a submodule")
+    qa_env.head = git(qa_env.repo, "rev-parse", "HEAD")
+    qa_env.write_issue()
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in qa_env.calls()] == ["codex"]
+
+
+def test_no_unpinned_npx_playwright_in_the_launcher():
+    source = SCRIPT.read_text()
+    assert "npx playwright install chromium" not in source
+    assert '["npx", "playwright", "install", "chromium"]' not in source
+    assert qa.NPX_BROWSER == ["npx", "--no", "playwright", "install", "chromium"]
+    assert qa.BUN_BROWSER == ["bun", "x", "--no-install", "playwright", "install", "chromium"]
 
 
 # --- the uv pre-step (test command in the sandbox, #43) ----------------------------------
@@ -1081,9 +1251,9 @@ def test_retry_starts_from_the_committed_state(frontend_env):
     assert "Retries: 1 (transient)" in comment.splitlines()
     assert slept == [60]
     first, second = frontend_env.calls("codex")
-    assert first["tree"]["frontend/package.json"] == '{"name": "synthetic-frontend"}\n'
+    assert first["tree"]["frontend/package.json"] == PACKAGE_JSON
     tree = second["tree"]
-    assert tree["frontend/package.json"] == '{"name": "synthetic-frontend"}\n'
+    assert tree["frontend/package.json"] == PACKAGE_JSON
     assert "frontend/untracked.txt" not in tree
     assert "root-untracked.txt" not in tree
     assert tree["frontend/node_modules/keep.txt"] == "installed\n"
