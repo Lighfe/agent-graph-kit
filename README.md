@@ -26,7 +26,8 @@ Run these steps in the root of the new project (the git root; see "Project repo"
 - `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
 - Codex CLI, logged in (`codex login`)
 - Frontend lane only: the Claude Code plugin `lovable`. The tool names in `.claude/agents/frontend-engineer.md` depend on it.
-- Frontend lane only: the tools for the install command of `frontend/`. The QA pre-step picks it from the lockfile in `frontend/`: with an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) it runs `npm ci`, else with a bun lockfile (`bun.lock` or `bun.lockb`) it runs `bun install --frozen-lockfile`, else it posts `## QA: UNAVAILABLE`. So an npm frontend needs `npm` and `npx`, and a bun frontend needs `bun` on `PATH` (and `npx` for the Playwright browser step)
+- Frontend lane only: the tools for the install command of `frontend/`. The QA pre-step picks it from the lockfile in `frontend/`: with an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) it runs `npm ci`, else with a bun lockfile (`bun.lock` or `bun.lockb`) it runs `bun install --frozen-lockfile`, else it posts `## QA: UNAVAILABLE`. So an npm frontend needs `npm` and `npx`, and a bun frontend needs `bun` on `PATH` (it no longer needs `npx`: its browser step runs through `bun`)
+- Frontend lane only: a Playwright dependency in the frontend: `@playwright/test` as a dev dependency in `frontend/package.json` and its lockfile (see "Frontend lane" below). Without it, the QA pre-step posts `## QA: UNAVAILABLE`
 
 ### Project repo
 
@@ -110,9 +111,24 @@ Frontend lane only. No MCP tool can make the GitHub connection of a Lovable proj
    git submodule add -b main <Lovable repo URL> frontend
    ```
 
+6. Add Playwright as a dev dependency through Lovable (QA needs it for the headless browser). Send the Lovable project a chat prompt, for example:
+
+   > Add `@playwright/test` as a dev dependency, update the lockfile, do not add tests.
+
+   Then check in the Lovable GitHub repo that the new commit changed `package.json` (`@playwright/test` under `devDependencies`) and the lockfile (`bun.lock` or `package-lock.json`).
+7. Bump the `frontend` submodule in the project to that commit, and commit the new pointer. The QA worktree checks out the commit that the submodule records, not the newest commit of the Lovable repo:
+
+   ```bash
+   git submodule update --remote frontend
+   git add frontend
+   git commit -m "Bump frontend to the commit with the Playwright dependency"
+   ```
+
 Nobody edits `frontend/` locally. All frontend changes go through Lovable.
 
 The QA pre-step installs the frontend dependencies with the install command that follows the lockfile in `frontend/`: an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) gives `npm ci`, else a bun lockfile (`bun.lock` or `bun.lockb`) gives `bun install --frozen-lockfile`, else the result is `## QA: UNAVAILABLE`. If both kinds exist, `npm ci` runs. A bun frontend (Lovable projects often use bun) needs `bun` on `PATH`; without it, the result is `## QA: UNAVAILABLE`.
+
+The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (as a dev dependency: step 6 above) in `dependencies` or `devDependencies` of `frontend/package.json`, and in its lockfile. Without it, the result is `## QA: UNAVAILABLE`, and nothing is installed. After the install, the pre-step installs the browser with the Playwright CLI of that dependency, through the package manager of the lockfile: `npx --no playwright install chromium` (npm lockfile) or `bun x --no-install playwright install chromium` (bun lockfile). `--no` and `--no-install` stop a registry fetch, so the browser version follows the frontend's lockfile and nothing is fetched from the registry for it. A bun frontend does not need `npx`.
 
 ### Labels
 
