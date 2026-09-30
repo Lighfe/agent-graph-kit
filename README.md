@@ -128,6 +128,8 @@ Frontend lane only. No MCP tool can make the GitHub connection of a Lovable proj
 
 Nobody edits `frontend/` locally. All frontend changes go through Lovable.
 
+Lovable can pause a message and wait for input. The `frontend-engineer` answers a plan or a question itself: it checks Lovable's plan against the issue and approves or corrects it. A credit or spend-limit check-in can only be answered by a person in the Lovable editor. Then the engineer posts `## Engineer: BLOCKED`, and the issue is escalated to you. Check that the Lovable workspace has enough credits before a frontend issue gets the label `ready`.
+
 The QA pre-step installs the frontend dependencies with the install command that follows the lockfile in `frontend/`: an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) gives `npm ci`, else a bun lockfile (`bun.lock` or `bun.lockb`) gives `bun install --frozen-lockfile`, else the result is `## QA: UNAVAILABLE`. If both kinds exist, `npm ci` runs. A bun frontend (Lovable projects often use bun) needs `bun` on `PATH`; without it, the result is `## QA: UNAVAILABLE`.
 
 The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (as a dev dependency: step 6 above) in `dependencies` or `devDependencies` of `frontend/package.json`, and in its lockfile. Without it, the result is `## QA: UNAVAILABLE`, and nothing is installed. After the install, the pre-step installs the browser with the Playwright CLI of that dependency, through the package manager of the lockfile: `npx --no playwright install chromium` (npm lockfile) or `bun x --no-install playwright install chromium` (bun lockfile). `--no` and `--no-install` stop a registry fetch, so the browser version follows the frontend's lockfile and nothing is fetched from the registry for it. A bun frontend does not need `npx`.
@@ -148,6 +150,29 @@ gh label create waiting --description "Parked: waits until its blocker issue is 
 1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
 2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder (spec 5.9). The hooks apply from the next tool call after `.claude/settings.json` is in place.
 3. Final step: run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
+
+## Update the kit in a project
+
+The kit still changes (new hooks, role rules, QA launcher fixes). A project does not get these changes by itself: you copy them in by hand. In the paint-math demo this was needed several times during the run, for example for the QA launcher fix of [#67](https://github.com/Lighfe/agent-graph-kit/issues/67) and [#68](https://github.com/Lighfe/agent-graph-kit/issues/68).
+
+1. Update only while no role agent runs, for example while the issue waits for you with the label `needs-owner`. Run the steps in the root of the project, in a terminal outside Claude Code, for the same reason as in "Copy": the guard hooks and the Auto mode classifier deny writes into `.claude/` and commands that name `scripts/qa-codex`.
+2. Pull the kit clone (`git -C ../agent-graph-kit pull`), then copy the kit files again. Leave out `AGENTS.md`, `CLAUDE.md` and `.claude/settings.json`: you adjusted them, so they get step 3.
+
+   ```bash
+   KIT=../agent-graph-kit
+   cp -r "$KIT/docs/process.md" "$KIT/docs/task-template.md" "$KIT/docs/team" "$KIT/docs/checks" docs/
+   cp -r "$KIT/.claude/agents" "$KIT/.claude/hooks" .claude/
+   cp -r "$KIT/.agents/skills/codex-review" .agents/skills/
+   cp -p "$KIT/scripts/qa-codex" "$KIT/scripts/codex_exec.py" "$KIT/scripts/qa-result.schema.json" scripts/
+   test -x scripts/qa-codex && echo "launcher is executable"
+   ```
+
+   `cp` does not delete a file that the kit removed. Compare the folders (for example `diff -r "$KIT/.claude/hooks" .claude/hooks`) and delete such files by hand.
+3. Compare the adjusted files with the kit and carry each kit change over by hand, keeping your adjustments: `diff "$KIT/AGENTS.md" AGENTS.md`, and `diff "$KIT/.claude/settings.json" .claude/settings.json` for the `hooks` and `permissions` blocks. A new hook event in the kit (for example `SubagentStop` from [#52](https://github.com/Lighfe/agent-graph-kit/issues/52)) does nothing until it is in the project's settings file.
+4. Read the kit issues named in the new kit commits (`git -C ../agent-graph-kit log --oneline`) for new prerequisites, and check "Prerequisites" again.
+5. Commit and push to `main`. Name the kit issues in the message, for example `git commit -m "Update QA launcher (agent-graph-kit #67, #68)"`.
+
+The orchestrator closes an issue only if the SHA that QA verified is the current `HEAD`. Your update commit moves `HEAD`, so an issue that is in progress needs a new `## Engineer: DONE` and a new QA run that end at the new `HEAD`. In paint-math #1, the update commit moved `HEAD`, and the issue went through PM, engineer and QA again before it was closed.
 
 ## Background
 
