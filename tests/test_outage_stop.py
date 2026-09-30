@@ -111,6 +111,26 @@ def test_4a_39_case_posts_stop_comment(tmp_path):
     assert env.evidence_gone()
 
 
+def test_reason_is_the_evidence_content_verbatim(tmp_path):
+    content = ("Classifier unavailable" + " " * 200)[:200]
+    env = Env(tmp_path).evidence(content).launch_line()
+    env.run(env.event())
+    assert env.posts == [(39, f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: {content}")]
+
+
+def test_reason_end_to_end_from_the_permission_denied_hook(tmp_path):
+    env = Env(tmp_path).launch_line()
+    env.folder.parent.mkdir()  # the git dir exists; the evidence folder does not yet
+    long = "Classifier unavailable" + " " * 200 + "detail"
+    denied = {"hook_event_name": "PermissionDenied", "tool_name": "Bash", "tool_use_id": "toolu_synthetic",
+              "tool_input": {"command": "gh issue view 7 --comments"}, "reason": long, "agent_id": AGENT_ID}
+    outage_stop.not_started.handle(denied, env.read_issue, env.post_comment, lock=env.lock, evidence_dir=lambda: env.folder)
+    assert (env.folder / AGENT_ID).read_text() == long[:200]
+    env.run(env.event())
+    assert env.posts == [(39, f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: {long[:200]}")]
+    assert env.evidence_gone()
+
+
 def test_4b_continuation_posts_continued_round(tmp_path):
     iss = make_issue(launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: DONE\nCommits: a..b",
                      launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1", call=X), number=12)

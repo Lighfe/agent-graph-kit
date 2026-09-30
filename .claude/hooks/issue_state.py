@@ -111,6 +111,11 @@ def first_line(body: str) -> str:
     return body.split("\n", 1)[0].rstrip()
 
 
+def evidence_line(reason: str) -> str:
+    """The first line of a reason as is (trailing whitespace kept), cut to REASON_MAX characters."""
+    return reason.split("\n", 1)[0][:REASON_MAX]
+
+
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
@@ -284,7 +289,7 @@ def launch_comment(call: Call, attempt: int, call_hash: str | None = None) -> st
 
 
 def _void_comment(issue: Issue, head: str, role: str | None, reason: str,
-                  call_hash: str | None = None) -> str | None:
+                  call_hash: str | None = None, verbatim: bool = False) -> str | None:
     """`head` for the newest receipt, or None when the newest receipt has no Call: line (or not one
     equal to call_hash), has another role than `role`, has a result of its role or a RESUME after
     it, or is already voided."""
@@ -301,7 +306,8 @@ def _void_comment(issue: Issue, head: str, role: str | None, reason: str,
     if any(line == RESUME or _result_role(line) == receipt_role for line in raw[j + 1:]):
         return None
     key = raw[j][len("## Launch: "):]
-    return f"{head} {key}\nCall: {value}\nReason: {first_line(reason)[:REASON_MAX]}"
+    text = evidence_line(reason) if verbatim else first_line(reason)[:REASON_MAX]
+    return f"{head} {key}\nCall: {value}\nReason: {text}"
 
 
 def not_started_comment(issue: Issue, call_hash: str, reason: str, role: str | None = None) -> str | None:
@@ -314,8 +320,9 @@ def not_started_comment(issue: Issue, call_hash: str, reason: str, role: str | N
 def outage_stop_comment(issue: Issue, role: str, reason: str) -> str | None:
     """The stop comment for the newest receipt of an agent that an auto mode outage stopped, or None:
     the newest receipt has no Call: line, has another role than `role`, has a result of its role or
-    a RESUME after it, or is already not started or stopped."""
-    return _void_comment(issue, "## Launch stopped by outage:", role, reason)
+    a RESUME after it, or is already not started or stopped. The reason (the evidence content)
+    is posted as is: its first line, trailing whitespace kept, cut to REASON_MAX characters."""
+    return _void_comment(issue, "## Launch stopped by outage:", role, reason, verbatim=True)
 
 
 def _two_not_started(issue: Issue) -> bool:

@@ -61,7 +61,7 @@ def record_evidence(event: dict, evidence_dir) -> None:
         return
     folder = Path(evidence_dir())
     folder.mkdir(mode=0o700, exist_ok=True)
-    evidence_file(folder, agent_id).write_text(issue_state.first_line(reason)[:issue_state.REASON_MAX])
+    evidence_file(folder, agent_id).write_text(issue_state.evidence_line(reason))
 
 
 def handle(event, read_issue, post_comment, lock=contextlib.nullcontext, evidence_dir=None) -> None:

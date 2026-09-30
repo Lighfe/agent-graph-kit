@@ -1293,6 +1293,12 @@ def test_outage_stop_comment_for_continuation_and_reason_cut():
         f"## Launch stopped by outage: engineer (continued, round 2)\nCall: {X}\nReason: " + "r" * 200)
 
 
+def test_outage_stop_comment_keeps_trailing_whitespace_of_the_reason():
+    reason = ("Classifier unavailable" + " " * 200)[:200]
+    assert outage_stop_comment(issue(launch("pm", call=X)), "pm", reason) == (
+        f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: {reason}")
+
+
 @pytest.mark.parametrize("comments, role", [
     ((launch("pm"),), "pm"),  # no Call line
     ((launch("pm", call=X),), "engineer"),  # other role

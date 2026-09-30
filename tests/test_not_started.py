@@ -335,6 +335,15 @@ def test_1a_reason_is_cut_to_200_and_newer_replaces_older(tmp_path):
     assert (folder / "agent1").read_text() == AUTO_UNAVAILABLE
 
 
+def test_1a_first_line_keeps_trailing_whitespace(tmp_path):
+    folder = tmp_path / "outage"
+    record(Fake(), sub_event("Classifier unavailable  \t\nsecond line"), folder)
+    assert (folder / "agent1").read_text() == "Classifier unavailable  \t"
+    long = "Classifier unavailable" + " " * 200 + "detail"
+    record(Fake(), sub_event(long), folder)
+    assert (folder / "agent1").read_text() == long[:200]
+
+
 def test_1a_evidence_also_for_a_guarded_launch(tmp_path):
     folder = tmp_path / "outage"
     e = agent("pm", "ROLE=pm ISSUE=7")
