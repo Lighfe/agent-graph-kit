@@ -146,6 +146,16 @@ Reason: Auto mode could not evaluate this action and is blocking it for safety
 
 A receipt is **not started** when a later not-started comment has the same `<role> (…)` part and the same `Call:` value. Such a receipt counts for nothing (pending, validity, current result, G2, returns) except the attempt number: the next launch of that role gets the next number. A not-started comment is not a result, not a receipt and not `## Owner: RESUME`. A not-started comment that matches no receipt changes nothing.
 
+**Stopped by an outage** ([#52](https://github.com/Lighfe/agent-graph-kit/issues/52)). A role agent can start and then be stopped by an auto mode outage: its calls are denied without a classifier verdict, so it cannot read the issue or post a result. Evidence: when the `PermissionDenied` hook sees a denial inside a subagent (the event has an `agent_id`, a name of 1 to 64 letters, digits, `_` or `-`) whose reason's first line starts with `Classifier unavailable`, `Auto mode could not evaluate this action and is blocking it for safety` or `Auto mode unavailable` (the no-verdict texts of Claude Code 2.1.284), it writes that first line, cut to 200 characters, to the evidence file `<git dir>/agent-graph-kit-outage/<agent_id>`. The file is in the git dir, not in the working tree, so the clean-tree check of G1 is not affected. Any other reason (a classifier judgment, `Permission denied`) is no evidence. When the agent ends, the `SubagentStop` hook (5.7) reads and deletes the evidence file (it deletes it at every stop, so evidence of one round never counts for a later round of the same agent). It reads the launch line (5.2) from the first user message of the agent's transcript and checks that `agent_type` has that role. If the newest receipt on that issue has that role, a `Call:` line, no valid result and no `## Owner: RESUME` after it, and is not yet voided, the hook posts a **stop comment**:
+
+```
+## Launch stopped by outage: pm (attempt 1)
+Call: 3f2a9c01b7de
+Reason: Classifier unavailable
+```
+
+A stop comment voids its receipt exactly like a not-started comment: same key (the `<role> (…)` part and the `Call:` value), same effects. So the orchestrator launches the same step again; it is not a return, and the owner posts no `## Owner: RESUME`. The comment holds no agent id, no transcript text and no raw `tool_use_id`.
+
 **Continuation.** The orchestrator may continue a role agent with `SendMessage` instead of a new launch, for example to give the same engineer the QA feedback with its own context. The message carries the same launch line. The hook runs the same checks as for a launch of that role and posts a launch comment of the form `## Launch: <role> (continued, round <n>)`. For validity, pending and returns, a continued comment counts as a launch comment. The `SendMessage` input names the target agent, not its type, so the agent part of G3 applies only to a new launch.
 
 A result comment is **valid** only if both are true:
@@ -155,7 +165,7 @@ A result comment is **valid** only if both are true:
 
 An old result from an earlier attempt is ignored automatically.
 
-The issue is **pending** if the newest launch comment has no valid result after it and no `## Owner: RESUME` comment after it. While the issue is pending, every guarded call on it is denied. A late result cannot be mixed up with a newer attempt, because no newer attempt can start. If a launched role ends without a result, the orchestrator escalates. The owner continues with `## Owner: RESUME`. This also holds for a role that started and then could not act (for example, every one of its calls was denied): it did start, so its receipt is not voided and the issue stays pending ([#52](https://github.com/Lighfe/agent-graph-kit/issues/52)).
+The issue is **pending** if the newest launch comment has no valid result after it and no `## Owner: RESUME` comment after it. While the issue is pending, every guarded call on it is denied. A late result cannot be mixed up with a newer attempt, because no newer attempt can start. If a launched role ends without a result, the orchestrator escalates. The owner continues with `## Owner: RESUME`. A role that started and then could not act stays pending only when the `SubagentStop` hook found no outage evidence for it; with evidence, its receipt is voided by a stop comment (see above).
 
 The **current result** of an issue is the newest valid result of any role, or an `## Owner: RESUME` comment, if that is newer.
 
@@ -175,7 +185,7 @@ The **current result** of an issue is the newest valid result of any role, or an
 Notes:
 
 - G1 "clean tree before every launch" is possible because no role may leave uncommitted work: the engineer commits before DONE, and PM and QA do not write files. If a blocked engineer leaves changes, the next launch is denied, and the orchestrator stops the loop and asks the owner.
-- G1, not started twice: a guarded launch (not close) is denied when the two newest receipts on the issue are both not started (5.3) and no result marker and no `## Owner: RESUME` comes after the older of the two. The message starts with `G1: issue #<n>: the last 2 launches did not start` and names `## Owner: RESUME` as the way on. Claude Code is denying calls, so a third try would most likely fail too; the orchestrator stops the loop and asks the owner.
+- G1, voided twice: a guarded launch (not close) is denied when the two newest receipts on the issue are each not started or stopped by an outage (5.3, any mix) and no result marker and no `## Owner: RESUME` comes after the older of the two. The message starts with `G1: issue #<n>: the last 2 launches` and names `## Owner: RESUME` as the way on. Claude Code is denying calls, so a third try would most likely fail too; the orchestrator stops the loop and asks the owner.
 - G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming. After `## QA: UNVERIFIABLE`, it goes back to the PM to make the blocked criteria checkable (7). After `## PM: WAITING`, it goes back to the PM once the blocker is closed (any reason); the deny for an open blocker names `#<N>` and says that it is open. `## PM: WAITING` is not a return and does not reset the G7 count.
 - G5: the fallback is only possible after `qa-codex` reported that Codex cannot run.
 
@@ -187,7 +197,7 @@ Notes:
 | Engineer | `## Engineer: DONE`, `## Engineer: BLOCKED` |
 | QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID`, `## QA: UNVERIFIABLE` |
 | Owner | `## Owner: RESUME` |
-| Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)`, `## Launch not started: <role> (attempt <n>)`, `## Launch not started: <role> (continued, round <n>)` (not results) |
+| Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)`, `## Launch not started: <role> (attempt <n>)`, `## Launch not started: <role> (continued, round <n>)`, `## Launch stopped by outage: <role> (attempt <n>)`, `## Launch stopped by outage: <role> (continued, round <n>)` (not results) |
 
 `## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates. `## QA: UNVERIFIABLE` leads to a PM launch with the URL of that QA comment (G2, 7). `## PM: WAITING` is not escalated: the orchestrator parks the issue (removes `ready`, adds `waiting`) while its blocker is open, and before every pick it gives `ready` back to each waiting issue whose blocker is closed; then the PM is launched with the URL of the WAITING comment (G2).
 
@@ -206,7 +216,9 @@ Notes:
 - The launch comments are the receipts. There is no separate log.
 - Hooks of two calls in one message can run at the same time (S1). The guard holds an exclusive file lock from reading the facts until the launch comment is posted, so the second call sees the first launch comment and is denied as pending.
 - Matcher: `Agent|Bash|SendMessage`. The command wrapper is POSIX `sh` and turns a crash or a missing `uv` into a deny (`… || { echo '…' >&2; exit 2; }`).
-- `PermissionDenied` hook (`.claude/hooks/not_started.py`, same matcher, no wrapper): Claude Code runs it when auto mode denies a call. It classifies the call with the guard's rules and, for a denied launch of `pm`, `engineer` or `qa` (also `qa-codex` and a continuation), posts the not-started comment (5.3). It holds the same lock as the guard from reading the issue until the comment is posted, within the same deadline, so a receipt and its not-started comment cannot interleave with another launch. It cannot block anything; it prints nothing to stdout and always exits 0.
+- `PermissionDenied` hook (`.claude/hooks/not_started.py`, same matcher, no wrapper): Claude Code runs it when auto mode denies a call. It classifies the call with the guard's rules and, for a denied launch of `pm`, `engineer` or `qa` (also `qa-codex` and a continuation), posts the not-started comment (5.3). It holds the same lock as the guard from reading the issue until the comment is posted, within the same deadline, so a receipt and its not-started comment cannot interleave with another launch. It cannot block anything; it prints nothing to stdout and always exits 0. It also writes the outage evidence (5.3) for a no-verdict denial inside a subagent, for any matched call; a failure there never stops the not-started comment.
+- `SubagentStop` hook (`.claude/hooks/outage_stop.py`, no matcher, so it runs for every subagent): without an evidence file for the event's `agent_id` it ends at once, with no transcript read and no `gh` call. Otherwise it posts the stop comment (5.3). It holds the same lock as the guard from reading the issue until the comment is posted, within the same deadline. It prints nothing to stdout and always exits 0. Its command ends with `|| true`, because a `SubagentStop` hook that exits with code 2 keeps the agent running; a missing `uv` or a crash must never do that.
+- Known limit: only denials of `Agent`, `Bash` and `SendMessage` calls count as outage evidence (the `PermissionDenied` matcher). A subagent stopped only by denials of other tools stays pending, as before.
 
 ### 5.8 Prose changes
 
