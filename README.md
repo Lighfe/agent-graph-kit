@@ -41,6 +41,8 @@ git checkout -B main   # an empty clone starts on the branch of init.defaultBran
 
 The clone has no commit yet. The first commit and push are in "Start".
 
+The repo must be owned by your GitHub user account, and `gh` must be logged in as that user. The hooks and `scripts/qa-codex` count only issue comments whose `authorAssociation` is `OWNER`; other comments are ignored, so in a public repo a stranger's comment cannot resume, pass, block or close an issue. A comment without author data is an error: the guard denies the call. The agents and hooks post with your `gh` login, so their comments count. Organization-owned repos are not supported yet: there, the owner's comments are not `OWNER` ([#75](https://github.com/Lighfe/agent-graph-kit/issues/75)).
+
 ### Copy
 
 Copy these files and folders from this repo into the new project, with the same paths:
