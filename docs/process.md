@@ -56,7 +56,7 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 
 ## Escalation
 
-- The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue.
+- The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue. Waiting on another open issue is not an owner decision either: the PM posts `## PM: WAITING`, the issue gets the label `waiting` instead of `ready`, and it goes back to the PM when the blocker is closed.
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
 - The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
 - After `## Owner: RESUME`, the issue goes back to the PM.

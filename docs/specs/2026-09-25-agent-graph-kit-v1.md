@@ -163,8 +163,8 @@ The **current result** of an issue is the newest valid result of any role, or an
 
 | # | Launch | Allowed only if |
 |---|---|---|
-| G1 | any guarded call | the launch line exists (5.2; not for close) · the issue is not pending (5.3) · the working tree is clean · the issue is open · it has the label `ready` and not the labels `later` or `needs-owner` |
-| G2 | PM | the issue has no launch comment yet, or the current result is `## Engineer: BLOCKED`, `## QA: UNVERIFIABLE` or `## Owner: RESUME` |
+| G1 | any guarded call | the launch line exists (5.2; not for close) · the issue is not pending (5.3) · the working tree is clean · the issue is open · it has the label `ready` and not the labels `later`, `needs-owner` or `waiting` (`waiting` is checked first, so the message names it also when `ready` is missing) |
+| G2 | PM | the issue has no launch comment yet, or the current result is `## Engineer: BLOCKED`, `## QA: UNVERIFIABLE`, `## Owner: RESUME`, or `## PM: WAITING` with exactly one `Waiting on: #<N>` line (outside fences), `<N>` not the issue itself, and issue `<N>` closed |
 | G3 | engineer | the current result is `## PM: GROOMED` or `## QA: FAIL` · the agent matches the lane (`default` → `software-engineer`, `frontend` → `frontend-engineer`) |
 | G4 | qa (`qa-codex`) | the current result is `## Engineer: DONE`, or `## QA: PASS` with a verified SHA not equal to `HEAD` (re-check) · a `## Engineer: DONE` comment with a `Commits:` line exists |
 | G5 | qa fallback (`qa-engineer`) | the current result is `## QA: UNAVAILABLE` |
@@ -176,20 +176,20 @@ Notes:
 
 - G1 "clean tree before every launch" is possible because no role may leave uncommitted work: the engineer commits before DONE, and PM and QA do not write files. If a blocked engineer leaves changes, the next launch is denied, and the orchestrator stops the loop and asks the owner.
 - G1, not started twice: a guarded launch (not close) is denied when the two newest receipts on the issue are both not started (5.3) and no result marker and no `## Owner: RESUME` comes after the older of the two. The message starts with `G1: issue #<n>: the last 2 launches did not start` and names `## Owner: RESUME` as the way on. Claude Code is denying calls, so a third try would most likely fail too; the orchestrator stops the loop and asks the owner.
-- G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming. After `## QA: UNVERIFIABLE`, it goes back to the PM to make the blocked criteria checkable (7).
+- G2: after `## Owner: RESUME`, the issue goes back to the PM for grooming. After `## QA: UNVERIFIABLE`, it goes back to the PM to make the blocked criteria checkable (7). After `## PM: WAITING`, it goes back to the PM once the blocker is closed (any reason); the deny for an open blocker names `#<N>` and says that it is open. `## PM: WAITING` is not a return and does not reset the G7 count.
 - G5: the fallback is only possible after `qa-codex` reported that Codex cannot run.
 
 ### 5.5 Result markers
 
 | Role | First line |
 |---|---|
-| PM | `## PM: GROOMED`, `## PM: NEEDS OWNER` |
+| PM | `## PM: GROOMED`, `## PM: NEEDS OWNER`, `## PM: WAITING` |
 | Engineer | `## Engineer: DONE`, `## Engineer: BLOCKED` |
 | QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNAVAILABLE`, `## QA: INVALID`, `## QA: UNVERIFIABLE` |
 | Owner | `## Owner: RESUME` |
 | Hook | `## Launch: <role> (attempt <n>)`, `## Launch: <role> (continued, round <n>)`, `## Launch not started: <role> (attempt <n>)`, `## Launch not started: <role> (continued, round <n>)` (not results) |
 
-`## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates. `## QA: UNVERIFIABLE` leads to a PM launch with the URL of that QA comment (G2, 7).
+`## PM: NEEDS OWNER` and `## QA: INVALID` allow no next launch. The orchestrator escalates. `## QA: UNVERIFIABLE` leads to a PM launch with the URL of that QA comment (G2, 7). `## PM: WAITING` is not escalated: the orchestrator parks the issue (removes `ready`, adds `waiting`) while its blocker is open, and before every pick it gives `ready` back to each waiting issue whose blocker is closed; then the PM is launched with the URL of the WAITING comment (G2).
 
 ### 5.6 Failure behavior
 
@@ -202,6 +202,7 @@ Notes:
 
 - Python scripts run with `uv run --script` (inline dependencies, PEP 723), in `.claude/hooks/`, registered in `.claude/settings.json`.
 - One shared module reads the issue state (labels, comments with timestamps) with one `gh` call. Each check is a small function.
+- Blocker read: only for a PM launch or continuation whose current result is `## PM: WAITING` with a usable `Waiting on: #<N>` line (and G1 passes), the guard reads the blocker with one extra `gh issue view <N> --json state` call and passes its state to the checks as a fact, so the check module stays free of I/O. The read runs inside the lock, before the launch comment, within the same deadline; a failing or slow read, or a state other than `OPEN` or `CLOSED`, denies with `guard error`.
 - The launch comments are the receipts. There is no separate log.
 - Hooks of two calls in one message can run at the same time (S1). The guard holds an exclusive file lock from reading the facts until the launch comment is posted, so the second call sees the first launch comment and is denied as pending.
 - Matcher: `Agent|Bash|SendMessage`. The command wrapper is POSIX `sh` and turns a crash or a missing `uv` into a deny (`… || { echo '…' >&2; exit 2; }`).
@@ -300,7 +301,7 @@ After `## QA: UNVERIFIABLE`, the orchestrator launches the PM with the URL of th
 
 - a) It rewrites the criterion so it can be checked from the repo checkout and from the comment text that `qa-codex` passes to Codex (6.1 step 1), for example by writing the expected values into the criterion, with the same intent and scope. Then it posts `## PM: GROOMED`.
 - b) It leaves the criterion unchanged when the limit is already gone (a fix has landed), and names the commit or issue of that fix. Then it posts `## PM: GROOMED`.
-- c) It posts `## PM: NEEDS OWNER` when the only way to make the criterion checkable changes its intent or scope (dropping it, weakening it, moving it out of scope), needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`, 5.9), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `qa-codex`, or waits on an open issue. The orchestrator escalates.
+- c) It posts `## PM: NEEDS OWNER` when the only way to make the criterion checkable changes its intent or scope (dropping it, weakening it, moving it out of scope), needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`, 5.9), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `qa-codex`. The orchestrator escalates. If the criterion only waits on an open issue of this repo, the PM posts `## PM: WAITING` with one line `Waiting on: #<N>` instead; the orchestrator parks the issue and the PM grooms it again when #N is closed (5.5).
 
 The `## PM: GROOMED` comment lists each criterion the PM changed, with the old text, the new text, and one line on why the intent is the same. The PM changes no criterion that QA did not mark `INVALID`.
 
@@ -429,7 +430,7 @@ The exact paths can change in the plan if a spike shows a reason.
 - Hook activation and the acceptance test (5.9).
 - Files to copy: AGENTS.md, CLAUDE.md, `docs/process.md`, `docs/team/`, `docs/task-template.md`, `.claude/agents/`, `.claude/hooks/`, the hooks and permissions blocks of `.claude/settings.json`, `docs/checks/`, `scripts/qa-codex` and its schema, `.agents/skills/codex-review/`, the symlink `.claude/skills` → `.agents/skills`.
 - Files to adjust: the project description and test command in AGENTS.md; the `frontend/` submodule and the `frontend` lane (Lovable only).
-- Labels to create: `ready`, `needs-owner`, `later`.
+- Labels to create: `ready`, `needs-owner`, `later`, `waiting`.
 - The paint-math task checks these instructions. Missing steps are fixed in the README.
 
 ## 13. Spikes

@@ -136,6 +136,7 @@ The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (
 gh label create ready --description "Orchestrator may work on this issue" --color 1D76DB --force
 gh label create needs-owner --description "Escalated: the orchestrator waits for the owner" --color FBCA04 --force
 gh label create later --description "Out of scope for the current implementation" --color BFD4F2 --force
+gh label create waiting --description "Parked: waits until its blocker issue is closed" --color C5DEF5 --force
 ```
 
 `--force` updates a label that already exists instead of failing.
