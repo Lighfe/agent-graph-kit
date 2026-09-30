@@ -172,7 +172,7 @@ def test_4f_unguarded_close_and_bad_launch_read_nothing(e):
 
 @pytest.mark.parametrize("content", ["## PM: GROOMED\n", "## Owner: RESUME\n"])
 def test_comment_command_posts_nothing(tmp_path, content):
-    """Issue #72: a comment command is not a launch, whether G9 passes or denies it."""
+    """Issues #72, #78: a comment command is not a launch, whatever its body file holds."""
     path = tmp_path / "body.md"
     path.write_text(content)
     fake = Fake(make_issue(launch("pm", call=H)))

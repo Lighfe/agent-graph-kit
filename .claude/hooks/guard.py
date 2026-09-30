@@ -23,8 +23,8 @@ denies are accepted. The shell tokenizer below serves G8 only.
 
 G9 (issue #72) runs after G8 and before this trigger rule: a command that
 mentions the words `gh` and `comment` must be exactly
-`gh issue comment <n> --body-file <literal path>`, and its body file may have
-no line that starts with `## Owner:`. G9 reads only the body file.
+`gh issue comment <n> --body-file <literal path>`. G9 checks only the command
+text: it reads no file and no issue state (issue #78).
 
 Known limits by design (P1, hooks are not a security boundary): a text that
 does not literally contain the trigger is not recognized, for example
@@ -80,10 +80,9 @@ CLAUDE_GLOB = re.compile(r"\.claude/[^\s'\"]*[*?\[]")
 READ_ONLY = {"cat", "jq", "head", "tail", "grep", "wc", "ls"}
 _NO_BRACES = str.maketrans("", "", "{},")
 
-# G9 (spec 5.1, 5.4): the one allowed form of a comment command, and the owner marker it may not post.
+# G9 (spec 5.1, 5.4): the one allowed form of a comment command.
 COMMENT_WORD = re.compile(r"\bcomment\b", re.ASCII)
 COMMENT_FORM = re.compile(r"gh issue comment ([1-9][0-9]*) --body-file ([A-Za-z0-9_./+@][A-Za-z0-9_./+@-]*)[ \t]*\n?")
-OWNER_LINE = re.compile(r"[\s\ufeff]*## Owner:")
 COMMENT_DENY = (
     "G9: the command mentions gh and comment, but is not the exact form gh issue comment <n> --body-file <file> "
     "as the whole command, with <file> a literal path (no variables, quotes, ~, globs or - for stdin). "
@@ -629,40 +628,23 @@ def g8(command: str) -> str | None:
     return None
 
 
-def g9(command: str, cwd) -> str | None:
-    """Deny reason if the command is a comment command that is not the exact form, or whose
-    body file cannot be read or has a line that starts with `## Owner:` (spec 5.1, 5.4).
-    Reads only the body file: no gh or git call, no issue state."""
+def g9(command: str, cwd=None) -> str | None:
+    """Deny reason if the command is a comment command that is not the exact form (spec 5.1, 5.4).
+    Checks only the command text: reads no file, no gh or git call, no issue state.
+    `cwd` is unused (issue #78)."""
     if not any(GH_WORD.search(text) and COMMENT_WORD.search(text)
                for text in (command, command.replace("\\\n", ""))):
         return None
-    m = COMMENT_FORM.fullmatch(command)  # always the original text, never the copy
-    if not m:
+    if not COMMENT_FORM.fullmatch(command):  # always the original text, never the copy
         return COMMENT_DENY
-    path = Path(m.group(2))
-    if not path.is_absolute():
-        if not isinstance(cwd, str) or not cwd:
-            return f"G9: the body file {path} is a relative path and the event has no cwd, use a literal absolute path"
-        path = Path(cwd) / path
-    try:
-        if not path.is_file():
-            return f"G9: the body file {path} does not exist or is not a regular file"
-        text = path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
-        return f"G9: the body file {path} is not valid UTF-8"
-    except OSError as e:
-        return f"G9: the body file {path} cannot be read ({type(e).__name__})"
-    if any(OWNER_LINE.match(line) for line in text.split("\n")):
-        return (f"G9: a line of the body file {path} starts with ## Owner:. Only the owner posts "
-                "## Owner: … comments, outside Claude Code (on the GitHub web page or in a terminal)")
     return None
 
 
-def _classify_bash(tool_input: dict, cwd=None) -> Call | None:
+def _classify_bash(tool_input: dict) -> Call | None:
     command = tool_input.get("command")
     if not isinstance(command, str):
         raise Deny("G1: Bash input has no string command, expected a command string")
-    reason = g8(command) or g9(command, cwd)  # G8 first, then G9, both without any gh call
+    reason = g8(command) or g9(command)  # G8 first, then G9, both without any gh call
     if reason:
         raise Deny(reason)
     if not (_triggered(command) or _triggered(command.replace("\\\n", ""))):
@@ -690,7 +672,7 @@ def classify(event: dict) -> Call | None:
         return _classify_agent(tool_input)
     if tool == "SendMessage":
         return _classify_send(tool_input)
-    return _classify_bash(tool_input, event.get("cwd"))
+    return _classify_bash(tool_input)
 
 
 def event_call_hash(event: dict) -> str | None:

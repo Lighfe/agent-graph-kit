@@ -369,35 +369,30 @@ def test_g9_allowed_comment_passes_and_reads_nothing(tmp_path, content):
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}\n")) is None
 
 
-def test_g9_relative_path_is_resolved_against_cwd(tmp_path):
-    body_file(tmp_path, "## PM: GROOMED\n")
-    assert decide_nothing_read(comment_event("gh issue comment 5 --body-file body.md", cwd=tmp_path)) is None
-    body_file(tmp_path, "## Owner: RESUME\n", name="owner.md")
-    reason = decide_nothing_read(comment_event("gh issue comment 5 --body-file owner.md", cwd=tmp_path))
-    assert reason.startswith("G9:") and "## Owner:" in reason
-
-
 @pytest.mark.parametrize("content", [
     "## Owner: RESUME\nGo on.\n",
-    "## Owner: something else\n",
     "## PM: GROOMED\n\n## Owner: RESUME\n",
     "   ## Owner: RESUME\n",
-    "\t## Owner: RESUME\n",
-    "﻿## Owner: RESUME\n",
-    "## Owner: RESUME\r\nGo on.\r\n",
-    "## Owner:",
+    "\ufeff## Owner: RESUME\n",
 ])
-def test_g9_owner_marker_is_denied(tmp_path, content):
-    path = body_file(tmp_path, content)
-    reason = decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}"))
-    assert reason.startswith("G9:") and "## Owner:" in reason
-    assert "outside Claude Code" in reason
-
-
-@pytest.mark.parametrize("content", ["## owner: RESUME\n", "# Owner: RESUME\n", "x ## Owner: RESUME\n"])
-def test_g9_owner_check_is_case_sensitive_and_at_line_start(tmp_path, content):
+def test_g9_owner_marker_in_the_body_file_passes(tmp_path, content):
+    """Issue #78: G9 checks only the command text, so an ## Owner: line in the body passes."""
     path = body_file(tmp_path, content)
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
+
+
+def test_g9_does_not_read_or_resolve_the_body_file(tmp_path):
+    """Issue #78: a body file that is missing, a folder or not UTF-8 passes G9; gh itself fails later."""
+    missing = tmp_path / "missing.md"
+    bad = body_file(tmp_path, b"## PM: GROOMED\n\xff\xfe\n", name="bad.md")
+    for path in (missing, tmp_path, bad):
+        assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
+    relative = "gh issue comment 5 --body-file body.md"
+    assert decide_nothing_read(comment_event(relative)) is None
+    for cwd in (5, None, ["x"]):
+        event = bash(relative)
+        event["cwd"] = cwd
+        assert decide_nothing_read(event) is None
 
 
 @pytest.mark.parametrize("cmd", [
@@ -422,22 +417,6 @@ def test_g9_form_deny_even_when_the_file_exists(tmp_path):
     path = body_file(tmp_path, "## PM: GROOMED\n")
     reason = decide_nothing_read(comment_event(f"gh issue comment 5 --body-file={path}"))
     assert reason.startswith("G9:") and G9_FORM in reason
-
-
-def test_g9_file_errors_are_denied(tmp_path):
-    missing = tmp_path / "missing.md"
-    bad = body_file(tmp_path, b"## PM: GROOMED\n\xff\xfe\n", name="bad.md")
-    for path in (missing, tmp_path, bad):
-        assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")).startswith("G9:")
-    reason = decide_nothing_read(comment_event("gh issue comment 5 --body-file body.md"))
-    assert reason.startswith("G9:") and "cwd" in reason
-
-
-def test_g9_relative_path_with_non_string_cwd_is_denied(tmp_path):
-    body_file(tmp_path, "## PM: GROOMED\n")
-    event = bash("gh issue comment 5 --body-file body.md")
-    event["cwd"] = 5
-    assert decide_nothing_read(event).startswith("G9:")
 
 
 @pytest.mark.parametrize("cmd", ["gh issue view 5 --comments", "gh issue view 5 --json comments",
@@ -466,14 +445,15 @@ def test_g9_makes_no_gh_or_git_call(tmp_path, env):
     assert lines(env["FAKE_GH_CALLS"]) == [] and lines(env["FAKE_GH_LOG"]) == []
 
 
-def test_g9_owner_marker_through_main_prints_the_deny(tmp_path, env, monkeypatch):
+def test_g9_owner_marker_through_main_is_allowed(tmp_path, env, monkeypatch):
+    """Issue #78: no deny output, exit code 0 and no gh call."""
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     path = body_file(tmp_path, "## Owner: RESUME\n")
     stdout = io.StringIO()
     event = bash(f"gh issue comment 7 --body-file {path}")
     assert guard.main(stdin=io.StringIO(json.dumps(event)), stdout=stdout) == 0
-    assert deny_reason(stdout.getvalue()).startswith("G9:")
+    assert stdout.getvalue() == ""
     assert lines(env["FAKE_GH_CALLS"]) == [] and lines(env["FAKE_GH_LOG"]) == []
 
 
