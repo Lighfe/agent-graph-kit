@@ -69,7 +69,7 @@ test -x scripts/qa-codex && echo "launcher is executable"
 
 The file `.claude/settings.json` of this repo holds only the two blocks, so the `cp` above copies exactly them.
 
-If the new project already has its own `.claude/settings.json`: do not overwrite it. Skip the `cp` of the settings file and merge the two blocks into the existing file by hand: add the `allow` and `deny` rules to its `permissions` block, and add every entry of the kit's `hooks` block to its `hooks` block. Today these are `PreToolUse` (the guard hook) and `PermissionDenied` (runs `.claude/hooks/not_started.py`, which marks a launch that was denied before it ran). Check afterwards that each event name in the kit's `hooks` block is also in yours.
+If the new project already has its own `.claude/settings.json`: do not overwrite it. Skip the `cp` of the settings file and merge the two blocks into the existing file by hand: add the `allow` and `deny` rules to its `permissions` block, and add every entry of the kit's `hooks` block to its `hooks` block. Today these are `PreToolUse` (the guard hook), `PermissionDenied` (runs `.claude/hooks/not_started.py`, which marks a launch that was denied before it ran) and `SubagentStop` (runs `.claude/hooks/outage_stop.py`, which marks a launch that was stopped by an auto mode outage). Check afterwards that each event name in the kit's `hooks` block is also in yours.
 
 If the new project already has a `.claude/skills` folder: move its skills into `.agents/skills/` first, then delete the empty `.claude/skills` folder, then run `ln -s`. If the folder still exists, `ln -s` creates the link inside that folder instead of replacing it.
 

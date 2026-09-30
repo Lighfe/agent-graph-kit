@@ -92,3 +92,29 @@ def test_readme_merge_note_names_every_hook_event():
     assert len(notes) == 1
     for event in load()["hooks"]:
         assert f"`{event}`" in notes[0], event
+
+
+def test_subagent_stop_hook_runs_outage_stop_and_never_blocks():
+    entries = load()["hooks"]["SubagentStop"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert "matcher" not in entry  # runs for every subagent
+    assert len(entry["hooks"]) == 1
+    hook = entry["hooks"][0]
+    assert hook["type"] == "command"
+    assert hook["timeout"] == 120
+    cmd = hook["command"]
+    assert "uv run --script" in cmd
+    assert ".claude/hooks/outage_stop.py" in cmd
+    assert cmd.rstrip().endswith("|| true")  # exit code 2 would keep the subagent running
+
+
+def test_permission_denied_entry_is_unchanged():
+    assert load()["hooks"]["PermissionDenied"] == [{
+        "matcher": "Agent|Bash|SendMessage",
+        "hooks": [{
+            "type": "command",
+            "command": "uv run --script \"$CLAUDE_PROJECT_DIR/.claude/hooks/not_started.py\"",
+            "timeout": 120,
+        }],
+    }]
