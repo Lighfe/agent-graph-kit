@@ -47,7 +47,7 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 - The engineer does not close the issue
 - QA does not fix the code, only outputs PASS or FAIL
 - The orchestrator closes the issue only after QA outputs PASS, and only if the SHA that QA verified is the current `HEAD`
-- A return is a QA FAIL, a QA UNVERIFIABLE or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue. The count starts after the newest `## Owner: RESUME` comment
+- A return is a QA FAIL, a QA UNVERIFIABLE or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue: the team could not settle it inside the current intent and scope, so the owner decides whether to change them. The count starts after the newest `## Owner: RESUME` comment
 - A launch that Claude Code denied before it ran (the hook posts `## Launch not started: …`) is not pending and not a return
 - If the PM posts `## PM: NEEDS OWNER`, escalate the issue
 - `## QA: UNVERIFIABLE` means QA could not check a criterion because of a tool or sandbox limit of the checker. The PM makes the criterion checkable with the same intent. The PM escalates (`## PM: NEEDS OWNER`) when making a criterion checkable changes its intent or scope, or needs an edit of the project settings files (`.claude/settings*.json`), `.claude/hooks/` or the QA sandbox
