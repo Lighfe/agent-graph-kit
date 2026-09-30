@@ -751,12 +751,15 @@ class _IO:
     def post_comment(self, number: int, body: str) -> None:
         self.run(["gh", "issue", "comment", str(number), "--body-file", "-"], stdin=body)
 
-    @contextlib.contextmanager
-    def lock(self):
+    def git_dir(self) -> Path:
         git_dir = self.run(["git", "rev-parse", "--git-dir"]).strip()
         if not git_dir:
             raise Deny("guard error: git rev-parse --git-dir printed nothing")
-        fd = os.open(Path(git_dir) / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+        return Path(git_dir)
+
+    @contextlib.contextmanager
+    def lock(self):
+        fd = os.open(self.git_dir() / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             while True:
                 try:

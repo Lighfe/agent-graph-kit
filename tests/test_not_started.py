@@ -293,3 +293,105 @@ def test_script_has_pep723_header_and_imports_the_guard():
     assert text.startswith("#!/usr/bin/env -S uv run --script\n")
     assert "# /// script" in text and "# dependencies = []" in text
     assert "import guard" in text and "import issue_state" in text
+
+
+# --- outage evidence (issue #52, criteria 1 and 2) -------------------------------------------
+
+AUTO_UNAVAILABLE = "Auto mode unavailable (synthetic detail)"
+NO_VERDICT_TEXTS = ["Classifier unavailable", NO_VERDICT, AUTO_UNAVAILABLE]
+
+
+def sub_event(reason, agent_id="agent1", cmd="gh issue view 7 --comments"):
+    e = bash(cmd)
+    e["reason"] = reason
+    if agent_id is not None:
+        e["agent_id"] = agent_id
+    return e
+
+
+def files_below(path):
+    return sorted(str(p.relative_to(path)) for p in Path(path).rglob("*") if p.is_file())
+
+
+def record(fake, e, folder):
+    return not_started.handle(e, fake.read_issue, fake.post_comment, lock=fake.lock, evidence_dir=lambda: folder)
+
+
+@pytest.mark.parametrize("reason", NO_VERDICT_TEXTS)
+def test_1a_no_verdict_denial_in_a_subagent_writes_evidence(tmp_path, reason):
+    folder = tmp_path / "outage"
+    fake = Fake(make_issue(launch("pm", call=H)))
+    record(fake, sub_event(reason + "\nsecond line"), folder)
+    assert (folder / "agent1").read_text() == reason
+    assert fake.events == []  # an unguarded Bash call reads no issue
+
+
+def test_1a_reason_is_cut_to_200_and_newer_replaces_older(tmp_path):
+    folder = tmp_path / "outage"
+    fake = Fake()
+    record(fake, sub_event("Classifier unavailable " + "r" * 300), folder)
+    assert (folder / "agent1").read_text() == ("Classifier unavailable " + "r" * 300)[:200]
+    record(fake, sub_event(AUTO_UNAVAILABLE), folder)
+    assert (folder / "agent1").read_text() == AUTO_UNAVAILABLE
+
+
+def test_1a_evidence_also_for_a_guarded_launch(tmp_path):
+    folder = tmp_path / "outage"
+    e = agent("pm", "ROLE=pm ISSUE=7")
+    e["agent_id"] = "agent-2_x"
+    fake = Fake(make_issue(launch("pm", call=H)))
+    record(fake, e, folder)
+    assert (folder / "agent-2_x").read_text() == NO_VERDICT
+    assert len(fake.posts) == 1
+
+
+@pytest.mark.parametrize("reason", ["Permission denied", "[Auto-Mode Bypass] synthetic judgment", None, ""])
+def test_1b_other_reasons_write_no_evidence(tmp_path, reason):
+    e = sub_event(reason)
+    if reason is None:
+        del e["reason"]
+    record(Fake(), e, tmp_path / "outage")
+    assert files_below(tmp_path) == []
+
+
+def test_1c_main_session_call_writes_no_evidence(tmp_path):
+    record(Fake(), sub_event("Classifier unavailable", agent_id=None), tmp_path / "outage")
+    assert files_below(tmp_path) == []
+
+
+@pytest.mark.parametrize("agent_id", ["../x", "a/b", "", "a" * 65, 5, None, ".", "..", "a\n"])
+def test_1d_bad_agent_id_writes_nothing(tmp_path, agent_id):
+    folder = tmp_path / "sub" / "outage"
+    e = sub_event("Classifier unavailable")
+    e["agent_id"] = agent_id
+    record(Fake(), e, folder)
+    assert files_below(tmp_path) == []
+
+
+def test_1d_agent_id_of_64_characters_is_allowed(tmp_path):
+    record(Fake(), sub_event("Classifier unavailable", agent_id="a" * 64), tmp_path)
+    assert files_below(tmp_path) == ["a" * 64]
+
+
+def test_2_evidence_failure_does_not_stop_the_not_started_comment(tmp_path):
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a folder")
+    e = agent("pm", "ROLE=pm ISSUE=7")
+    e["agent_id"] = "agent1"
+    fake = Fake(make_issue(launch("pm", call=H)))
+    record(fake, e, blocker)  # the evidence folder is a file: mkdir fails
+    assert fake.posts == [(7, f"## Launch not started: pm (attempt 1)\nCall: {H}\nReason: {NO_VERDICT}")]
+
+    def broken():
+        raise RuntimeError("synthetic git failure")
+
+    fake = Fake(make_issue(launch("pm", call=H)))
+    not_started.handle(e, fake.read_issue, fake.post_comment, lock=fake.lock, evidence_dir=broken)
+    assert len(fake.posts) == 1
+
+
+def test_main_writes_evidence_into_the_git_dir(env):
+    code, out = run_main(json.dumps(sub_event("Classifier unavailable", agent_id="synthetic1")))
+    assert (code, out) == (0, "")
+    assert (Path(env["FAKE_GIT_DIR"]) / "agent-graph-kit-outage" / "synthetic1").read_text() == "Classifier unavailable"
+    assert lines(env["FAKE_GH_CALLS"]) == []
