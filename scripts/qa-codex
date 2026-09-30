@@ -382,11 +382,19 @@ def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> st
     return None
 
 
-def uv_env_args(uv_cache: Path) -> list[str]:
-    """The flag that gives the commands Codex runs the per-run cache, offline (the profile blocks
-    PyPI). A config value, so the default filter of the inherited environment cannot drop it."""
-    return ["-c", f"shell_environment_policy.set={{UV_CACHE_DIR={json.dumps(str(uv_cache))},"
-                  f'UV_OFFLINE="1"}}']
+def codex_env_args(uv_cache: Path | None) -> list[str]:
+    """The one flag that sets the environment of every command Codex runs (the test command
+    included). A config value, so the default filter of the inherited environment cannot drop it.
+    Codex keeps only the last `-c` for a key, so all variables are in this one table.
+    `CI="1"` always (#67): dev tooling such as the TanStack devtools plugin of a Lovable frontend
+    runs `bun outdated` on dev-server start, which contacts the npm registry that the profile
+    blocks, unless `CI` is set. With `uv_cache` (uv is on PATH), also the per-run cache, offline
+    (the profile blocks PyPI). The pre-step commands never get `CI` from here."""
+    pairs = []
+    if uv_cache is not None:
+        pairs += [f"UV_CACHE_DIR={json.dumps(str(uv_cache))}", 'UV_OFFLINE="1"']
+    pairs.append('CI="1"')
+    return ["-c", "shell_environment_policy.set={" + ",".join(pairs) + "}"]
 
 
 def _remove_worktree(repo: Path, worktree: Path) -> None:
@@ -562,7 +570,7 @@ def _main(argv: list[str], sleep) -> int:
         error = pre_step(worktree, prestep_timeout, uv_cache)
         if error is not None:
             return post(UNAVAILABLE, error)
-        sandbox = QA_SANDBOX + (uv_env_args(uv_cache) if uv_cache is not None else [])
+        sandbox = QA_SANDBOX + codex_env_args(uv_cache)
         # newest_done returns the last comment whose first line is the DONE marker, so no later
         # comment can have the same body: the last equal comment is that one
         done_index = max(i for i, body in enumerate(issue.comments) if body == done)

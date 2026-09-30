@@ -1096,7 +1096,21 @@ def _codex_argv(env):
 
 
 def _env_flag(cache):
-    return f'shell_environment_policy.set={{UV_CACHE_DIR="{cache}",UV_OFFLINE="1"}}'
+    return f'shell_environment_policy.set={{UV_CACHE_DIR="{cache}",UV_OFFLINE="1",CI="1"}}'
+
+
+def _env_table(argv):
+    """The one `-c shell_environment_policy.set=…` argument of the codex argv, after the
+    QA_SANDBOX arguments, parsed with tomllib (#67)."""
+    import tomllib
+    found = [i for i, a in enumerate(argv) if "shell_environment_policy" in a]
+    assert len(found) == 1  # exactly one: a second `-c` for the same key would replace the first
+    (i,) = found
+    assert argv[i - 1] == "-c" and argv[i].startswith("shell_environment_policy.set=")
+    start = argv.index("--enable")
+    assert argv[start:start + len(qa.QA_SANDBOX)] == qa.QA_SANDBOX
+    assert i >= start + len(qa.QA_SANDBOX)  # after the QA_SANDBOX arguments
+    return tomllib.loads("v = " + argv[i].split("=", 1)[1])["v"]
 
 
 def test_uv_pre_step_fills_a_per_run_cache_and_codex_gets_it(qa_env):
@@ -1120,12 +1134,55 @@ def test_uv_pre_step_fills_a_per_run_cache_and_codex_gets_it(qa_env):
 def test_uv_env_flag_is_valid_toml():
     import tomllib
     cache = Path("/tmp/qa-codex-synthetic dir/uv-cache")
-    flag, value = qa.uv_env_args(cache)
+    flag, value = qa.codex_env_args(cache)
     assert flag == "-c"
     key, toml_value = value.split("=", 1)
     assert key == "shell_environment_policy.set"
     # codex takes a value that does not parse as TOML as a raw string, so it must parse
-    assert tomllib.loads("v = " + toml_value)["v"] == {"UV_CACHE_DIR": str(cache), "UV_OFFLINE": "1"}
+    assert tomllib.loads("v = " + toml_value)["v"] == {"UV_CACHE_DIR": str(cache), "UV_OFFLINE": "1", "CI": "1"}
+
+
+def test_env_flag_without_uv_holds_only_ci():
+    import tomllib
+    flag, value = qa.codex_env_args(None)
+    assert flag == "-c"
+    key, toml_value = value.split("=", 1)
+    assert key == "shell_environment_policy.set"
+    assert tomllib.loads("v = " + toml_value)["v"] == {"CI": "1"}
+    assert "UV_" not in value
+
+
+def test_codex_gets_ci_with_uv(qa_env):
+    """CI=1 stops dev tooling (the TanStack devtools plugin runs `bun outdated` on dev-server
+    start) from contacting the npm registry, which the sandbox blocks (#67)."""
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    argv = _codex_argv(qa_env)
+    cache = Path(argv[argv.index("-C") + 1]).parent / "uv-cache"
+    assert _env_table(argv) == {"UV_CACHE_DIR": str(cache), "UV_OFFLINE": "1", "CI": "1"}
+
+
+def test_codex_gets_ci_without_uv(qa_env, monkeypatch):
+    path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "uv").exists())
+    monkeypatch.setenv("PATH", path)
+    assert shutil.which("uv") is None
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    argv = _codex_argv(qa_env)
+    assert _env_table(argv) == {"CI": "1"}
+    assert not any("UV_" in a for a in argv)
+
+
+def test_pre_step_commands_get_no_ci(tmp_path, monkeypatch):
+    """CI is only in the `shell_environment_policy.set` table, never in a pre-step environment (#67)."""
+    monkeypatch.delenv("CI", raising=False)
+    seen = []
+    monkeypatch.setattr(qa, "_run_step", lambda cmd, cwd, timeout_s, env=None: seen.append((cmd, env)))
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    assert qa.pre_step(worktree, 5, tmp_path / "uv-cache") is None
+    assert [cmd for cmd, _ in seen] == [qa.UV_FILL]
+    assert all(env is None or "CI" not in env for _, env in seen)
 
 
 def test_uv_pre_step_keeps_the_sandbox_limits(qa_env):
@@ -1202,8 +1259,9 @@ def test_no_uv_runs_as_before(qa_env, monkeypatch):
     comment, _ = qa_env.run(["ok"])
     assert comment.splitlines()[0] == "## QA: PASS"
     assert [c["tool"] for c in qa_env.calls()] == ["codex"]
-    joined = " ".join(_codex_argv(qa_env))
-    assert "shell_environment_policy" not in joined and "UV_" not in joined
+    argv = _codex_argv(qa_env)
+    assert _env_table(argv) == {"CI": "1"}  # #67: the table holds CI="1" also without uv
+    assert not any("UV_" in a for a in argv)
 
 
 def test_uv_pre_step_runs_after_the_frontend_pre_step(frontend_env):
