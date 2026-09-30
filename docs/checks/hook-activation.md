@@ -24,7 +24,7 @@ If a launched role ends without a result comment, the issue is pending, and the 
 - Post `## Owner: RESUME` on the issue by hand, then run the PM again from step c1 and rebuild the state up to the failed step.
 - Or start again on a new throwaway issue.
 
-`## Owner: RESUME` must be the whole first line of the comment, with nothing else on that line. Post it outside Claude Code: on the GitHub web page or in a terminal. Inside Claude Code the guard denies it (`G9:`), because it cannot tell your prompt from an agent's call.
+`## Owner: RESUME` must be the whole first line of the comment, with nothing else on that line. Post it on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`.
 
 ## Set-up
 

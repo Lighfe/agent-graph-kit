@@ -96,7 +96,6 @@ What to do with a deny:
 - `G1` working tree not clean: stop the loop and ask the owner
 - `G1` command not in one of the two exact forms: rewrite the call in the exact form, or use the way around that the deny message names (a comment body from a file with `--body-file`, a commit message with `git commit -F`). This is not a return
 - `G9` comment command not in the exact form: write the comment body to a file with a literal absolute path and run exactly `gh issue comment <n> --body-file <path>` as the whole command. This is not a return
-- `G9` body file has a line that starts with `## Owner:`: only the owner posts `## Owner: …` comments. Do not post it; escalate the issue if you need the owner
 - `G6` verified SHA is not `HEAD`: run `qa-codex` again. This is not a return
 - `G7`: escalate the issue
 - Any other deny, including `G8` and `guard error`: escalate the issue with the deny message
@@ -109,7 +108,7 @@ Do not work around a deny in any other way.
 2. Remove the label `ready` and add the label `needs-owner`.
 3. Continue with the next issue (see "Before each issue").
 
-The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. The owner posts this comment outside Claude Code (on the GitHub web page or in a terminal): the guard (`G9`) denies a `## Owner: …` comment inside Claude Code. Never post `## Owner: …` yourself.
+The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
 
 Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command.
 
