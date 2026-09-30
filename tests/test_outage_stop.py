@@ -356,6 +356,38 @@ def test_main_crash_prints_nothing(io_env, monkeypatch):
     assert run_main(io_env["EVENT"]) == (0, "")
 
 
+def write_raw_comments(path, *comments):
+    """Issue #39 with comment dicts as given (to set or drop authorAssociation, #70)."""
+    Path(path).write_text(json.dumps({"number": 39, "state": "OPEN", "labels": [{"name": "ready"}],
+                                      "body": "Lane: default\n", "comments": list(comments)}))
+
+
+@pytest.mark.parametrize("association", ["NONE", "CONTRIBUTOR", "COLLABORATOR"])
+def test_stranger_newer_receipt_does_not_stop_the_outage_comment(io_env, association):
+    write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
+                       {"body": launch("pm", 2, call="ba9876543210"), "authorAssociation": association})
+    assert run_main(io_env["EVENT"]) == (0, "")
+    assert lines(io_env["FAKE_GH_LOG"]) == [
+        {"issue": 39, "body": f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: {REASON}"}]
+
+
+def test_owner_newer_receipt_takes_the_outage_comment(io_env):
+    # control: an owner's newer receipt is the newest receipt, so the stop comment is for it
+    write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
+                       {"body": launch("pm", 2, call="ba9876543210"), "authorAssociation": "OWNER"})
+    assert run_main(io_env["EVENT"]) == (0, "")
+    assert [c["body"].split("\n", 1)[0] for c in lines(io_env["FAKE_GH_LOG"])] == [
+        "## Launch stopped by outage: pm (attempt 2)"]
+
+
+def test_missing_author_data_posts_no_outage_comment(io_env, capsys):
+    write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
+                       {"body": "note", "authorAssociation": None})
+    assert run_main(io_env["EVENT"]) == (0, "")
+    assert lines(io_env["FAKE_GH_LOG"]) == []
+    assert "authorAssociation" in capsys.readouterr().err
+
+
 def test_script_never_outputs_decision_or_block():
     text = SCRIPT.read_text()
     for word in ('"decision"', "'decision'", '"block"', "'block'"):

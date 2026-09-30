@@ -257,6 +257,36 @@ def test_main_crash_prints_nothing(env, monkeypatch):
     assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
 
 
+def write_raw_comments(path, *comments):
+    """Issue #7 with comment dicts as given (to set or drop authorAssociation, #70)."""
+    path.write_text(json.dumps({"number": 7, "state": "OPEN", "labels": [{"name": "ready"}],
+                                "body": "Lane: default\n", "comments": list(comments)}))
+
+
+@pytest.mark.parametrize("association", ["NONE", "CONTRIBUTOR", "COLLABORATOR"])
+def test_stranger_newer_receipt_does_not_stop_the_not_started_comment(env, association):
+    write_raw_comments(Path(env["FAKE_GH_ISSUE"]),
+                       {"body": launch("pm", call=H), "authorAssociation": "OWNER"},
+                       {"body": launch("pm", 2, call=OTHER), "authorAssociation": association})
+    assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == [
+        {"issue": 7, "body": f"## Launch not started: pm (attempt 1)\nCall: {H}\nReason: {NO_VERDICT}"}]
+
+
+def test_owner_newer_receipt_stops_the_not_started_comment(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm", call=H), launch("pm", 2, call=OTHER))  # control
+    assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_missing_author_data_posts_nothing(env, capsys):
+    write_raw_comments(Path(env["FAKE_GH_ISSUE"]),
+                       {"body": launch("pm", call=H), "authorAssociation": "OWNER"}, {"body": "note"})
+    assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == []
+    assert "authorAssociation" in capsys.readouterr().err
+
+
 def test_main_never_outputs_retry():
     text = SCRIPT.read_text()
     assert '"retry"' not in text and "'retry'" not in text
