@@ -209,7 +209,7 @@ def env(tmp_path, monkeypatch):
 
 def write_issue(path, *comments):
     path.write_text(json.dumps({"number": 7, "state": "OPEN", "labels": [{"name": "ready"}],
-                                "body": "Lane: default\n", "comments": [{"body": c} for c in comments]}))
+                                "body": "Lane: default\n", "comments": [{"body": c, "authorAssociation": "OWNER"} for c in comments]}))
 
 
 def lines(path):

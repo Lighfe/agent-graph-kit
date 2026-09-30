@@ -62,7 +62,7 @@ if args[:2] == ["issue", "comment"] and args[3:] == ["--body-file", "-"]:
             text = f.read()
         try:
             data = json.loads(text)
-            data["comments"].append({"body": body})
+            data["comments"].append({"body": body, "authorAssociation": "OWNER"})
         except (ValueError, KeyError, TypeError, AttributeError):
             data = None  # a test issue that `gh issue view` must fail to parse: keep it as it is
         if data is not None:

@@ -133,7 +133,7 @@ class QaEnv:
         if comments is None:
             comments = ["## Launch: engineer (attempt 1)\nAgent: software-engineer", self.done()]
         data = {"number": 7, "state": "OPEN", "labels": [{"name": "ready"}], "body": body,
-                "comments": [{"body": c} for c in comments]}
+                "comments": [{"body": c, "authorAssociation": "OWNER"} for c in comments]}
         (self.tmp / "issue.json").write_text(json.dumps(data))
 
     def run(self, modes, argv=("ROLE=qa", "ISSUE=7")):

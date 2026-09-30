@@ -297,7 +297,7 @@ def io_env(tmp_path, monkeypatch):
     issue_file = tmp_path / "issue.json"
     issue_file.write_text(json.dumps({"number": 39, "state": "OPEN", "labels": [{"name": "ready"}],
                                       "body": "Lane: default\n",
-                                      "comments": [{"body": launch("pm", call=X)}]}))
+                                      "comments": [{"body": launch("pm", call=X), "authorAssociation": "OWNER"}]}))
     transcript = write_transcript(tmp_path / "agent.jsonl", user("ROLE=pm ISSUE=39\nYou are the PM."))
     values = {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_ISSUE": str(issue_file),
               "FAKE_GH_LOG": str(tmp_path / "comments.jsonl"), "FAKE_GH_CALLS": str(tmp_path / "calls.jsonl"),

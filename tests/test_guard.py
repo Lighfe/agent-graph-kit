@@ -447,7 +447,7 @@ def env(tmp_path):
 
 def write_issue(path, *comments, labels=("ready",), body="Lane: default\n"):
     path.write_text(json.dumps({"number": 7, "state": "OPEN", "labels": [{"name": n} for n in labels],
-                                "body": body, "comments": [{"body": c} for c in comments]}))
+                                "body": body, "comments": [{"body": c, "authorAssociation": "OWNER"} for c in comments]}))
 
 
 def lines(path):
