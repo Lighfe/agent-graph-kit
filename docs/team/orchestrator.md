@@ -79,7 +79,7 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 
 ## Hooks
 
-A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`. When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G8`) and what is missing. The deny message is the source of truth.
+A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`. When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G9`) and what is missing. The deny message is the source of truth.
 
 The hook comments are `## Launch: …`, `## Launch not started: …` and `## Launch stopped by outage: …`. They are not results.
 
@@ -95,6 +95,8 @@ What to do with a deny:
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner. Claude Code is denying the calls; the issue itself is fine
 - `G1` working tree not clean: stop the loop and ask the owner
 - `G1` command not in one of the two exact forms: rewrite the call in the exact form, or use the way around that the deny message names (a comment body from a file with `--body-file`, a commit message with `git commit -F`). This is not a return
+- `G9` comment command not in the exact form: write the comment body to a file with a literal absolute path and run exactly `gh issue comment <n> --body-file <path>` as the whole command. This is not a return
+- `G9` body file has a line that starts with `## Owner:`: only the owner posts `## Owner: …` comments. Do not post it; escalate the issue if you need the owner
 - `G6` verified SHA is not `HEAD`: run `qa-codex` again. This is not a return
 - `G7`: escalate the issue
 - Any other deny, including `G8` and `guard error`: escalate the issue with the deny message
@@ -107,7 +109,9 @@ Do not work around a deny in any other way.
 2. Remove the label `ready` and add the label `needs-owner`.
 3. Continue with the next issue (see "Before each issue").
 
-The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
+The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. The owner posts this comment outside Claude Code (on the GitHub web page or in a terminal): the guard (`G9`) denies a `## Owner: …` comment inside Claude Code. Never post `## Owner: …` yourself.
+
+Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command.
 
 ## Close an issue
 

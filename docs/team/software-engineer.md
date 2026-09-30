@@ -33,7 +33,7 @@ You review Lovable's work like a lead engineer reviews a junior's: check Lovable
 
 These rules above apply: note the base SHA, do not close the issue, commit, the result markers `## Engineer: DONE` and `## Engineer: BLOCKED`, the BLOCKED rule, and the final message. These do not apply: you do not write code or tests yourself (Lovable writes the code and its tests), and you do not use the test-driven-development skill.
 
-You have no `Edit` or `Write` tool. Write a comment body to a file outside the repo with Bash (for example under `$TMPDIR`) and post it with `gh issue comment <number> --body-file <file>`.
+You have no `Edit` or `Write` tool. Write a comment body to a file outside the repo with Bash, at a literal absolute path (for example `/tmp/engineer-comment-72.md`, not `$TMPDIR/…`), and post it with exactly `gh issue comment <number> --body-file <that literal path>` as the whole command. The guard (`G9`) denies any other form.
 
 1. Note the base SHA: `git rev-parse HEAD`, and the start time of the launch: `date -u +%s`. Read the Lovable project id from the line `Lovable project: <id>` in AGENTS.md. If the line is missing, post `## Engineer: BLOCKED`. Run `git submodule update --init frontend`
 2. Send Lovable the goal and the acceptance criteria in plain words

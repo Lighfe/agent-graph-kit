@@ -43,6 +43,8 @@ The clone has no commit yet. The first commit and push are in "Start".
 
 The repo must be owned by your GitHub user account, and `gh` must be logged in as that user. The hooks and `scripts/qa-codex` count only issue comments whose `authorAssociation` is `OWNER`; other comments are ignored, so in a public repo a stranger's comment cannot resume, pass, block or close an issue. A comment without author data is an error: the guard denies the call. The agents and hooks post with your `gh` login, so their comments count. Organization-owned repos are not supported yet: there, the owner's comments are not `OWNER` ([#75](https://github.com/Lighfe/agent-graph-kit/issues/75)).
 
+Because the agents use your login, the guard keeps them from posting your marker: inside Claude Code a comment command must be exactly `gh issue comment <n> --body-file <literal path>`, and the guard denies it (`G9:`) when a line of the body file starts with `## Owner:` ([#72](https://github.com/Lighfe/agent-graph-kit/issues/72)). The guard cannot tell your prompt from an agent's call. So you post `## Owner: RESUME` on the GitHub web page or in a terminal outside Claude Code.
+
 ### Copy
 
 Copy these files and folders from this repo into the new project, with the same paths:

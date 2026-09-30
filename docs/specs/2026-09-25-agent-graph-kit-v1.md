@@ -92,6 +92,7 @@ A hook runs before each tool call of the orchestrator and of its subagents. It g
 | Bash call of `qa-codex` | qa |
 | Bash call of `gh issue close <number>` | close |
 | Bash command that writes to `.claude/settings*.json` | – (always denied, G8) |
+| Bash comment command (mentions the words `gh` and `comment`) | – (G9: only the exact form, and no `## Owner:` line in the body file) |
 | Any other Bash command that contains the trigger (below) | – (always denied, G1) |
 
 All other calls pass. Examples: other subagent types, the Codex review skill, Bash commands without the trigger.
@@ -105,7 +106,22 @@ All other calls pass. Examples: other subagent types, the Codex review skill, Ba
 
   A match is not an allow on its own. The call then goes through the checks (5.4), the lock and the deadline (5.6, 5.7) and the launch comment (5.3), as every guarded call does. `qa-codex` runs with the Bash tool's background option (`run_in_background`), not with `&`.
 - **Deny.** Every other triggered command is denied with `G1:`, before any `gh` or `git` call. The deny reason names the two forms and the ways around: `git commit -F <file>` for a commit message, `gh … --body-file <file>` for a comment body, the Read or Grep tool instead of Bash, a path without the trigger word (`git add scripts/`), and `run_in_background` instead of `&`.
-- **No trigger.** A Bash command that is not triggered is not a guarded call. G8 (5.9) still applies to it, and G8 runs first for every Bash command.
+- **No trigger.** A Bash command that is not triggered is not a guarded call. G8 (5.9) and G9 (below) still apply to it, and G8 runs first for every Bash command.
+
+**Bash comment command (G9, [#72](https://github.com/Lighfe/agent-graph-kit/issues/72)).** The agents and hooks post with the owner's `gh` login (5.3), so `authorAssociation` cannot tell an agent from the owner. G9 keeps an agent from posting a `## Owner: …` marker through the prescribed comment call. It is a guard check on that call (P1), not a security boundary.
+
+- **Trigger.** A Bash command is a comment command when its original text, or its copy with every backslash-newline removed, contains the word `gh` (`\bgh\b`) and the word `comment` (`\bcomment\b`), both with `re.ASCII`, case-sensitive. `gh issue view 5 --comments` and `--json comments` are not triggered (`comments` is not the word `comment`).
+- **Order.** G8 runs first. G9 runs next, before the G1 trigger rule above. G9 reads no issue state and makes no `gh` or `git` call; it reads only the body file.
+- **Exact form.** A comment command passes G9 only if its original text matches with Python `re.fullmatch`:
+  `gh issue comment ([1-9][0-9]*) --body-file ([A-Za-z0-9_./+@][A-Za-z0-9_./+@-]*)[ \t]*\n?`
+  The path is a literal path: no variables, quotes, `~`, globs or `-` for stdin. Every other comment command is denied with `G9:`; the reason names the exact form and says to write the body to a file with a literal absolute path.
+- **Path.** A relative path is resolved against the event's `cwd`. A relative path without a string `cwd` in the event is denied. A path that does not exist, is not a regular file, or cannot be read as UTF-8 is denied (fail closed).
+- **Content check.** The body file is split into lines at `\n` (a trailing `\r` is removed). The call is denied with `G9:` when a line, after its leading whitespace and a leading BOM are removed, starts with `## Owner:` (case-sensitive). The reason says that only the owner posts `## Owner: …` comments, outside Claude Code. A mention inside a line (``the owner posts `## Owner: RESUME` ``) is allowed, so escalation and `## PM: NEEDS OWNER` comments can still name the marker.
+- **Pass.** A comment command that passes G9 goes on to the G1 trigger rule like any Bash command (a path with `close` or `qa-codex` in it is still denied by G1). If G1 does not trigger, the call passes with no output.
+- **Who is covered.** The guard runs for every Bash call in a Claude Code session of the repo and cannot tell whether the owner typed the prompt. So the owner posts `## Owner: RESUME` outside Claude Code: on the GitHub web page or in a terminal.
+- **Not started.** A comment command is not a launch, so the `PermissionDenied` hook (5.7) posts nothing for it, whether G9 passes or denies it.
+
+**Accepted false denies of G9.** The agent can always write the body to a file and use the exact form. Examples: `gh issue comment 5 --body "…"`, `-b …`, `-F <file>`, `--body-file=<file>`, `--body-file -` with a pipe or a here-document, `--edit-last`, `--body-file "$TMPDIR/body.md"`, `gh pr comment …`, a comment call joined with `&&`, `;` or `|`, `gh issue close 5 --comment x` (also no close form), and `git commit -m "… gh … comment …"` (way around: `git commit -F <file>`).
 
 **Accepted false denies.** The rule denies some commands that run no guarded call. This is accepted, because the agent can always use one of the ways around. Examples:
 
@@ -117,6 +133,8 @@ All other calls pass. Examples: other subagent types, the Codex review skill, Ba
 - `/usr/bin/gh issue close 5`, `command gh issue close 5`, `gh  issue close 5` (not the exact form)
 
 **Known limit (P1).** A text that does not literally contain the trigger is not recognized, for example variables (`$GH issue close 5`), `$'…'` escapes, brace expansion (`gh issue {close,} 5`), globs, quotes or backslashes inside a word (`gh issue cl''ose 5`, `gh issue c\lose 5`), and other letter case (`GH issue close 5`, which runs `gh` on a case-insensitive macOS file system). Calls outside the prescribed ones (`gh api`, `gh issue edit --state closed`) stay unchecked.
+
+**Known limit of G9 (P1).** G9 checks only the prescribed comment call. Other routes stay unchecked ([#76](https://github.com/Lighfe/agent-graph-kit/issues/76)): `gh api`, Codex inside the QA launcher, a body file changed after the check, and MCP tools with GitHub write access. Because the guard covers every Bash call in the repo's Claude Code sessions, the owner posts `## Owner: RESUME` outside Claude Code (on the GitHub web page or in a terminal).
 
 ### 5.2 Launch line
 
@@ -185,6 +203,7 @@ The **current result** of an issue is the newest valid result of any role, or an
 | G6 | close | the current result is `## QA: PASS` and its verified SHA is equal to `HEAD` |
 | G7 | PM or engineer | fewer than 3 returns (`## QA: FAIL`, `## QA: UNVERIFIABLE` or `## Engineer: BLOCKED`) after the newest `## Owner: RESUME` comment |
 | G8 | any Bash call | the command does not write to `.claude/settings*.json` (5.9). This check reads no issue state. When in doubt, it denies |
+| G9 | any Bash comment command (5.1) | the command is exactly `gh issue comment <n> --body-file <literal path>`, the body file can be read as UTF-8, and no line of it starts with `## Owner:` (after leading whitespace and a BOM). Runs after G8 and before the G1 trigger rule; reads only the body file, no issue state |
 
 Notes:
 
