@@ -182,7 +182,7 @@ DENIED = [
     "/usr/bin/gh issue close 5", "command gh issue close 5", "scripts/qa-codex ROLE=qa ISSUE=5 &",
     "gh issue close 5 > /dev/null", "gh issue close 5 && ls", "gh issue close 5\n\n", "gh issue close 0",
     "gh issue close 05", "gh issue close #5", "gh issue close 5 --reason other", "gh issue close 5 -R o/r",
-    "gh issue close 5 --comment x", "scripts/qa-codex ROLE=qa ISSUE=0", "scripts/qa-codex ISSUE=5 ROLE=qa",
+    "scripts/qa-codex ROLE=qa ISSUE=0", "scripts/qa-codex ISSUE=5 ROLE=qa",
     "./scripts/qa-codex ROLE=qa ISSUE=5", "uv run scripts/qa-codex ROLE=qa ISSUE=5", "cat scripts/qa-codex",
     "git add scripts/qa-codex", 'git commit -m "Fix gh close handling"', "gh issue view 5 | grep close",
     "gh pr close 5", "git commit -m \"$(cat <<'EOF'\nAdd qa-codex launcher\nEOF\n)\"",
@@ -247,7 +247,7 @@ def test_trigger_rule_uses_no_tokenizer(monkeypatch):
 
 
 @pytest.mark.parametrize("cmd", [
-    "ls", "gh issue view 5 --comments", "gh issue comment 5 --body-file /tmp/x.md", "gh issue list --state closed",
+    "ls", "gh issue view 5 --comments", "gh issue list --state closed",
     "", "ls scripts/", "which gh", "echo gh issue list", "git log --oneline -5", "uv run --with pytest pytest",
     "git commit -m 'Close the loop'", "git add scripts/", "echo x#y", "(( i++ ))", "echo $((1<<2))",
     "for (( i=0; i<3; i++ )); do echo $i; done", "exec {fd}>/dev/null", "echo $'\\c'", "function f { echo hi; }",
@@ -331,6 +331,150 @@ def test_g8_runs_before_guarded_classification():
 
 def test_g8_runs_before_the_trigger_rule():
     assert denied(bash("cp scripts/qa-codex .claude/settings.json")).startswith("G8:")
+
+
+# --- G9 comment command (issue #72) --------------------------------------------------------
+
+G9_FORM = "gh issue comment <n> --body-file <file>"
+
+
+def comment_event(cmd, cwd=None):
+    event = bash(cmd)
+    if cwd is not None:
+        event["cwd"] = str(cwd)
+    return event
+
+
+def body_file(tmp_path, content, name="body.md"):
+    path = tmp_path / name
+    path.write_bytes(content.encode() if isinstance(content, str) else content)
+    return path
+
+
+def decide_nothing_read(event):
+    """decide() with read_facts and post_comment that must not be called."""
+    def never(*args):
+        raise AssertionError("read_facts or post_comment was called")
+    return decide(event, never, never)
+
+
+@pytest.mark.parametrize("content", [
+    "## PM: GROOMED\n\nRewrote the issue body.\n",
+    "## PM: NEEDS OWNER\n\nThe owner posts `## Owner: RESUME`.\n",
+    "## Engineer: DONE\nThe owner posts `## Owner: RESUME` outside Claude Code.",
+])
+def test_g9_allowed_comment_passes_and_reads_nothing(tmp_path, content):
+    path = body_file(tmp_path, content)
+    assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
+    assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}\n")) is None
+
+
+def test_g9_relative_path_is_resolved_against_cwd(tmp_path):
+    body_file(tmp_path, "## PM: GROOMED\n")
+    assert decide_nothing_read(comment_event("gh issue comment 5 --body-file body.md", cwd=tmp_path)) is None
+    body_file(tmp_path, "## Owner: RESUME\n", name="owner.md")
+    reason = decide_nothing_read(comment_event("gh issue comment 5 --body-file owner.md", cwd=tmp_path))
+    assert reason.startswith("G9:") and "## Owner:" in reason
+
+
+@pytest.mark.parametrize("content", [
+    "## Owner: RESUME\nGo on.\n",
+    "## Owner: something else\n",
+    "## PM: GROOMED\n\n## Owner: RESUME\n",
+    "   ## Owner: RESUME\n",
+    "\t## Owner: RESUME\n",
+    "﻿## Owner: RESUME\n",
+    "## Owner: RESUME\r\nGo on.\r\n",
+    "## Owner:",
+])
+def test_g9_owner_marker_is_denied(tmp_path, content):
+    path = body_file(tmp_path, content)
+    reason = decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}"))
+    assert reason.startswith("G9:") and "## Owner:" in reason
+    assert "outside Claude Code" in reason
+
+
+@pytest.mark.parametrize("content", ["## owner: RESUME\n", "# Owner: RESUME\n", "x ## Owner: RESUME\n"])
+def test_g9_owner_check_is_case_sensitive_and_at_line_start(tmp_path, content):
+    path = body_file(tmp_path, content)
+    assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    'gh issue comment 5 --body "x"', "gh issue comment 5 -b x", "gh issue comment 5 -F /tmp/b.md",
+    "gh issue comment 5 --body-file=/tmp/b.md", "echo x | gh issue comment 5 --body-file -",
+    "gh issue comment 5 --body-file -", "gh issue comment 5 --body-file - <<'EOF'\n## PM: GROOMED\nEOF",
+    "gh issue comment 5 --edit-last --body-file /tmp/b.md", 'gh issue comment 5 --body-file "$TMPDIR/b.md"',
+    "gh issue comment 5 --body-file '/tmp/b.md'", "gh pr comment 5 --body-file /tmp/b.md",
+    "gh issue comment 5 --body-file /tmp/b.md && echo ok", "gh issue comment 5 --body-file /tmp/b.md; echo ok",
+    "gh issue comment 5 --body-file /tmp/b.md | cat", "gh issue com\\\nment 5 --body-file /tmp/b.md",
+    "gh issue comment 5 --body-file ~/b.md", "gh issue comment 5 --body-file /tmp/*.md",
+    "gh issue comment 05 --body-file /tmp/b.md", "gh  issue comment 5 --body-file /tmp/b.md",
+    'git commit -m "gh issue comment fix"', "gh issue close 5 --comment x",
+])
+def test_g9_other_comment_forms_are_denied(cmd):
+    reason = decide_nothing_read(comment_event(cmd))
+    assert reason.startswith("G9:") and G9_FORM in reason
+    assert "literal absolute path" in reason
+
+
+def test_g9_form_deny_even_when_the_file_exists(tmp_path):
+    path = body_file(tmp_path, "## PM: GROOMED\n")
+    reason = decide_nothing_read(comment_event(f"gh issue comment 5 --body-file={path}"))
+    assert reason.startswith("G9:") and G9_FORM in reason
+
+
+def test_g9_file_errors_are_denied(tmp_path):
+    missing = tmp_path / "missing.md"
+    bad = body_file(tmp_path, b"## PM: GROOMED\n\xff\xfe\n", name="bad.md")
+    for path in (missing, tmp_path, bad):
+        assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")).startswith("G9:")
+    reason = decide_nothing_read(comment_event("gh issue comment 5 --body-file body.md"))
+    assert reason.startswith("G9:") and "cwd" in reason
+
+
+def test_g9_relative_path_with_non_string_cwd_is_denied(tmp_path):
+    body_file(tmp_path, "## PM: GROOMED\n")
+    event = bash("gh issue comment 5 --body-file body.md")
+    event["cwd"] = 5
+    assert decide_nothing_read(event).startswith("G9:")
+
+
+@pytest.mark.parametrize("cmd", ["gh issue view 5 --comments", "gh issue view 5 --json comments",
+                                 "gh issue view 5 --json body,comments", "git commit -m comment",
+                                 "echo gh comments"])
+def test_g9_is_not_triggered_by_comments(cmd):
+    assert guard.g9(cmd, None) is None
+    assert decide_nothing_read(comment_event(cmd)) is None
+
+
+def test_g8_runs_before_g9():
+    assert denied(bash("gh issue comment 5 --body-file .claude/settings.local.json")).startswith("G8:")
+
+
+def test_g9_pass_goes_on_to_the_g1_trigger_rule(tmp_path):
+    folder = tmp_path / "close"
+    folder.mkdir()
+    path = body_file(folder, "## PM: GROOMED\n")
+    assert denied(bash(f"gh issue comment 5 --body-file {path}")).startswith("G1:")
+
+
+def test_g9_makes_no_gh_or_git_call(tmp_path, env):
+    path = body_file(tmp_path, "## PM: GROOMED\n")
+    code, out = run_guard(bash(f"gh issue comment 5 --body-file {path}"), env, FAKE_GH_FAIL="1")
+    assert (code, out) == (0, "")
+    assert lines(env["FAKE_GH_CALLS"]) == [] and lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_g9_owner_marker_through_main_prints_the_deny(tmp_path, env, monkeypatch):
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    path = body_file(tmp_path, "## Owner: RESUME\n")
+    stdout = io.StringIO()
+    event = bash(f"gh issue comment 7 --body-file {path}")
+    assert guard.main(stdin=io.StringIO(json.dumps(event)), stdout=stdout) == 0
+    assert deny_reason(stdout.getvalue()).startswith("G9:")
+    assert lines(env["FAKE_GH_CALLS"]) == [] and lines(env["FAKE_GH_LOG"]) == []
 
 
 # --- decide (in-process, fake I/O) ------------------------------------------------------------
@@ -664,8 +808,7 @@ def test_triggered_command_without_form_denies_before_any_gh_call(env, cmd):
     assert lines(env["FAKE_GH_CALLS"]) == []
 
 
-@pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue comment 5 --body-file /tmp/x.md",
-                                 "gh issue list --state closed"])
+@pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue list --state closed"])
 def test_command_without_trigger_prints_nothing_and_makes_no_gh_call(env, cmd):
     code, out = run_guard(bash(cmd), env)
     assert (code, out) == (0, "")

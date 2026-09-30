@@ -170,6 +170,16 @@ def test_4f_unguarded_close_and_bad_launch_read_nothing(e):
 # --- 4g: failures ---------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("content", ["## PM: GROOMED\n", "## Owner: RESUME\n"])
+def test_comment_command_posts_nothing(tmp_path, content):
+    """Issue #72: a comment command is not a launch, whether G9 passes or denies it."""
+    path = tmp_path / "body.md"
+    path.write_text(content)
+    fake = Fake(make_issue(launch("pm", call=H)))
+    fake.run(bash(f"gh issue comment 7 --body-file {path}"))
+    assert fake.events == [] and fake.posts == []
+
+
 def test_4g_missing_or_non_string_tool_use_id_reads_nothing():
     for tid in (None, 5, ["x"]):
         fake = Fake(make_issue(launch("pm", call=H)))
