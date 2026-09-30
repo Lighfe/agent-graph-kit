@@ -717,3 +717,84 @@ def test_bash_runs_the_hidden_close(cmd, tmp_path):
             "HOME": str(tmp_path), "GH_CONFIG_DIR": str(tmp_path / "gh"), "XDG_CONFIG_HOME": str(tmp_path)}
     subprocess.run(["bash", "-c", cmd], cwd=tmp_path, env=env, capture_output=True, timeout=30)
     assert any(c[:1] == ["issue"] and "close" in c[1:] for c in lines(calls))
+
+
+# --- PM: WAITING, the blocker read (issue #56) ------------------------------------------------
+
+WAITING_ON_3 = (launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: BLOCKED\nwhy",
+                launch("pm", 2), "## PM: WAITING\nWaiting on: #3")
+
+
+def test_decide_reads_blocker_only_after_waiting():
+    reads = []
+
+    def read_blocker(n):
+        reads.append(n)
+        return False
+
+    fio = FakeIO(issue(*WAITING_ON_3))
+    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment,
+                  read_blocker=read_blocker) is None
+    assert reads == [3]
+    assert fio.posts == [(7, "## Launch: pm (attempt 3)\nAgent: pm")]
+    reads.clear()
+    fio = FakeIO(issue(*WAITING_ON_3[:4]))
+    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment,
+                  read_blocker=read_blocker) is None
+    assert reads == []
+
+
+def test_decide_open_blocker_denies_and_posts_nothing():
+    fio = FakeIO(issue(*WAITING_ON_3))
+    reason = decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment, read_blocker=lambda n: True)
+    assert reason.startswith("G2:") and "#3" in reason and "open" in reason
+    assert fio.posts == []
+
+
+def test_decide_reads_blocker_inside_the_lock_before_the_post():
+    events = []
+
+    class Lock:
+        def __enter__(self):
+            events.append("lock")
+
+        def __exit__(self, *exc):
+            events.append("unlock")
+
+    decide(agent("pm", "ROLE=pm ISSUE=7"), lambda n: facts(issue(*WAITING_ON_3)),
+           lambda n, b: events.append("post"), lock=Lock,
+           read_blocker=lambda n: events.append("blocker") or False)
+    assert events == ["lock", "blocker", "post", "unlock"]
+
+
+def test_guard_views_the_closed_blocker_and_allows(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "CLOSED"}')
+    assert (code, out) == (0, "")
+    calls = lines(env["FAKE_GH_CALLS"])
+    assert ["issue", "view", "3", "--json", "state"] in calls
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 3)\nAgent: pm"}]
+
+
+def test_guard_denies_open_blocker(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "OPEN"}')
+    reason = deny_reason(out)
+    assert reason.startswith("G2:") and "#3" in reason and "open" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_makes_no_second_view_after_blocked(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3[:4])
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "CLOSED"}')
+    assert (code, out) == (0, "")
+    views = [c for c in lines(env["FAKE_GH_CALLS"]) if c[:2] == ["issue", "view"]]
+    assert len(views) == 1 and views[0][2] == "7"
+
+
+@pytest.mark.parametrize("states", ["{}", '{"3": "MERGED"}', '{"3": 5}'])
+def test_guard_failing_blocker_read_denies_with_guard_error(env, states):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES=states)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+    assert lines(env["FAKE_GH_LOG"]) == []

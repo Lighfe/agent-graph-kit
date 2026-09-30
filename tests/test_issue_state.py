@@ -5,6 +5,7 @@ another subprocess, and no test opens a socket (enforced by the autouse
 fixture below).
 """
 
+import re
 import socket
 import subprocess
 
@@ -17,6 +18,7 @@ from issue_state import (
     RESUME,
     Call,
     attempt,
+    blocker_to_read,
     check,
     commits_range,
     current_result,
@@ -28,6 +30,7 @@ from issue_state import (
     parse_issue,
     returns_since_resume,
     verified_sha,
+    waiting_on,
 )
 
 PM = Call(role="pm", agent="pm", issue=7)
@@ -63,7 +66,7 @@ def done(*more):
 
 def test_constants_match_spec():
     assert MARKERS == {
-        "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER"),
+        "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER", "## PM: WAITING"),
         "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
         "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID",
                "## QA: UNVERIFIABLE"),
@@ -1069,3 +1072,104 @@ def test_invalid_still_escalates(call, gid):
 def test_invalid_is_not_a_return():
     iss = done(launch("qa"), INVALID, launch("qa", 2), INVALID, launch("qa", 3), INVALID)
     assert returns_since_resume(iss) == 0
+
+
+# --- PM: WAITING (issue #56) -----------------------------------------------------
+
+
+WAITING = "## PM: WAITING"
+
+
+def waiting(*lines):
+    """Issue #7: groomed, engineer BLOCKED, then a PM launch with a WAITING result."""
+    body = "\n".join((WAITING, "The criterion needs issue #3 first.", *lines))
+    return groomed(launch("engineer"), "## Engineer: BLOCKED\nwhy", launch("pm", 2), body)
+
+
+def test_waiting_is_a_pm_result_and_not_pending():
+    iss = issue(launch("pm"), f"{WAITING}\nWaiting on: #3")
+    assert current_result(iss) == (1, WAITING)
+    assert not is_pending(iss)
+
+
+def test_waiting_on_reads_one_number():
+    assert waiting_on(f"{WAITING}\nWaiting on: #3") == 3
+    assert waiting_on(f"{WAITING}\nWaiting on: #3\r\nWaiting on: #3 ") == 3
+    assert waiting_on(f"{WAITING}\nno line") is None
+    assert waiting_on(f"{WAITING}\nWaiting on: #3\nWaiting on: #4") is None
+    assert waiting_on(f"{WAITING}\n```\nWaiting on: #3\n```") is None
+
+
+def test_blocker_to_read_only_for_pm_after_waiting():
+    iss = waiting("Waiting on: #3")
+    assert blocker_to_read(PM, facts(iss)) == 3
+    assert blocker_to_read(Call(role="pm", agent="a1", issue=7, continued=True), facts(iss)) == 3
+    assert blocker_to_read(ENG, facts(iss)) is None
+    assert blocker_to_read(QA, facts(iss)) is None
+    assert blocker_to_read(PM, facts(groomed(launch("engineer"), "## Engineer: BLOCKED"))) is None
+    # no read when the line is missing, conflicting or the issue's own number (G2 denies without it)
+    assert blocker_to_read(PM, facts(waiting())) is None
+    assert blocker_to_read(PM, facts(waiting("Waiting on: #3", "Waiting on: #4"))) is None
+    assert blocker_to_read(PM, facts(waiting("Waiting on: #7"))) is None
+    # no read when G1 denies anyway
+    assert blocker_to_read(PM, facts(iss, clean=False)) is None
+
+
+def test_g2_allows_pm_after_waiting_with_closed_blocker():
+    assert check(PM, facts(waiting("Waiting on: #3"), blocker_open=False)) is None
+    cont_pm = Call(role="pm", agent="a1", issue=7, continued=True)
+    assert check(cont_pm, facts(waiting("Waiting on: #3"), blocker_open=False)) is None
+
+
+def test_g2_denies_waiting_with_open_blocker():
+    msg = check(PM, facts(waiting("Waiting on: #3"), blocker_open=True))
+    assert msg.startswith("G2:") and "#3" in msg and "open" in msg, msg
+
+
+def test_g2_denies_waiting_without_line():
+    msg = check(PM, facts(waiting(), blocker_open=False))
+    assert msg.startswith("G2:") and "Waiting on:" in msg, msg
+
+
+def test_g2_denies_waiting_with_two_different_lines():
+    msg = check(PM, facts(waiting("Waiting on: #3", "Waiting on: #4"), blocker_open=False))
+    assert msg.startswith("G2:") and "Waiting on:" in msg, msg
+
+
+def test_g2_denies_waiting_on_own_number():
+    msg = check(PM, facts(waiting("Waiting on: #7"), blocker_open=False))
+    assert msg.startswith("G2:") and "#7" in msg, msg
+
+
+def test_g2_denies_waiting_when_blocker_state_unknown():
+    assert check(PM, facts(waiting("Waiting on: #3"))).startswith("G2:")
+
+
+@pytest.mark.parametrize("call", [PM, ENG, QA, QA_FALLBACK, CLOSE])
+def test_g1_denies_label_waiting(call):
+    for labels in (("waiting",), ("ready", "waiting")):
+        msg = check(call, facts(issue(labels=labels), blocker_open=False))
+        assert msg is not None and msg.startswith("G1:") and "waiting" in msg, msg
+
+
+def test_waiting_is_not_a_return_and_does_not_reset_the_count():
+    seq = done(launch("qa"), "## QA: FAIL",
+               launch("pm", 2), f"{WAITING}\nWaiting on: #3",
+               launch("engineer", 2), "## Engineer: BLOCKED")
+    assert returns_since_resume(seq) == 2
+    assert check(PM, facts(seq)) is None
+    third = issue(*seq.comments, launch("pm", 3), "## PM: GROOMED", launch("engineer", 3), "## Engineer: BLOCKED")
+    assert returns_since_resume(third) == 3
+    assert check(PM, facts(third)).startswith("G7:")
+
+
+def test_waiting_denies_engineer_and_qa():
+    iss = waiting("Waiting on: #3")
+    assert check(ENG, facts(iss, blocker_open=False)).startswith("G3:")
+    assert check(QA, facts(iss, blocker_open=False)).startswith("G4:")
+
+
+def test_issue_state_has_no_io_imports():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "issue_state.py").read_text()
+    assert not re.search(r"^import (subprocess|os)|^from (subprocess|os) ", text, re.MULTILINE)

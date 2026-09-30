@@ -24,5 +24,5 @@ def issue(*comments, labels=("ready",), body="Lane: default\n", open=True):
     return Issue(number=7, open=open, labels=frozenset(labels), body=body, comments=tuple(comments))
 
 
-def facts(iss, head=HEAD, clean=True):
-    return Facts(issue=iss, head=head, clean=clean)
+def facts(iss, head=HEAD, clean=True, blocker_open=None):
+    return Facts(issue=iss, head=head, clean=clean, blocker_open=blocker_open)

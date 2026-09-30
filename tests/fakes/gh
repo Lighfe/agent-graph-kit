@@ -7,6 +7,8 @@ FAKE_GH_CALLS=<path>     every call appends its argv as one JSON line
 FAKE_GH_FAIL=1           every call exits 1
 FAKE_GH_COMMENT_FAIL=1   only `gh issue comment` exits 1
 FAKE_GH_VIEW_FAIL=1      only `gh issue view` exits 1
+FAKE_GH_STATES=<json>    map of issue number to state, e.g. {"3": "CLOSED"}: `gh issue view N --json state`
+                         prints {"state": <value>}; a number not in the map exits 1
 FAKE_GH_SLEEP=<s>        sleep before answering
 FAKE_GH_STDERR=<text>    stderr of a failing call
 """
@@ -39,6 +41,12 @@ if env("FAKE_GH_FAIL") == "1":
 if args[:2] == ["issue", "view"]:
     if env("FAKE_GH_VIEW_FAIL") == "1":
         fail()
+    if args[3:] == ["--json", "state"]:
+        states = json.loads(env("FAKE_GH_STATES", "{}"))
+        if args[2] not in states:
+            fail()
+        sys.stdout.write(json.dumps({"state": states[args[2]]}))
+        sys.exit(0)
     with open(env("FAKE_GH_ISSUE"), encoding="utf-8") as f:
         sys.stdout.write(f.read())
     sys.exit(0)

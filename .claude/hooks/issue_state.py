@@ -14,14 +14,14 @@ from dataclasses import dataclass
 
 # role -> result markers (spec 5.5)
 MARKERS: dict[str, tuple[str, ...]] = {
-    "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER"),
+    "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER", "## PM: WAITING"),
     "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
     "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID", "## QA: UNVERIFIABLE"),
 }
 RESUME = "## Owner: RESUME"
 AGENT_LANE = {"default": "software-engineer", "frontend": "frontend-engineer"}
 
-GROOMED, NEEDS_OWNER = MARKERS["pm"]
+GROOMED, NEEDS_OWNER, WAITING = MARKERS["pm"]
 DONE, BLOCKED = MARKERS["engineer"]
 PASS, FAIL, UNAVAILABLE, INVALID, UNVERIFIABLE = MARKERS["qa"]
 # A return sends the issue back (spec 5.4 G7): FAIL and BLOCKED, and UNVERIFIABLE (a limit of the
@@ -40,6 +40,7 @@ REASON_MAX = 200
 _LANE = re.compile(r"^Lane: (\S+)$")
 _VERIFIED = re.compile(r"^Verified: (\S+)$")
 _COMMITS = re.compile(r"^Commits: (\S+?)\.\.(\S+)$")
+_WAITING_ON = re.compile(r"^Waiting on: #([1-9][0-9]*)$")
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class Facts:
     issue: Issue
     head: str  # full SHA of HEAD
     clean: bool  # git status --porcelain is empty
+    blocker_open: bool | None = None  # state of the Waiting on: issue, read only when blocker_to_read asks
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,12 @@ def verified_sha(body: str) -> str | None:
 def commits_range(body: str) -> tuple[str, str] | None:
     m = _value(body, _COMMITS)
     return (m[0], m[1]) if m else None
+
+
+def waiting_on(body: str) -> int | None:
+    """The issue number of the Waiting on: line, or None when it is missing or lines disagree."""
+    m = _value(body, _WAITING_ON)
+    return int(m[0]) if m else None
 
 
 # --- validity, pending, current result (spec 5.3) --------------------------------
@@ -305,6 +313,9 @@ def g1(call: Call, facts: Facts) -> str | None:
         return f"G1: facts are for issue #{iss.number}, expected issue #{call.issue}"
     if not iss.open:
         return f"G1: issue #{iss.number} is closed, expected an open issue"
+    if "waiting" in iss.labels:  # before the ready check: a waiting issue waits, also with ready
+        return (f"G1: issue #{iss.number} has the label waiting, expected no label waiting "
+                f"(the orchestrator adds ready again when the blocker is closed)")
     if "ready" not in iss.labels:
         return f"G1: issue #{iss.number} has no label ready, expected the label ready"
     for label in ("later", "needs-owner"):
@@ -323,13 +334,45 @@ def g1(call: Call, facts: Facts) -> str | None:
     return None
 
 
+def _waiting_blocker(facts: Facts) -> tuple[int | None, str | None]:
+    """(blocker, None) for a current WAITING result with a usable Waiting on: line, else (None, G2 reason)."""
+    i, _, _ = _current(facts.issue)
+    body = facts.issue.comments[i]
+    n = waiting_on(body)
+    if n is None:
+        count = len({line.rstrip() for line in _unfenced_lines(body) if line.startswith("Waiting on:")})
+        what = "no Waiting on: line" if count == 0 else "Waiting on: lines that disagree or are not #<N>"
+        return None, f"G2: current result is {WAITING} with {what}, expected exactly one line Waiting on: #<N>"
+    if n == facts.issue.number:
+        return None, (f"G2: current result is {WAITING} on #{n}, the issue itself, "
+                      f"expected Waiting on: another issue")
+    return n, None
+
+
+def blocker_to_read(call: Call, facts: Facts) -> int | None:
+    """The issue whose state the guard must read and pass in as facts.blocker_open: only for a PM
+    call whose current result is WAITING with a usable Waiting on: line, and only when G1 allows it."""
+    if call.role != "pm" or _current(facts.issue)[1] != WAITING or g1(call, facts) is not None:
+        return None
+    return _waiting_blocker(facts)[0]
+
+
 def g2(call: Call, facts: Facts) -> str | None:
     lines = _lines(facts.issue)
     _, marker, found = _current(facts.issue)
     if _newest_launch(lines) is None or marker in (BLOCKED, UNVERIFIABLE, RESUME):
         return None
-    return (f"G2: current result is {found}, "
-            f"expected no launch comment yet, {BLOCKED}, {UNVERIFIABLE} or {RESUME}")
+    if marker == WAITING:
+        n, reason = _waiting_blocker(facts)
+        if reason:
+            return reason
+        if facts.blocker_open is None:
+            return f"G2: current result is {WAITING} on #{n}, but the state of #{n} was not read"
+        if facts.blocker_open:
+            return f"G2: current result is {WAITING} on #{n}, and #{n} is open, expected #{n} closed"
+        return None
+    return (f"G2: current result is {found}, expected no launch comment yet, "
+            f"{BLOCKED}, {UNVERIFIABLE}, {RESUME} or {WAITING} with a closed blocker")
 
 
 def g3(call: Call, facts: Facts) -> str | None:
