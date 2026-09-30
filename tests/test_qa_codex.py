@@ -9,6 +9,7 @@ network (except the one marked test with the real `uv`, offline). All issue data
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -1262,6 +1263,60 @@ def test_no_uv_runs_as_before(qa_env, monkeypatch):
     argv = _codex_argv(qa_env)
     assert _env_table(argv) == {"CI": "1"}  # #67: the table holds CI="1" also without uv
     assert not any("UV_" in a for a in argv)
+
+
+def _without_uv(monkeypatch):
+    path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "uv").exists())
+    monkeypatch.setenv("PATH", path)
+    assert shutil.which("uv") is None
+
+
+def _outside_block(prompt):
+    """The prompt without the issue comment data block (#51)."""
+    lines = prompt.splitlines()
+    start = lines.index(qa.COMMENTS_BEGIN)
+    end = lines.index(qa.COMMENTS_END, start)
+    return "\n".join(lines[:start] + lines[end + 1:])
+
+
+def test_prompt_names_the_prefilled_uv_cache_with_uv(qa_env):
+    """#68: Codex must not point uv at a cache of its own; the prompt names the one it has."""
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    table = _env_table(_codex_argv(qa_env))
+    outside = _outside_block(_prompt(qa_env))
+    named = re.findall(r"`UV_CACHE_DIR=([^`]+)`", outside)
+    assert named and set(named) == {table["UV_CACHE_DIR"]}  # the same path as the environment
+    assert "`UV_OFFLINE=1`" in outside
+    assert qa.uv_rule(table["UV_CACHE_DIR"]) in outside
+    rule = qa.uv_rule(table["UV_CACHE_DIR"])
+    for text in ("already set in the environment of every command you run", "already holds pytest",
+                 "offline", "as given", "Do not set, change or unset `UV_CACHE_DIR` or `UV_OFFLINE`",
+                 "`export`", "`env`", "another cache folder",
+                 "report the command you ran and the error in `tests`"):
+        assert text in rule, text
+
+
+def test_prompt_has_no_uv_rule_without_uv(qa_env, monkeypatch):
+    _without_uv(monkeypatch)
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _env_table(_codex_argv(qa_env)) == {"CI": "1"}
+    outside = _outside_block(_prompt(qa_env))
+    assert "UV_CACHE_DIR" not in outside and "UV_OFFLINE" not in outside
+    assert "already holds pytest" not in outside and "another cache folder" not in outside
+
+
+def test_uv_cache_dir_in_a_done_comment_stays_in_the_data_block(qa_env, monkeypatch):
+    _without_uv(monkeypatch)
+    done = qa_env.done().replace("Commits:", "Ran with UV_CACHE_DIR=/tmp/synthetic-cache\n\nCommits:")
+    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer", done])
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    prompt = _prompt(qa_env)
+    assert "UV_CACHE_DIR" in _comment_block(prompt)  # the data block may hold it
+    outside = _outside_block(prompt)
+    assert "UV_CACHE_DIR" not in outside and "UV_OFFLINE" not in outside
 
 
 def test_uv_pre_step_runs_after_the_frontend_pre_step(frontend_env):
