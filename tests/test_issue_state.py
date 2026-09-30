@@ -1173,3 +1173,134 @@ def test_issue_state_has_no_io_imports():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "issue_state.py").read_text()
     assert not re.search(r"^import (subprocess|os)|^from (subprocess|os) ", text, re.MULTILINE)
+
+
+# --- launches stopped by an auto mode outage (issue #52) ------------------------
+
+from helpers import stopped  # noqa: E402
+from issue_state import NO_VERDICT_REASONS, is_no_verdict, outage_stop_comment  # noqa: E402
+
+
+def test_6a_39_case_stopped_receipt_is_not_pending():
+    iss = issue(launch("pm", call=X), stopped("pm", 1, X))
+    assert not is_pending(iss)
+    assert check(PM, facts(iss)) is None
+    assert attempt(iss, "pm") == 2
+
+
+def test_6b_stopped_engineer_after_fail_adds_no_return():
+    iss = done(launch("qa"), "## QA: FAIL", launch("engineer", 2, call=X), stopped("engineer", 2, X))
+    assert check(ENG, facts(iss)) is None
+    assert returns_since_resume(iss) == 1
+    assert attempt(iss, "engineer") == 3
+
+
+@pytest.mark.parametrize("marker", [
+    stopped("pm", 1, Y),  # other Call value
+    stopped("engineer", 1, X),  # other role
+    stopped("pm", 2, X),  # other attempt number
+    stopped("pm", 1, X, continued=True),  # continuation instead of attempt
+])
+def test_6c_stop_comment_that_matches_no_receipt_has_no_effect(marker):
+    assert is_pending(issue(launch("pm", call=X), marker))
+
+
+def test_stop_comment_before_the_receipt_or_without_call_line_has_no_effect():
+    assert is_pending(issue(stopped("pm", 1, X), launch("pm", call=X)))
+    assert is_pending(issue(launch("pm"), stopped("pm", 1, X)))
+
+
+def test_stop_comment_is_not_a_result_receipt_or_resume():
+    iss = issue(stopped("pm", 1, X))
+    assert not is_pending(iss) and current_result(iss) is None
+    assert attempt(iss, "pm") == 1
+    assert returns_since_resume(iss) == 0
+    assert check(PM, facts(iss)) is None
+
+
+def test_stopped_continuation_keeps_fail_as_current():
+    iss = done(launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1", call=X),
+               stopped("engineer", 2, X, continued=True))
+    assert not is_pending(iss)
+    assert current_result(iss)[1] == "## QA: FAIL"
+
+
+# criterion 7: two voided launches in a row, any mix
+
+
+def two_voided(first, second):
+    return issue(launch("pm", 1, call=X), first("pm", 1, X), launch("pm", 2, call=Y), second("pm", 2, Y))
+
+
+@pytest.mark.parametrize("first, second", [(stopped, stopped), (not_started, stopped), (stopped, not_started)])
+def test_7_g1_denies_after_two_voided_launches(first, second):
+    msg = check(PM, facts(two_voided(first, second)))
+    assert msg.startswith("G1: issue #7: the last 2 launches")
+    assert RESUME in msg
+
+
+def test_7_g1_allows_after_one_stopped_launch():
+    assert check(PM, facts(issue(launch("pm", 1, call=X), stopped("pm", 1, X)))) is None
+
+
+def test_7_g1_allows_two_stopped_followed_by_resume():
+    iss = issue(*two_voided(stopped, stopped).comments, RESUME)
+    assert check(PM, facts(iss)) is None
+
+
+def test_7_g1_two_stopped_does_not_deny_close():
+    assert not check(CLOSE, facts(two_voided(stopped, stopped))).startswith("G1:")
+
+
+# the no-verdict reasons (evidence rule)
+
+
+@pytest.mark.parametrize("reason", [
+    "Classifier unavailable",
+    "Classifier unavailable: synthetic detail\nsecond line",
+    "Auto mode could not evaluate this action and is blocking it for safety",
+    "Auto mode unavailable (synthetic)",
+])
+def test_no_verdict_reasons(reason):
+    assert is_no_verdict(reason)
+
+
+@pytest.mark.parametrize("reason", [
+    None, 5, "", "Permission denied", "[Auto-Mode Bypass] synthetic judgment",
+    "second line\nClassifier unavailable", " Classifier unavailable",
+])
+def test_other_reasons_are_no_evidence(reason):
+    assert not is_no_verdict(reason)
+
+
+def test_no_verdict_reasons_are_the_three_texts():
+    assert NO_VERDICT_REASONS == ("Classifier unavailable",
+                                  "Auto mode could not evaluate this action and is blocking it for safety",
+                                  "Auto mode unavailable")
+
+
+# outage_stop_comment (the pure decision of outage_stop.py)
+
+
+def test_outage_stop_comment_for_pending_receipt():
+    assert outage_stop_comment(issue(launch("pm", call=X)), "pm", "Classifier unavailable") == (
+        f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: Classifier unavailable")
+
+
+def test_outage_stop_comment_for_continuation_and_reason_cut():
+    iss = done(launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1", call=X))
+    assert outage_stop_comment(iss, "engineer", "r" * 300 + "\nx") == (
+        f"## Launch stopped by outage: engineer (continued, round 2)\nCall: {X}\nReason: " + "r" * 200)
+
+
+@pytest.mark.parametrize("comments, role", [
+    ((launch("pm"),), "pm"),  # no Call line
+    ((launch("pm", call=X),), "engineer"),  # other role
+    ((launch("pm", call=X), "## PM: GROOMED"), "pm"),  # valid result
+    ((launch("pm", call=X), RESUME), "pm"),  # resume after it
+    ((launch("pm", call=X), not_started("pm", 1, X)), "pm"),  # already not started
+    ((launch("pm", call=X), stopped("pm", 1, X)), "pm"),  # already stopped
+    ((), "pm"),  # no receipt
+])
+def test_outage_stop_comment_none(comments, role):
+    assert outage_stop_comment(issue(*comments), role, "Classifier unavailable") is None

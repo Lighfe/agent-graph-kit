@@ -26,3 +26,8 @@ def issue(*comments, labels=("ready",), body="Lane: default\n", open=True):
 
 def facts(iss, head=HEAD, clean=True, blocker_open=None):
     return Facts(issue=iss, head=head, clean=clean, blocker_open=blocker_open)
+
+
+def stopped(role, n, call, continued=False, reason="Classifier unavailable"):
+    kind = f"continued, round {n}" if continued else f"attempt {n}"
+    return f"## Launch stopped by outage: {role} ({kind})\nCall: {call}\nReason: {reason}"
