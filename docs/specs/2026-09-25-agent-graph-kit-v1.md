@@ -347,8 +347,8 @@ Flow:
 
 1. Note the base SHA of the main repo: `git rev-parse HEAD`.
 2. Send Lovable the goal and the acceptance criteria of the issue in plain words. Lovable does not know about issues or git.
-3. Wait until Lovable has finished and its commit is on GitHub (detection: the method in the S3 findings).
-4. If a criterion is not met, send Lovable a follow-up message. Repeat until all criteria are met, within the time budget (default 60 minutes per launch). When the budget runs out, post `## Engineer: BLOCKED` with what is missing.
+3. Wait until Lovable has finished and its commit is on GitHub (detection: the method in the S3 findings). If Lovable pauses (`awaiting_input`) on its plan step or with a question, review the plan against the goal, the criteria and the constraints of the issue, and answer with a follow-up message: "implement this plan", the corrections, or the answer from the issue. A new message supersedes the pause. Only a credit or spend-limit check-in needs the owner: post `## Engineer: BLOCKED`.
+4. Review the diff of Lovable's commit against the issue. If it does not fit, send Lovable a follow-up message. Repeat until all criteria are met, within the time budget (default 60 minutes per launch, follow-up messages after a pause included). When the budget runs out, post `## Engineer: BLOCKED` with what is missing.
 5. Fetch the submodule and pin it to the exact commit of Lovable's change (the merge commit whose `X-Lovable-Edit-ID` trailer matches the edit id; the method is in the S3 findings). Do not take the newest commit of the branch without this check. Commit the pointer update.
 6. Run the project test command, if one exists.
 7. Post `## Engineer: DONE` with `Commits: <base>..<head>`.
