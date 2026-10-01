@@ -27,7 +27,9 @@ When `## Engineer: BLOCKED` names a blocked criterion or asks a question about s
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later` and list it under out of scope with a link to that issue, so it is clear what was moved and where it went.
+If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went.
+
+When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
 
 ## After `## QA: UNVERIFIABLE`
 

@@ -162,6 +162,7 @@ Accepted risk (spec 6.1): the QA pre-step runs code from the repository outside 
 gh label create ready --description "Orchestrator may work on this issue" --color 1D76DB --force
 gh label create needs-owner --description "Escalated: the orchestrator waits for the owner" --color FBCA04 --force
 gh label create later --description "Out of scope for the current implementation" --color BFD4F2 --force
+gh label create stage --description "Stage issue: purpose and context for its sub-issues; never ready" --color 5319E7 --force
 ```
 
 `--force` updates a label that already exists instead of failing.

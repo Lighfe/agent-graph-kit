@@ -23,13 +23,14 @@ A groomed issue uses the template in `docs/task-template.md`.
 ## Intake
 
 - A superpowers plan in `docs/plans/` is turned into GitHub issues.
+- A plan becomes one stage issue (the form "Stage issue" in `docs/task-template.md`), with the plan tasks as its sub-issues.
 - Each plan task becomes one issue in `docs/task-template.md` format.
 - The owner adds the label `ready` to the issues that the loop may work on.
-- Issues with the label `later` are out of scope for the current implementation. Do not work on them.
+- Issues with the label `later` are out of scope for the current implementation. Do not work on them. A parked blocker of the active stage is promoted instead (see "Stages" below).
 
 ## Lifecycle
 
-1. Pick the next open issue with the label `ready` that has no open blocker (native "blocked by" links, see `docs/team/orchestrator.md`)
+1. Pick the next open issue with the label `ready` that has no open blocker (native "blocked by" links, see `docs/team/orchestrator.md`). While a stage is active, follow the pick order in "Stages" below
 2. PM grooms it
 3. Engineer implements it
 4. If the engineer reports a blocked criterion or asks a question (`## Engineer: BLOCKED`), back to step 2 with the engineer comment as input
@@ -37,9 +38,52 @@ A groomed issue uses the template in `docs/task-template.md`.
 6. On FAIL, back to step 3 with the QA comment as input
 7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
 8. On PASS, close the issue
-9. Repeat until every open issue with the label `ready` has an open blocker, or none is left
+9. Repeat until every open issue with the label `ready` has an open blocker, or none is left, or the active stage has ended
 
-Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker.
+Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below).
+
+## Stages
+
+A stage issue is an issue with the label `stage`. Its sub-issues (native GitHub sub-issues) are the work of the stage. A stage issue has the label `stage` and never the label `ready`, and it never goes through PM, engineer and QA. Its form is "Stage issue" in `docs/task-template.md`.
+
+The active stage is the open stage issue whose sub-issues have the label `ready`.
+
+### Pick order inside the active stage
+
+Read the stage's sub-issues:
+
+```
+gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state}'
+```
+
+Take the first entry in that list order that is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker. Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
+
+- The list order is the stored position on GitHub: the add order, then every reorder. New sub-issues go to the end of the list.
+- A closed sub-issue keeps its position, so the next pick is the first open, unblocked entry of the list.
+- The issue number is not used as a tie-break.
+- The order can be changed with `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). This is not a step of the loop.
+
+### `ready` issues outside the active stage
+
+- When no open `ready` issue has a parent with the label `stage`, no stage is active: the loop picks as before (any `ready` issue without an open blocker).
+- When the open `ready` issues have parents in two or more different stage issues, the loop stops and asks the owner.
+- A `ready` issue without a stage parent while a stage is active is not picked. The final report lists it.
+
+### Follow-ups and parked issues
+
+Follow-ups (filed by the PM, the orchestrator or the owner) get the label `later`, no parent issue, and a line `Source: <URL>` in the body: the URL of the issue, comment or review the follow-up came from.
+
+A parked issue is an open issue of this repo with the label `later` and no parent issue.
+
+### Promotion of a parked blocker
+
+When an open blocker of a sub-issue of the active stage is a parked issue (open, this repo, label `later`, no parent, no `needs-owner`), the orchestrator adds it to the active stage as a sub-issue and changes its labels from `later` to `ready`. The commands are in `docs/team/orchestrator.md`.
+
+An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the blocked issue waits as today.
+
+### Stage end
+
+When the active stage's sub-issue list is not empty and every entry is closed, the loop stops. A sub-issue with `needs-owner` is open, so the stage has not ended. The orchestrator does not close the stage issue and launches no stage review (both come in stage 2).
 
 ## Rules
 

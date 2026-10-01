@@ -1,5 +1,7 @@
 Lane: default
 <!-- default, or frontend (only in a repo with a Lovable submodule in frontend/) -->
+Source: <URL>
+<!-- optional, only for follow-ups: the URL of the issue, comment or review the follow-up came from -->
 
 ## Goal
 
@@ -19,3 +21,21 @@ One or two sentences on what should be true when this is done.
 - Files this should stay inside
 - Libraries to use
 - Guidelines to follow
+
+# Stage issue
+
+A stage issue has the label `stage` and never the label `ready`. It never goes through PM, engineer and QA. Its work is its sub-issues: each sub-issue is a task in the form above. A stage issue has no `Lane:` line. The default exit check is "Every sub-issue is closed and the purpose is met."
+
+```
+## Purpose
+
+One or two sentences on what the stage is for.
+
+## Background
+
+Context that every sub-issue needs: the plan, the spec, decisions taken.
+
+## Exit check
+
+Every sub-issue is closed and the purpose is met.
+```

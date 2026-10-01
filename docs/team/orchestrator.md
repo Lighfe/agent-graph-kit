@@ -23,6 +23,37 @@ The issue has an open blocker when an entry of the list has the state `open`, or
 
 Then pick: the pick skips every `ready` issue that has an open blocker, also when you decide that no `ready` issue is left. A `ready` issue whose current result (the newest result comment of any role) is `## PM: WAITING` and that has no open blocker goes back to the PM with the URL of that comment.
 
+### Pick inside a stage
+
+A stage issue has the label `stage`; its sub-issues are the work of the stage. The active stage is the open stage issue whose sub-issues have `ready` (see "Stages" in `docs/process.md`).
+
+- When no open `ready` issue has a parent with the label `stage`, no stage is active: pick as above (any `ready` issue without an open blocker).
+- When the open `ready` issues have parents in two or more different stage issues, stop the loop and ask the owner.
+- While a stage is active, a `ready` issue without a stage parent is not picked. List it in the final report.
+
+Pick order inside the active stage. Read the stage's sub-issues:
+
+```
+gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state}'
+```
+
+Take the first entry in that list order that is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker. Read the entries one by one; never count them with `--jq 'length'` on a paginated call. The list order is the stored position on GitHub (the add order, then every reorder). A closed sub-issue keeps its position. The issue number is not used as a tie-break. Changing the order (`gh api -X PATCH …/sub_issues/priority`) is not a step of the loop.
+
+### Promotion of a parked blocker
+
+A parked issue is an open issue of this repo with the label `later`, no parent issue and no `needs-owner`. When an open blocker of a sub-issue of the active stage is a parked issue, promote it:
+
+```
+gh issue edit <stage> --add-sub-issue <number>
+gh issue edit <number> --remove-label later --add-label ready
+```
+
+These label and sub-issue edits are allowed, although you do not edit issue bodies. Your final report names each promoted issue. An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the blocked issue waits as today.
+
+### Stage end
+
+When the active stage's sub-issue list is not empty and every entry is closed, the loop stops, and your final message says "Stage #<N> is finished". A sub-issue with `needs-owner` is open, so the stage has not ended. Do not close the stage issue and launch no stage review (both come in stage 2).
+
 ## Launch a subagent
 
 Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call.
@@ -140,5 +171,5 @@ For an escalated issue:
 
 For the whole loop:
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the loop stopped because `git status --porcelain` was not empty
-- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, and the reason if the loop stopped early
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed), or the loop stopped because `git status --porcelain` was not empty
+- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, "Stage #<N> is finished" when the active stage has ended, and the reason if the loop stopped early
