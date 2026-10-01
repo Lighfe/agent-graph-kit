@@ -70,6 +70,9 @@ LOCK_NAME = "agent-graph-kit-guard.lock"
 # The two blocker reads (issue #64, read form from the #95 report). {owner}/{repo} is filled in by gh.
 BLOCKERS_JQ = ".[] | {repo: .repository.full_name, number, state}"
 OPEN_BLOCKERS_JQ = ".issue_dependencies_summary.blocked_by"
+# The two sub-issue reads of a stage close (issue #97, read form from the #95 report, "Consequences").
+SUB_ISSUES_JQ = ".[] | {repo: .repository.full_name, number, state}"
+SUB_ISSUE_TOTAL_JQ = ".sub_issues_summary.total"
 
 # Bash rule of G1 (spec 5.1): what a real run is, the old word rule, and the only two forms a run may have.
 CLI_NAME = "gh"
@@ -795,12 +798,18 @@ def _no_blocker_reader(number: int):
     raise Deny(f"guard error: no reader for the blockers of issue #{number}")
 
 
+def _no_sub_issue_reader(number: int):
+    raise Deny(f"guard error: no reader for the sub-issues of issue #{number}")
+
+
 def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
-           read_blockers=_no_blocker_reader) -> str | None:
+           read_blockers=_no_blocker_reader, read_sub_issues=_no_sub_issue_reader) -> str | None:
     """Deny reason, or None to let the call through. `lock()` is held from reading
     the facts until the launch comment is posted (spec 5.7). The launch comment has a
     `Call:` line when the event has a string tool_use_id (spec 5.3). For every role launch
-    (not for close), `read_blockers(n)` gives (blocker list, open-blocker count) inside the lock."""
+    (not for close), `read_blockers(n)` gives (blocker list, open-blocker count) inside the lock.
+    Only for the close of a stage issue (issue #97), `read_sub_issues(n)` gives
+    (sub-issue list, sub_issues_summary.total) inside the lock."""
     try:
         call = classify(event)
     except Deny as e:
@@ -812,6 +821,9 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
         if call.role != "close":
             blockers, count = read_blockers(call.issue)
             facts = dataclasses.replace(facts, blockers=blockers, open_blockers=count)
+        elif issue_state.is_stage_close(call, facts.issue):
+            subs, total = read_sub_issues(call.issue)
+            facts = dataclasses.replace(facts, sub_issues=subs, sub_issue_total=total)
         reason = issue_state.check(call, facts)
         if reason:
             return reason
@@ -884,6 +896,23 @@ class _IO:
                        f"{_first_line(str(e))}") from None
         return blockers, count
 
+    def read_sub_issues(self, number: int) -> tuple[tuple[issue_state.SubIssue, ...], int]:
+        """(sub-issue list of all pages, sub_issues_summary.total) of stage issue `number` (issue #97);
+        output that cannot be read denies."""
+        path = f"repos/{{owner}}/{{repo}}/issues/{number}"
+        listed = self.run(["gh", "api", "--paginate", f"{path}/sub_issues", "--jq", SUB_ISSUES_JQ])
+        try:
+            subs = issue_state.parse_sub_issues(listed)
+        except ValueError as e:
+            raise Deny(f"guard error: the sub-issue list of #{number} cannot be read: {_first_line(str(e))}") from None
+        counted = self.run(["gh", "api", path, "--jq", SUB_ISSUE_TOTAL_JQ])
+        try:
+            total = issue_state.parse_sub_issue_total(counted)
+        except ValueError as e:
+            raise Deny(f"guard error: the sub-issue total of #{number} cannot be read: "
+                       f"{_first_line(str(e))}") from None
+        return subs, total
+
     def read_facts(self, number: int) -> issue_state.Facts:
         iss = self.read_issue(number)
         head = self.run(["git", "rev-parse", "HEAD"]).strip()
@@ -955,7 +984,7 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int:
             except ValueError as e:
                 raise Deny(f"guard error: the hook input is not valid JSON ({_first_line(str(e))})") from None
             reason = decide(event, io.read_facts, io.post_comment, lock=io.lock,
-                            read_blockers=io.read_blockers)
+                            read_blockers=io.read_blockers, read_sub_issues=io.read_sub_issues)
     except Deny as e:
         reason = str(e)
     except BaseException as e:  # a crash must never let the call through

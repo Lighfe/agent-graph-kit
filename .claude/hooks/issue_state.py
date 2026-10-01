@@ -73,6 +73,20 @@ class Blocker:
 
 
 @dataclass(frozen=True)
+class SubIssue:
+    """One sub-issue of a stage issue (issue #97)."""
+    repo: str  # owner/repo of the sub-issue, also another repo
+    number: int
+    state: str  # "open" or "closed" (any state reason, so "not planned" is closed)
+
+    def name(self) -> str:
+        return f"{self.repo}#{self.number}"
+
+
+STAGE = "stage"  # the label of a stage issue (stages spec, section 2)
+
+
+@dataclass(frozen=True)
 class Facts:
     issue: Issue
     head: str  # full SHA of HEAD
@@ -81,6 +95,10 @@ class Facts:
     # launch, never for close: the blocker list (all pages, a set) and the open-blocker count.
     blockers: tuple[Blocker, ...] | None = None
     open_blockers: int | None = None
+    # The two sub-issue reads (issue #97), None when not read. The guard reads them only for the
+    # close of a stage issue: the sub-issue list (all pages, a set) and sub_issues_summary.total.
+    sub_issues: tuple[SubIssue, ...] | None = None
+    sub_issue_total: int | None = None
 
 
 @dataclass(frozen=True)
@@ -204,34 +222,66 @@ def _decode_stream(text: str) -> list:
         values.append(value)
 
 
+def _parse_linked(text: str, what: str, kind):
+    """The linked issues (`kind`: Blocker or SubIssue) from `gh api --paginate … --jq
+    '.[] | {repo: .repository.full_name, number, state}'`: one object per item, all pages.
+    Counted per item; the order means nothing. ValueError for output that cannot be read."""
+    items = []
+    for item in _decode_stream(text):
+        if not isinstance(item, dict):
+            raise ValueError(f"{what} item is not an object (got {type(item).__name__})")
+        repo, number, state = item.get("repo"), item.get("number"), item.get("state")
+        if not isinstance(repo, str) or not re.fullmatch(r"[^/\s]+/[^/\s]+", repo):
+            raise ValueError(f"{what} item has no repo owner/name")
+        if type(number) is not int or number < 1:
+            raise ValueError(f"{what} item has no positive issue number")
+        if state not in ("open", "closed"):
+            raise ValueError(f"{what} item has no state open or closed")
+        items.append(kind(repo=repo, number=number, state=state))
+    return tuple(items)
+
+
+def _parse_count(text: str, what: str) -> int:
+    """One non-negative integer, as `gh api … --jq <field>` prints it, else ValueError."""
+    values = _decode_stream(text)
+    if len(values) != 1 or type(values[0]) is not int or values[0] < 0:
+        raise ValueError(f"the {what} is not one non-negative integer")
+    return values[0]
+
+
 def parse_blockers(text: str) -> tuple[Blocker, ...]:
     """The blockers from the output of
     `gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocked_by
     --jq '.[] | {repo: .repository.full_name, number, state}'`: one object per blocker, all pages.
     Counted per item; the order means nothing. ValueError for output that cannot be read."""
-    blockers = []
-    for item in _decode_stream(text):
-        if not isinstance(item, dict):
-            raise ValueError(f"blocker item is not an object (got {type(item).__name__})")
-        repo, number, state = item.get("repo"), item.get("number"), item.get("state")
-        if not isinstance(repo, str) or not re.fullmatch(r"[^/\s]+/[^/\s]+", repo):
-            raise ValueError("blocker item has no repo owner/name")
-        if type(number) is not int or number < 1:
-            raise ValueError("blocker item has no positive issue number")
-        if state not in ("open", "closed"):
-            raise ValueError("blocker item has no state open or closed")
-        blockers.append(Blocker(repo=repo, number=number, state=state))
-    return tuple(blockers)
+    return _parse_linked(text, "blocker", Blocker)
 
 
 def parse_open_blocker_count(text: str) -> int:
     """The open-blocker count from the output of
     `gh api repos/<owner>/<repo>/issues/<n> --jq .issue_dependencies_summary.blocked_by`.
     ValueError for anything but one non-negative integer."""
-    values = _decode_stream(text)
-    if len(values) != 1 or type(values[0]) is not int or values[0] < 0:
-        raise ValueError("the open-blocker count is not one non-negative integer")
-    return values[0]
+    return _parse_count(text, "open-blocker count")
+
+
+def parse_sub_issues(text: str) -> tuple[SubIssue, ...]:
+    """The sub-issues from the output of
+    `gh api --paginate repos/<owner>/<repo>/issues/<n>/sub_issues
+    --jq '.[] | {repo: .repository.full_name, number, state}'` (issue #97, read form of the #95 report):
+    one object per sub-issue, all pages. Counted per item; the order means nothing (#95).
+    ValueError for output that cannot be read."""
+    return _parse_linked(text, "sub-issue", SubIssue)
+
+
+def parse_sub_issue_total(text: str) -> int:
+    """The sub-issue count from the output of
+    `gh api repos/<owner>/<repo>/issues/<n> --jq .sub_issues_summary.total`.
+    ValueError for anything but one non-negative integer."""
+    return _parse_count(text, "sub-issue total")
+
+
+def is_stage(issue: Issue) -> bool:
+    return STAGE in issue.labels
 
 
 def open_blocker_problem(facts: Facts) -> str | None:
@@ -425,12 +475,21 @@ def _current(issue: Issue) -> tuple[int | None, str | None, str]:
     return cur[0], cur[1], cur[1]
 
 
-def g1(call: Call, facts: Facts) -> str | None:
+def g1_open(call: Call, facts: Facts) -> str | None:
+    """The part of G1 that also holds on the stage path of close: the facts are for this issue,
+    and the issue is open."""
     iss = facts.issue
     if iss.number != call.issue:
         return f"G1: facts are for issue #{iss.number}, expected issue #{call.issue}"
     if not iss.open:
         return f"G1: issue #{iss.number} is closed, expected an open issue"
+    return None
+
+
+def g1(call: Call, facts: Facts) -> str | None:
+    iss = facts.issue
+    if problem := g1_open(call, facts):
+        return problem
     if call.role != "close" and (problem := open_blocker_problem(facts)):  # close reads no blockers
         return (f"G1: issue #{iss.number}: {problem}, expected no open blocker "
                 f"(the orchestrator picks the issue when its blockers are closed)")
@@ -519,6 +578,28 @@ def g6(call: Call, facts: Facts) -> str | None:
     return None
 
 
+def g6_stage(call: Call, facts: Facts) -> str | None:
+    """G6 on the stage path of close (issue #97): instead of a QA PASS, every sub-issue is closed.
+    Denies when the reads are missing, when the list is empty, for every open sub-issue (by name,
+    in any order) and when sub_issues_summary.total is greater than the listed entries (a sub-issue
+    the login cannot see; the list may be incomplete, #95)."""
+    n = facts.issue.number
+    subs, total = facts.sub_issues, facts.sub_issue_total
+    if subs is None or total is None:
+        return f"G6: the sub-issues of stage issue #{n} were not read, expected both sub-issue reads"
+    expected = "expected at least one sub-issue, every sub-issue closed"
+    parts = []
+    if not subs:
+        parts.append(f"stage issue #{n} has no sub-issue")
+    names = sorted(sub.name() for sub in subs if sub.state == "open")
+    if names:
+        parts.append(f"open sub-issue {', '.join(names)}")
+    if total > len(subs):
+        parts.append(f"the sub-issue count is {total} but the list holds {len(subs)}, so the count shows "
+                     f"a sub-issue the list does not hold")
+    return f"G6: stage issue #{n}: {'; '.join(parts)}, {expected}" if parts else None
+
+
 def g7(call: Call, facts: Facts) -> str | None:
     n = returns_since_resume(facts.issue)
     if n < MAX_RETURNS:
@@ -546,8 +627,20 @@ def _role_checks(call: Call):
     return f"G1: unknown role {call.role or 'none'}, expected pm, engineer, qa or close"
 
 
+def is_stage_close(call: Call, issue: Issue) -> bool:
+    """The stage path (issue #97): a close of an issue with the label `stage`."""
+    return call.role == "close" and is_stage(issue)
+
+
 def check(call: Call, facts: Facts) -> str | None:
-    """None = allow, else the deny message. Never allows a call it cannot place."""
+    """None = allow, else the deny message. Never allows a call it cannot place.
+
+    The stage path (a close of an issue with the label `stage`, issue #97) checks only that the
+    issue is open and that every sub-issue is closed. The label ready, the labels later and
+    needs-owner, the clean tree, the pending check and the QA PASS with verified SHA (G6) do not
+    apply: a stage issue never gets ready and never goes through PM, engineer and QA."""
+    if is_stage_close(call, facts.issue):
+        return g1_open(call, facts) or g6_stage(call, facts)
     checks = _role_checks(call)
     if isinstance(checks, str):
         return checks
