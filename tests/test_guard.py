@@ -333,9 +333,9 @@ def test_g8_runs_before_the_trigger_rule():
     assert denied(bash("cp scripts/qa-codex .claude/settings.json")).startswith("G8:")
 
 
-# --- G9 comment command (issue #72) --------------------------------------------------------
-
-G9_FORM = "gh issue comment <n> --body-file <file>"
+# --- comment commands (G9 removed in issue #90) -------------------------------------------
+# A comment command is not checked for its form any more. It is not a guarded call,
+# so it passes unless G8 or the G1 trigger rule denies it. Nothing is read or posted.
 
 
 def comment_event(cmd, cwd=None):
@@ -363,7 +363,7 @@ def decide_nothing_read(event):
     "## PM: NEEDS OWNER\n\nThe owner posts `## Owner: RESUME`.\n",
     "## Engineer: DONE\nThe owner posts `## Owner: RESUME` outside Claude Code.",
 ])
-def test_g9_allowed_comment_passes_and_reads_nothing(tmp_path, content):
+def test_body_file_comment_passes_and_reads_nothing(tmp_path, content):
     path = body_file(tmp_path, content)
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}\n")) is None
@@ -373,16 +373,16 @@ def test_g9_allowed_comment_passes_and_reads_nothing(tmp_path, content):
     "## Owner: RESUME\nGo on.\n",
     "## PM: GROOMED\n\n## Owner: RESUME\n",
     "   ## Owner: RESUME\n",
-    "\ufeff## Owner: RESUME\n",
+    "﻿## Owner: RESUME\n",
 ])
-def test_g9_owner_marker_in_the_body_file_passes(tmp_path, content):
-    """Issue #78: G9 checks only the command text, so an ## Owner: line in the body passes."""
+def test_owner_marker_in_the_body_file_passes(tmp_path, content):
+    """Issue #78: the guard does not read the body, so an ## Owner: line in it passes."""
     path = body_file(tmp_path, content)
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
 
 
-def test_g9_does_not_read_or_resolve_the_body_file(tmp_path):
-    """Issue #78: a body file that is missing, a folder or not UTF-8 passes G9; gh itself fails later."""
+def test_comment_command_does_not_read_or_resolve_the_body_file(tmp_path):
+    """Issue #78: a body file that is missing, a folder or not UTF-8 passes; gh itself fails later."""
     missing = tmp_path / "missing.md"
     bad = body_file(tmp_path, b"## PM: GROOMED\n\xff\xfe\n", name="bad.md")
     for path in (missing, tmp_path, bad):
@@ -395,7 +395,8 @@ def test_g9_does_not_read_or_resolve_the_body_file(tmp_path):
         assert decide_nothing_read(event) is None
 
 
-@pytest.mark.parametrize("cmd", [
+# The 21 commands that G9 denied for their form before issue #90.
+FORMER_G9_DENIES = [
     'gh issue comment 5 --body "x"', "gh issue comment 5 -b x", "gh issue comment 5 -F /tmp/b.md",
     "gh issue comment 5 --body-file=/tmp/b.md", "echo x | gh issue comment 5 --body-file -",
     "gh issue comment 5 --body-file -", "gh issue comment 5 --body-file - <<'EOF'\n## PM: GROOMED\nEOF",
@@ -406,46 +407,68 @@ def test_g9_does_not_read_or_resolve_the_body_file(tmp_path):
     "gh issue comment 5 --body-file ~/b.md", "gh issue comment 5 --body-file /tmp/*.md",
     "gh issue comment 05 --body-file /tmp/b.md", "gh  issue comment 5 --body-file /tmp/b.md",
     'git commit -m "gh issue comment fix"', "gh issue close 5 --comment x",
-])
-def test_g9_other_comment_forms_are_denied(cmd):
-    reason = decide_nothing_read(comment_event(cmd))
-    assert reason.startswith("G9:") and G9_FORM in reason
-    assert "literal absolute path" in reason
+]
 
 
-def test_g9_form_deny_even_when_the_file_exists(tmp_path):
+def test_former_g9_list_is_complete():
+    assert len(FORMER_G9_DENIES) == 21
+    assert [c for c in FORMER_G9_DENIES if "close" in c] == ["gh issue close 5 --comment x"]
+
+
+@pytest.mark.parametrize("cmd", [c for c in FORMER_G9_DENIES if "close" not in c])
+def test_former_g9_denies_now_pass(cmd):
+    assert decide_nothing_read(comment_event(cmd)) is None
+
+
+def test_former_g9_deny_with_close_is_denied_by_g1():
+    assert decide_nothing_read(comment_event("gh issue close 5 --comment x")).startswith("G1:")
+
+
+def test_other_comment_form_passes_when_the_file_exists(tmp_path):
     path = body_file(tmp_path, "## PM: GROOMED\n")
-    reason = decide_nothing_read(comment_event(f"gh issue comment 5 --body-file={path}"))
-    assert reason.startswith("G9:") and G9_FORM in reason
+    assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file={path}")) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    # (a) a here-document that writes a body file naming the posting command
+    "cat > /tmp/b.md <<'EOF'\n## PM: GROOMED\n\nPost it with gh issue comment 5 --body-file /tmp/b.md.\nEOF",
+    # (b) a Python here-document that edits a Markdown file and names the posting command
+    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('docs/process.md')\n"
+    "p.write_text(p.read_text().replace('old', 'Post with gh issue comment <n> --body-file <path>.'))\nEOF",
+    # (c) a commit message with both former trigger words
+    'git commit -m "Explain how agents post with gh issue comment"',
+])
+def test_writing_text_that_names_the_comment_command_passes(cmd):
+    assert "close" not in cmd and "qa-codex" not in cmd and "settings" not in cmd
+    assert decide_nothing_read(comment_event(cmd)) is None
 
 
 @pytest.mark.parametrize("cmd", ["gh issue view 5 --comments", "gh issue view 5 --json comments",
                                  "gh issue view 5 --json body,comments", "git commit -m comment",
                                  "echo gh comments"])
-def test_g9_is_not_triggered_by_comments(cmd):
-    assert guard.g9(cmd, None) is None
+def test_reading_comments_passes(cmd):
     assert decide_nothing_read(comment_event(cmd)) is None
 
 
-def test_g8_runs_before_g9():
+def test_comment_body_file_in_settings_is_denied_with_g8():
     assert denied(bash("gh issue comment 5 --body-file .claude/settings.local.json")).startswith("G8:")
 
 
-def test_g9_pass_goes_on_to_the_g1_trigger_rule(tmp_path):
+def test_comment_body_file_in_a_close_folder_is_denied_with_g1(tmp_path):
     folder = tmp_path / "close"
     folder.mkdir()
     path = body_file(folder, "## PM: GROOMED\n")
     assert denied(bash(f"gh issue comment 5 --body-file {path}")).startswith("G1:")
 
 
-def test_g9_makes_no_gh_or_git_call(tmp_path, env):
+def test_comment_command_makes_no_gh_or_git_call(tmp_path, env):
     path = body_file(tmp_path, "## PM: GROOMED\n")
     code, out = run_guard(bash(f"gh issue comment 5 --body-file {path}"), env, FAKE_GH_FAIL="1")
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_CALLS"]) == [] and lines(env["FAKE_GH_LOG"]) == []
 
 
-def test_g9_owner_marker_through_main_is_allowed(tmp_path, env, monkeypatch):
+def test_owner_marker_comment_through_main_is_allowed(tmp_path, env, monkeypatch):
     """Issue #78: no deny output, exit code 0 and no gh call."""
     for key, value in env.items():
         monkeypatch.setenv(key, value)
