@@ -21,7 +21,7 @@ Definition of done:
 
 When you finish, post a comment on the issue. The first line is exactly `## PM: GROOMED`, `## PM: NEEDS OWNER` or `## PM: WAITING`.
 
-Post `## PM: WAITING` when the issue cannot go on until another open issue of this repo is closed, and nothing else needs the owner. Name the blocker in exactly one line `Waiting on: #<N>`. The orchestrator parks the issue and launches you again when #N is closed.
+Post `## PM: WAITING` when the issue cannot go on until one or more other open issues are closed, and nothing else needs the owner. A blocker may also be an issue in another repo. First add each blocker as a native "blocked by" link: `gh issue edit <n> --add-blocked-by <number or URL>` (a number for an issue of this repo, the issue URL for an issue in another repo; repeat it, or give several values separated by commas). Then post `## PM: WAITING`. In the comment, name the blockers for the reader (for example `octo/lib#12`) and say why the issue waits on them; the hooks read the links, not the comment. The issue keeps the label `ready`: the orchestrator skips it while it has an open blocker and launches you again when all its blockers are closed.
 
 When `## Engineer: BLOCKED` names a blocked criterion or asks a question about scope or intent, clarify the issue (criteria, constraints or out of scope) with the same intent, state the answer in your comment, and post `## PM: GROOMED`. Use `## PM: NEEDS OWNER` only when the answer changes the intent or scope, or needs a decision outside the issue (money, settings), and say what the owner must decide.
 
@@ -39,7 +39,7 @@ QA could not check some criteria because of a limit of its environment (a tool, 
   - changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope), or
   - needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`
 
-  If the criterion only waits on an open issue of this repo, post `## PM: WAITING` instead, not `## PM: NEEDS OWNER`
+  If the criterion only waits on other open issues (also in other repos), add them as blockers and post `## PM: WAITING` instead, not `## PM: NEEDS OWNER`
 
 Change only the criteria that QA marked `INVALID`. Do not change any other criterion.
 

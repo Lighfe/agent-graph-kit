@@ -29,7 +29,7 @@ A groomed issue uses the template in `docs/task-template.md`.
 
 ## Lifecycle
 
-1. Pick the next open issue with the label `ready`
+1. Pick the next open issue with the label `ready` that has no open blocker (native "blocked by" links, see `docs/team/orchestrator.md`)
 2. PM grooms it
 3. Engineer implements it
 4. If the engineer reports a blocked criterion or asks a question (`## Engineer: BLOCKED`), back to step 2 with the engineer comment as input
@@ -37,9 +37,9 @@ A groomed issue uses the template in `docs/task-template.md`.
 6. On FAIL, back to step 3 with the QA comment as input
 7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
 8. On PASS, close the issue
-9. Repeat until no open issue has the label `ready`
+9. Repeat until every open issue with the label `ready` has an open blocker, or none is left
 
-Stop condition for `/goal`: no open issue has the label `ready`.
+Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker.
 
 ## Rules
 
@@ -66,7 +66,7 @@ Stop condition for `/goal`: no open issue has the label `ready`.
 
 ## Escalation
 
-- The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue. Waiting on another open issue is not an owner decision either: the PM posts `## PM: WAITING`, the issue gets the label `waiting` instead of `ready`, and it goes back to the PM when the blocker is closed. Nor is a role agent stopped by an auto mode outage: a hook marks the launch, and the orchestrator launches the same step again.
+- The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue. An issue that must wait for other open issues is not an owner decision either: the PM adds them as native "blocked by" links (also issues in other repos) and posts `## PM: WAITING`. The issue keeps `ready`, the pick skips it while it has an open blocker, and it goes back to the PM when all its blockers are closed. Nor is a role agent stopped by an auto mode outage: a hook marks the launch, and the orchestrator launches the same step again.
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
 - The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
 - After `## Owner: RESUME`, the issue goes back to the PM. The PM applies the edits of the issue that this owner comment asks for (see `docs/team/pm.md`).

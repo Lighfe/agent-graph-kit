@@ -12,7 +12,16 @@ You are the main session. You coordinate the work on the issues. You follow the 
 
 Run `git status --porcelain`. The output must be empty. If it is not empty, stop the whole loop and ask the owner. Do not commit, stash or discard the changes.
 
-Then free the waiting issues, before every pick, also before you decide that no `ready` issue is left. List them with `gh issue list --state open --label waiting --json number --jq '.[].number'`. For each, read the `Waiting on: #<N>` line of the newest `## PM: ` comment (see "Read the result") and the blocker's state with `gh issue view <N> --json state --jq .state`. If it is `CLOSED`, remove `waiting` and add `ready`. If the line or the state cannot be read, escalate the waiting issue and remove `waiting`.
+Blockers are native "blocked by" links. An issue may have several, also in other repos. Read them for a `ready` issue with the same two reads as the hook:
+
+```
+gh api --paginate 'repos/{owner}/{repo}/issues/<number>/dependencies/blocked_by' --jq '.[] | {repo: .repository.full_name, number, state}'
+gh api 'repos/{owner}/{repo}/issues/<number>' --jq .issue_dependencies_summary.blocked_by
+```
+
+The issue has an open blocker when an entry of the list has the state `open`, or when the count is greater than the number of `open` entries (an open blocker the login cannot read). Count the entries one by one; the order of the list means nothing. If a read fails, escalate the issue.
+
+Then pick: the pick skips every `ready` issue that has an open blocker, also when you decide that no `ready` issue is left. A `ready` issue whose current result (the newest result comment of any role) is `## PM: WAITING` and that has no open blocker goes back to the PM with the URL of that comment.
 
 ## Launch a subagent
 
@@ -20,7 +29,7 @@ Launch a new subagent for each step. Each subagent starts with a fresh context. 
 
 | Step | Agent | Input |
 |---|---|---|
-| Groom | `pm` | The issue number. After `## Engineer: BLOCKED`, `## QA: UNVERIFIABLE`, or `## PM: WAITING` whose blocker is closed: also the URL of that comment |
+| Groom | `pm` | The issue number. After `## Engineer: BLOCKED`, `## QA: UNVERIFIABLE`, or `## PM: WAITING` with no open blocker: also the URL of that comment |
 | Implement | `software-engineer` for `Lane: default`, `frontend-engineer` for `Lane: frontend` | The issue number. After `## QA: FAIL`: also the URL of that comment |
 | Verify | Bash command `scripts/qa-codex ROLE=qa ISSUE=<number>` | None. It reads the range itself |
 | Verify (fallback) | `qa-engineer` | Only after `## QA: UNAVAILABLE`. The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
@@ -56,7 +65,7 @@ gh issue view <number> --json comments --jq '[.comments[] | {line: (.body | spli
 
 Use `## PM: `, `## Engineer: ` or `## QA: ` as the prefix. The line must be exactly one of the values in the table.
 
-Read the full comment only for `## PM: WAITING` (for the `Waiting on:` line), `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
+Read the full comment only for `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
 
 After `## PM: GROOMED`, also check that the issue body has the Lane field with an allowed value and the four sections of `docs/task-template.md`.
 
@@ -68,7 +77,7 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 |---|---|---|
 | PM | `## PM: GROOMED` | Launch the engineer |
 | PM | `## PM: NEEDS OWNER` | Escalate the issue |
-| PM | `## PM: WAITING` | If the comment has exactly one `Waiting on: #<N>` line naming another issue of this repo and that issue is open: remove `ready`, add `waiting`, and continue with the next issue, with no owner comment. Otherwise (line missing, own number, blocker already closed or not readable): escalate the issue |
+| PM | `## PM: WAITING` | Keep `ready` and add no label. Read the blockers (see "Before each issue"). If the issue has an open blocker: continue with the next issue, with no owner comment. Otherwise (no open blocker at that moment, or a read fails): escalate the issue |
 | Engineer | `## Engineer: DONE` | Launch QA |
 | Engineer | `## Engineer: BLOCKED` | Send back: launch the PM with the engineer comment (the hook denies at 3 returns) |
 | QA | `## QA: PASS` | Close the issue |
@@ -92,6 +101,7 @@ When a role agent ended and a hook posted `## Launch stopped by outage: <role> (
 What to do with a deny:
 
 - `G1` pending: escalate the issue
+- `G1` open blocker: the pick should have skipped the issue. Continue with the next issue. This is not a return
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner. Claude Code is denying the calls; the issue itself is fine
 - `G1` working tree not clean: stop the loop and ask the owner
 - `G1` command not in one of the two exact forms: rewrite the call in the exact form as the whole command (no operators, redirections, wrappers or substitutions; `run_in_background` instead of `&`), or use the way around that the deny message names (text that only mentions the words passes, for example a body written with a quoted here-document `<<'EOF'`). This is not a return
@@ -130,5 +140,5 @@ For an escalated issue:
 
 For the whole loop:
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue, or the loop stopped because `git status --porcelain` was not empty
-- Your final message lists the closed issues, the escalated issues with the reason, the issues still waiting with their blocker, and the reason if the loop stopped early
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the loop stopped because `git status --porcelain` was not empty
+- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, and the reason if the loop stopped early
