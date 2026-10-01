@@ -1243,3 +1243,178 @@ def test_stranger_pass_does_not_close_through_the_guard(env):
                        {"body": f"## QA: PASS\nVerified: {FAKE_HEAD}", "authorAssociation": "NONE"})
     code, out = run_guard(bash("gh issue " + "close 7"), env)
     assert code == 0 and deny_reason(out).startswith("G6:")
+
+
+# --- close of a stage issue (issue #97) -------------------------------------------------------
+
+SUB_ISSUES_PATH = "repos/{owner}/{repo}/issues/7/sub_issues"
+SUB_ISSUES_READ = ["api", "--paginate", SUB_ISSUES_PATH, "--jq", ".[] | {repo: .repository.full_name, number, state}"]
+TOTAL_READ = ["api", "repos/{owner}/{repo}/issues/7", "--jq", ".sub_issues_summary.total"]
+CLOSE_7 = bash("gh issue " + "close 7")
+
+
+def write_subs(env, subs=None, total=None, pages=None):
+    """FAKE_GH_API data: the sub-issue list (one page, or `pages`) and sub_issues_summary.total
+    (default: the number of listed entries)."""
+    pages = pages if pages is not None else [subs or []]
+    if total is None:
+        total = sum(len(p) for p in pages) if isinstance(pages, list) else 0
+    data = {"sub_issues": pages,
+            "issue": total if isinstance(total, str) else {"sub_issues_summary": {"total": total}}}
+    path = Path(env["FAKE_GH_ISSUE"]).with_name("api.json")
+    path.write_text(json.dumps(data))
+    env["FAKE_GH_API"] = str(path)
+
+
+def write_stage(env, *comments, labels=("stage",), state="OPEN"):
+    data = {"number": 7, "state": state, "labels": [{"name": n} for n in labels], "body": "Stage issue\n",
+            "comments": [{"body": c, "authorAssociation": "OWNER"} for c in comments]}
+    Path(env["FAKE_GH_ISSUE"]).write_text(json.dumps(data))
+
+
+def test_decide_reads_sub_issues_only_for_the_close_of_a_stage_issue():
+    reads = []
+
+    def read_subs(n):
+        reads.append(n)
+        return (issue_state.SubIssue("octo/kit", 3, "closed"),), 1
+
+    fio = FakeIO(issue(labels=("stage",)))
+    assert decide(CLOSE_7, fio.read_facts, fio.post_comment, read_blockers=fio.read_blockers,
+                  read_sub_issues=read_subs) is None
+    assert reads == [7] and fio.blocker_reads == [] and fio.posts == []
+    reads.clear()
+    fio = FakeIO(issue(launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}"))
+    assert decide(CLOSE_7, fio.read_facts, fio.post_comment, read_blockers=fio.read_blockers,
+                  read_sub_issues=read_subs) is None
+    assert reads == []
+    fio = FakeIO(issue(labels=("stage", "ready")))
+    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment,
+                  read_blockers=fio.read_blockers, read_sub_issues=read_subs) is None
+    assert reads == []  # a role launch is never on the stage path
+
+
+def test_decide_without_a_sub_issue_reader_denies_a_stage_close():
+    fio = FakeIO(issue(labels=("stage",)))
+    with pytest.raises(Deny) as e:
+        decide(CLOSE_7, fio.read_facts, fio.post_comment)
+    assert str(e.value).startswith("guard error")
+
+
+def test_decide_reads_sub_issues_inside_the_lock():
+    events = []
+
+    class Lock:
+        def __enter__(self):
+            events.append("lock")
+
+        def __exit__(self, *exc):
+            events.append("unlock")
+
+    decide(CLOSE_7, lambda n: events.append("read") or facts(issue(labels=("stage",))),
+           lambda n, b: events.append("post"), lock=Lock,
+           read_sub_issues=lambda n: events.append("subs") or ((issue_state.SubIssue("octo/kit", 3, "closed"),), 1))
+    assert events == ["lock", "read", "subs", "unlock"]
+
+
+def test_guard_stage_close_all_closed_is_allowed_without_ready_and_qa(env):
+    write_subs(env, [api_blocker(3), api_blocker(4)])
+    write_stage(env)
+    assert run_guard(CLOSE_7, env, FAKE_GIT_DIRTY="1") == (0, "")
+    calls = lines(env["FAKE_GH_CALLS"])
+    assert SUB_ISSUES_READ in calls and TOTAL_READ in calls
+    assert BLOCKERS_READ not in calls and COUNT_READ not in calls
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_stage_close_denies_an_open_sub_issue_and_names_it(env):
+    write_subs(env, [api_blocker(3), api_blocker(4, "open")])
+    write_stage(env)
+    reason = deny_reason(run_guard(CLOSE_7, env)[1])
+    assert reason.startswith("G6:") and "octo/kit#4" in reason and "octo/kit#3" not in reason
+
+
+def test_guard_stage_close_counts_not_planned_as_closed(env):
+    item = {**api_blocker(3), "state_reason": "not_planned"}
+    write_subs(env, [item, api_blocker(4)])
+    write_stage(env)
+    assert run_guard(CLOSE_7, env) == (0, "")
+
+
+def test_guard_stage_close_reads_a_sub_issue_in_another_repo(env):
+    write_subs(env, [api_blocker(3), api_blocker(9, "open", "other/lib")])
+    write_stage(env)
+    reason = deny_reason(run_guard(CLOSE_7, env)[1])
+    assert reason.startswith("G6:") and "other/lib#9" in reason
+    write_subs(env, [api_blocker(9, "closed", "other/lib")])
+    assert run_guard(CLOSE_7, env) == (0, "")
+
+
+def test_guard_stage_close_denies_no_sub_issue(env):
+    write_subs(env, [])
+    write_stage(env)
+    reason = deny_reason(run_guard(CLOSE_7, env)[1])
+    assert reason.startswith("G6:") and "no sub-issue" in reason
+
+
+def test_guard_stage_close_denies_a_total_greater_than_the_list(env):
+    write_subs(env, [api_blocker(3)], total=2)
+    write_stage(env)
+    reason = deny_reason(run_guard(CLOSE_7, env)[1])
+    assert reason.startswith("G6:") and "does not hold" in reason
+
+
+def test_guard_stage_close_denies_a_closed_stage_issue(env):
+    write_subs(env, [api_blocker(3)])
+    write_stage(env, state="CLOSED")
+    assert deny_reason(run_guard(CLOSE_7, env)[1]) == "G1: issue #7 is closed, expected an open issue"
+
+
+@pytest.mark.parametrize("key", ["sub_issues", "issue"])
+def test_guard_stage_close_failing_read_denies_with_guard_error(env, key):
+    write_subs(env, [api_blocker(3)])
+    write_stage(env)
+    code, out = run_guard(CLOSE_7, env, FAKE_GH_API_FAIL=key)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+
+
+@pytest.mark.parametrize("pages, total", [
+    ("not json\n", 0),
+    ([[{"number": 3, "state": "closed", "repository": {}}]], 1),
+    ([[{"number": "3", "state": "closed", "repository": {"full_name": "octo/kit"}}]], 1),
+    ([[{"number": 3, "state": "done", "repository": {"full_name": "octo/kit"}}]], 1),
+    ([[api_blocker(3)]], "null"),
+    ([[api_blocker(3)]], "-1"),
+    ([[api_blocker(3)]], "x"),
+])
+def test_guard_stage_close_output_it_cannot_read_denies_with_guard_error(env, pages, total):
+    write_subs(env, pages=pages, total=total)
+    write_stage(env)
+    code, out = run_guard(CLOSE_7, env)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+
+
+def test_guard_stage_close_reads_every_page(env):
+    write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
+    write_stage(env)
+    reason = deny_reason(run_guard(CLOSE_7, env)[1])
+    assert reason.startswith("G6:") and "octo/kit#31" in reason
+
+
+def test_fake_gh_without_paginate_shows_only_the_first_page_of_sub_issues(env):
+    """Control for the test above: the open sub-issue on page 2 is found only with --paginate."""
+    write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
+    args = [a for a in SUB_ISSUES_READ if a != "--paginate"]
+    out = subprocess.run(["gh", *args], env={**os.environ, **env}, capture_output=True, text=True).stdout
+    assert len(out.splitlines()) == 30 and '"number":31' not in out
+
+
+def test_guard_non_stage_close_is_unchanged_and_reads_no_sub_issues(env):
+    write_subs(env, [api_blocker(3, "open")])
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
+    assert run_guard(CLOSE_7, env) == (0, "")
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), "## QA: PASS\nVerified: " + "d" * 40)
+    assert deny_reason(run_guard(CLOSE_7, env)[1]).startswith("G6:")
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}", labels=())
+    assert deny_reason(run_guard(CLOSE_7, env)[1]).startswith("G1:")
+    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))

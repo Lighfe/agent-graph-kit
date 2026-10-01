@@ -1526,3 +1526,149 @@ def test_outage_stop_comment_keeps_trailing_whitespace_of_the_reason():
 ])
 def test_outage_stop_comment_none(comments, role):
     assert outage_stop_comment(issue(*comments), role, "Classifier unavailable") is None
+
+
+# --- close of a stage issue (issue #97) -------------------------------------------------
+
+
+from issue_state import SubIssue, parse_sub_issue_total, parse_sub_issues  # noqa: E402
+
+
+def s(number, state="closed", repo=REPO):
+    return SubIssue(repo=repo, number=number, state=state)
+
+
+def stage(*comments, labels=("stage",), open=True):
+    return issue(*comments, labels=labels, open=open)
+
+
+def stage_facts(iss=None, subs=(), total=None, **kw):
+    """Facts of a stage issue with the two sub-issue reads; `total` defaults to the listed entries."""
+    iss = iss if iss is not None else stage()
+    total = len(subs) if total is None and subs is not None else total
+    return facts(iss, blockers=None, open_blockers=None, sub_issues=subs, sub_issue_total=total, **kw)
+
+
+def test_parse_sub_issues_reads_one_object_per_line_in_any_order():
+    text = ('{"number":12,"repo":"other/lib","state":"closed"}\n'
+            '{"number":3,"repo":"octo/kit","state":"open"}\n')
+    assert parse_sub_issues(text) == (s(12, "closed", "other/lib"), s(3, "open"))
+    assert parse_sub_issues("") == ()
+
+
+@pytest.mark.parametrize("text", [
+    "not json", "[]", '{"number":3,"repo":"octo/kit"}', '{"number":"3","repo":"octo/kit","state":"open"}',
+    '{"number":3,"repo":"octo/kit","state":"OPEN"}', '{"number":3,"repo":5,"state":"open"}',
+    '{"number":3,"repo":null,"state":"closed"}', '{"number":3.0,"repo":"octo/kit","state":"open"}', '5',
+])
+def test_parse_sub_issues_rejects_output_it_cannot_read(text):
+    with pytest.raises(ValueError):
+        parse_sub_issues(text)
+
+
+def test_parse_sub_issue_total():
+    assert parse_sub_issue_total("0\n") == 0
+    assert parse_sub_issue_total("5") == 5
+
+
+@pytest.mark.parametrize("text", ["", "null", "-1", "x", "1.5", "true", '"2"', "1\n2"])
+def test_parse_sub_issue_total_rejects_output_it_cannot_read(text):
+    with pytest.raises(ValueError):
+        parse_sub_issue_total(text)
+
+
+def test_stage_close_allows_all_sub_issues_closed_without_ready_and_without_qa():
+    assert check(CLOSE, stage_facts(subs=(s(3), s(4)))) is None
+
+
+@pytest.mark.parametrize("kw", [{"clean": False}, {"head": OLD}])
+def test_stage_close_ignores_clean_tree_and_head(kw):
+    assert check(CLOSE, stage_facts(subs=(s(3),), **kw)) is None
+
+
+@pytest.mark.parametrize("labels", [("stage", "later"), ("stage", "needs-owner"), ("stage", "ready")])
+def test_stage_close_ignores_the_labels_of_the_loop(labels):
+    assert check(CLOSE, stage_facts(stage(labels=labels), subs=(s(3),))) is None
+
+
+def test_stage_close_ignores_a_pending_launch_and_a_qa_fail():
+    iss = stage(launch("pm"), "## PM: GROOMED", launch("qa"), "## QA: FAIL", launch("pm", 2))
+    assert check(CLOSE, stage_facts(iss, subs=(s(3),))) is None
+
+
+def test_stage_close_denies_an_open_sub_issue_and_names_it():
+    msg = check(CLOSE, stage_facts(subs=(s(3), s(4, "open"))))
+    assert msg.startswith("G6:") and "octo/kit#4" in msg and "octo/kit#3" not in msg, msg
+
+
+def test_stage_close_names_every_open_sub_issue_in_any_order():
+    for subs in ((s(5, "open"), s(2, "open", "other/lib")), (s(2, "open", "other/lib"), s(5, "open"))):
+        msg = check(CLOSE, stage_facts(subs=subs))
+        assert msg.startswith("G6:") and "octo/kit#5" in msg and "other/lib#2" in msg, msg
+
+
+def test_stage_close_counts_a_sub_issue_closed_as_not_planned():
+    # the read holds only the state; "not planned" is a state reason of the state closed
+    assert check(CLOSE, stage_facts(subs=(s(3, "closed"),))) is None
+
+
+def test_stage_close_reads_a_sub_issue_in_another_repo_the_same_way():
+    assert check(CLOSE, stage_facts(subs=(s(8, "closed", "other/lib"),))) is None
+    msg = check(CLOSE, stage_facts(subs=(s(8, "open", "other/lib"),)))
+    assert msg.startswith("G6:") and "other/lib#8" in msg, msg
+
+
+def test_stage_close_denies_no_sub_issue():
+    msg = check(CLOSE, stage_facts(subs=(), total=0))
+    assert msg.startswith("G6:") and "no sub-issue" in msg, msg
+
+
+@pytest.mark.parametrize("subs", [(), (s(3),), (s(3), s(4, "open"))])
+def test_stage_close_denies_a_total_greater_than_the_listed_entries(subs):
+    msg = check(CLOSE, stage_facts(subs=subs, total=len(subs) + 1))
+    assert msg.startswith("G6:") and "count" in msg and "does not hold" in msg, msg
+
+
+def test_stage_close_allows_a_total_lower_than_the_listed_entries():
+    assert check(CLOSE, stage_facts(subs=(s(3), s(4)), total=1)) is None
+
+
+def test_stage_close_sees_an_open_sub_issue_on_the_second_page():
+    subs = tuple(s(n) for n in range(1, 31)) + (s(31, "open"),)
+    msg = check(CLOSE, stage_facts(subs=subs))
+    assert msg.startswith("G6:") and "octo/kit#31" in msg, msg
+
+
+def test_stage_close_denies_a_closed_stage_issue_as_today():
+    msg = check(CLOSE, stage_facts(stage(open=False), subs=(s(3),)))
+    assert msg == "G1: issue #7 is closed, expected an open issue", msg
+
+
+def test_stage_close_denies_facts_of_another_issue():
+    msg = check(Call(role="close", agent="", issue=8), stage_facts(subs=(s(3),)))
+    assert msg.startswith("G1:") and "#8" in msg, msg
+
+
+@pytest.mark.parametrize("missing", [{"subs": None, "total": 0}, {"subs": (s(3),), "total": None}])
+def test_stage_close_denies_when_a_sub_issue_read_is_missing(missing):
+    iss = stage()
+    msg = check(CLOSE, facts(iss, blockers=None, open_blockers=None, sub_issues=missing["subs"],
+                             sub_issue_total=missing["total"]))
+    assert msg.startswith("G6:") and "not read" in msg, msg
+
+
+def test_non_stage_close_is_checked_as_today_and_ignores_sub_issues():
+    passed = issue(launch("qa"), f"## QA: PASS\nVerified: {HEAD}")
+    assert check(CLOSE, facts(passed, sub_issues=(s(3, "open"),), sub_issue_total=1)) is None
+    msg = check(CLOSE, facts(issue(launch("qa"), f"## QA: PASS\nVerified: {HEAD}", labels=()),
+                             sub_issues=(s(3),), sub_issue_total=1))
+    assert msg.startswith("G1:") and "ready" in msg, msg
+    msg = check(CLOSE, facts(issue(), sub_issues=(s(3),), sub_issue_total=1))
+    assert msg.startswith("G6:") and "QA: PASS" in msg, msg
+
+
+@pytest.mark.parametrize("call", [PM, ENG, QA, QA_FALLBACK])
+def test_role_launches_on_a_stage_issue_are_not_on_the_stage_path(call):
+    # a stage issue never gets ready: every role launch is denied by G1 as today
+    msg = check(call, facts(stage()))
+    assert msg.startswith("G1:") and "ready" in msg, msg

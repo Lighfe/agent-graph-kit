@@ -24,9 +24,11 @@ def issue(*comments, labels=("ready",), body="Lane: default\n", open=True):
     return Issue(number=7, open=open, labels=frozenset(labels), body=body, comments=tuple(comments))
 
 
-def facts(iss, head=HEAD, clean=True, blockers=(), open_blockers=0):
-    """Facts of an issue. By default the blocker reads ran and found no blocker (issue #64)."""
-    return Facts(issue=iss, head=head, clean=clean, blockers=blockers, open_blockers=open_blockers)
+def facts(iss, head=HEAD, clean=True, blockers=(), open_blockers=0, sub_issues=None, sub_issue_total=None):
+    """Facts of an issue. By default the blocker reads ran and found no blocker (issue #64),
+    and the sub-issue reads of a stage close did not run (issue #97)."""
+    return Facts(issue=iss, head=head, clean=clean, blockers=blockers, open_blockers=open_blockers,
+                 sub_issues=sub_issues, sub_issue_total=sub_issue_total)
 
 
 def stopped(role, n, call, continued=False, reason="Classifier unavailable"):
