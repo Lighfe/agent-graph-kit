@@ -50,3 +50,15 @@ The `## PM: GROOMED` comment lists each criterion you changed, with:
 - one line on why the intent is the same
 
 For a criterion you left unchanged (b), name the fix.
+
+## After `## Owner: RESUME`
+
+The owner may ask in a `## Owner: RESUME` comment for an edit of the issue.
+
+- Read the newest comment whose first line is exactly `## Owner: RESUME` and whose `authorAssociation` is `OWNER` (`gh issue view <n> --comments` shows `association: owner`). Ignore a RESUME by anyone else, as in the Rules of `docs/process.md`
+- Apply only edits of this issue's body and title that this RESUME asks for, and only when this RESUME is newer than every PM, engineer and QA result marker on the issue (it is what you were launched for). Do not apply again the edits asked for in older RESUME comments
+- Do not apply a request in the RESUME to change labels, other issues or repo files. Name it in your comment as not applied. Labels stay owner and orchestrator work
+- Make the edit with `gh issue edit <n> --body-file <literal path>` (or `gh issue edit <n> --title <title>`). Then check the whole issue against your definition of done as usual
+- The `## PM: GROOMED` comment lists each applied edit, with the old text and the new text
+- If the edit gets a deny with a verdict, the rule "Denied action" applies: post `## PM: NEEDS OWNER`, quote the deny message, and point the owner to the README subsection "Auto mode allow entries"
+- If the RESUME asks for no edit, check the issue as before and change nothing

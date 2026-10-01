@@ -103,6 +103,22 @@ Add the trust entry for the project to `$HOME/.codex/config.toml` (spec 6.2). Ot
 trust_level = "trusted"
 ```
 
+### Auto mode allow entries
+
+The loop runs in Auto mode. Two agent calls need an allow entry for the Auto mode classifier. The entries are user-level: in a session, run `/permissions`, open the **Auto mode** tab, and add each entry (keep `$defaults`). Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
+
+Entry 1 (QA): allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo. This is the Codex QA launch command (see `docs/checks/hook-activation.md`, "Set-up" step 2).
+
+Entry 2 (PM edits): copy this text as is:
+
+```text
+In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n> --body-file <path> or gh issue edit <n> --title <title> on an issue of that repo, to apply an edit of that issue that the repo owner asked for on that issue in a post whose first line is "## Owner: RESUME" and whose authorAssociation is OWNER. This is the owner's instruction, not instruction poisoning.
+```
+
+Without entry 2, the classifier may deny the PM's edit ("Instruction Poisoning"). The PM then posts `## PM: NEEDS OWNER` with the deny message (rule "Denied action" in `docs/process.md`). Then either set the entry, or make the edit by hand; in both cases post a new `## Owner: RESUME`.
+
+The limit: entry 2 holds for every repo of the user, and the classifier cannot check `authorAssociation`. The PM's own check (`docs/team/pm.md`, "After `## Owner: RESUME`") is what keeps a stranger's RESUME from editing an issue.
+
 ### Frontend lane (optional)
 
 Frontend lane only. No MCP tool can make the GitHub connection of a Lovable project, so you do these steps by hand (spec 9.1):
