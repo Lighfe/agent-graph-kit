@@ -9,7 +9,7 @@ Short answer:
 - **Order read: yes.** `gh issue view <n> --json subIssues`, `gh issue view <n>` (plain) and `gh api .../sub_issues` all return the sub-issues in the same order. That order is the add order at first and follows every reorder. Closing a sub-issue does not move it.
 - **Reorder: yes, with `gh api` only.** `PATCH .../sub_issues/priority` with `before_id` or `after_id` moves a sub-issue to a given position. `gh issue edit` has no reorder flag.
 - **Paging: needed.** The REST list endpoints return one page (default 30, max 100). Without `--paginate`, a list longer than one page is cut off with no warning in the body.
-- **Blocker in a repo the login cannot see: not observed and not documented.**
+- **Blocker in a repo the login cannot see: not observed, not documented.** Do not assume a blocker list is complete.
 - **Blocker lists have no stable order.** The REST form and the `--json blockedBy` form returned the same three blockers in two different orders, neither by number nor by add order.
 
 ## Tool version
@@ -263,13 +263,27 @@ Neither is the number order nor the order given in `--add-blocked-by 110,111,112
 
 ## Case 4: a blocker in a repo the login cannot see
 
-**Not observed.** The constraints of #95 allow links only between test issues in this repo, and the `gh` login cannot create a link to an issue it cannot see. So no such link was made.
+**Result: not observed, not documented.**
 
-**Not documented** either, as far as I found. The pages checked:
+**Not observed.** The constraints of #95 allow issues and links only in this repo, which is public, so no blocker in a repo the login cannot see was made. Observing one would need a test issue in a private repo, a cross-repo link and a read with a login that lacks access to that repo; that is outside this spike.
 
-- https://docs.github.com/en/rest/issues/issue-dependencies (REST): the status codes of the list call are "200 - OK", "301 - Moved permanently", "404 - Resource not found", "410 - Gone". Nothing on hidden blockers.
+**Not documented.** The pages checked; none of them says whether a blocker the reader cannot see is left out, returned in part, or counted:
+
+- https://docs.github.com/en/rest/issues/issue-dependencies (REST, issue dependencies): the status codes of the list call are "200 - OK", "301 - Moved permanently", "404 - Resource not found", "410 - Gone". Nothing on hidden blockers.
+- https://docs.github.com/en/rest/issues/sub-issues (REST, sub-issues): the only access sentence is "The sub-issue must belong to the same repository owner as the parent issue" (body parameter `sub_issue_id` of "Add sub-issue").
 - https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-issue-dependencies (user docs): nothing on access to the blocking issue.
+- https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues (user docs): nothing on access to the linked issue.
 - https://github.blog/changelog/2025-08-21-dependencies-on-issues/ (changelog): nothing on cross-repo access.
+- https://github.com/orgs/community/discussions/165749 (feedback discussion for issue dependencies): nothing on hidden blockers.
+
+The GraphQL schema descriptions, read with an introspection query:
+
+```
+$ gh api graphql -f query='{ issue: __type(name: "Issue") { fields { name description } } summary: __type(name: "IssueDependenciesSummary") { fields { name description } } }' --jq '{blockedBy: [.data.issue.fields[] | select(.name == "blockedBy") | .description], totalBlockedBy: [.data.summary.fields[] | select(.name == "totalBlockedBy") | .description]}'
+{"blockedBy":["A list of issues that are blocking this issue."],"totalBlockedBy":["Total count of issues this issue is blocked by (open and closed)"]}
+```
+
+So `Issue.blockedBy` is "A list of issues that are blocking this issue." and `IssueDependenciesSummary.totalBlockedBy` is "Total count of issues this issue is blocked by (open and closed)". Neither says whether issues the reader cannot see are left out of the list or counted in the total.
 
 What is known from the earlier spike `docs/research/spike-github-issue-dependencies.md` (#80): a blocker in another repo the login **can** see is returned with `repository.full_name`, number and state. Whether a hidden blocker is left out, returned in part, or counted in `totalCount` stays open. A reader must therefore not treat "no blocker returned" as proof that no blocker exists when cross-repo links to private repos are possible.
 
@@ -336,13 +350,14 @@ All five test issues are closed, each with the label `later`, and none has a blo
 - Read form: `gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocked_by --jq '.[] | {repo: .repository.full_name, number, state}'`. It gives repo, number and state per blocker in one call.
 - Always use `--paginate`: up to 50 blockers are allowed, a page holds 30 by default. Count per item or after `--slurp`, never with `--jq 'length'` on a paginated call.
 - Order rule: none. Blockers are a set; their order differs between read forms. A check asks only "is any blocker open".
-- A hidden blocker in a repo the login cannot see is not covered by this spike. Treat cross-repo blockers in private repos as an open question.
+- Hidden blockers (Case 4, not observed, not documented): #64 and #97 must not assume the blocker list is complete. An empty or all-closed blocker list is not proof that no open blocker exists when cross-repo links to private repos are possible.
 
 **#97 (The close check allows a finished stage issue)**
 
 - Read form: `gh api --paginate repos/<owner>/<repo>/issues/<n>/sub_issues --jq '.[] | {number, state}'`, and the stage issue is finished only when that list is not empty and every entry is `closed`. Use `--paginate`: up to 100 sub-issues per parent, a page holds 30 by default.
 - `gh issue view <n> --json subIssues` returns the same list and order with `totalCount`; if a hook uses it, it should check that the number of nodes equals `totalCount`. This spike did not test more than 3 sub-issues on that form.
 - Order rule: none. The close check does not depend on order.
+- Hidden blockers: the same unknown applies (see the line under #64). If #97 reads blockers, it must not treat the list as complete.
 
 **#96 (Stage issues and parked follow-ups in the process)**
 
