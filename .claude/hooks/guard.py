@@ -21,19 +21,22 @@ unquoted here-document body. The command word is the first word after
 assignments, redirections with their target and the reserved words. A close
 run is `gh` (or a path ending in /gh) with the words `issue` and then `close`
 after it; a launcher run is `qa-codex` (or a path ending in /qa-codex). A
-runner (RUNNER_COMMANDS: bash -c, eval, xargs, env, python3 …), a command
-word that holds an expansion, a comment or an array assignment counts as a
+runner (RUNNER_COMMANDS: bash -c, eval, xargs, env, python3 …) counts as a
 run when the old word rule triggers on the text (the words `gh` and `close`,
 or the text `qa-codex`); these false denies are accepted. A command with a
 run is a guarded call only if its whole text is one of two exact forms
-(CLOSE_FORM, QA_FORM); otherwise it is denied. Text that only mentions the
-words passes (`cat scripts/qa-codex`, a here-document body, a commit
-message). A command the tokenizer cannot read is denied if the old word rule
-triggers, and passes otherwise.
+(CLOSE_FORM, QA_FORM); otherwise it is denied. A command without a run
+passes, also when it holds the words in a comment, an array assignment or
+an argument (`cat scripts/qa-codex`, a here-document body, a commit
+message). An array assignment NAME=(…) is read as one word, as bash reads
+it, and `case` is read both ways (reserved anywhere, and only where bash
+reads it); a run found in either reading counts. A command the tokenizer
+cannot read is denied if the old word rule triggers, and passes otherwise.
 
 Known limits by design (P1, hooks are not a security boundary): variables
-(`$GH issue close 5`), brace expansion, globs, other letter case, runners not
-in the list, a script file that holds a close run, and calls outside the
+and other expansions in the command word (`$GH issue close 5`,
+`"$x"gh issue close 5`), brace expansion, globs, other letter case, runners
+not in the list, a script file that holds a close run, and calls outside the
 prescribed ones (`gh api`, `gh issue edit --state closed`) are not recognized.
 """
 
@@ -117,7 +120,8 @@ class Deny(Exception):
 # <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double quotes);
 # ("op", op) a command separator, also "((" before an arithmetic command; ("redir", op)
 # a redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
-# The texts of the comments it skips are kept in `comments`: G1 doubts its reading where it sees one.
+# G8 uses it as it is. G1 sets `arrays` (NAME=(…) is one word) and reads once with `case_anywhere`
+# and once without it (`case` is a reserved word only where bash reads one).
 
 _OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", ">>", ">|", "<>", "<&", ">&",
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
@@ -127,6 +131,7 @@ _COMMAND_FOLLOWS = {"{", "!", "if", "then", "else", "elif", "do", "while", "unti
 _JOINABLE = (*_OPS, "<(", ">(", "((", "))", "$'", '$"', "${", "$(", "$((", "$[", "$$")  # tokens of more than one character
 _MAX_NESTING = 100  # deeper $…, <(…) and >(…) nesting cannot be parsed
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ARRAY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")  # NAME= or NAME+= before the `(` of an array
 _PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9!@#?$*-]")  # $name, $1, $!, $$ …
 _NAMED_FD = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")  # {fd}>file: bash puts the new fd number in $fd
 _ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
@@ -139,11 +144,12 @@ class _Lexer:
     # ahead of the current position. So every loop reads self.t and self.n again, and a
     # position returned by a nested call is a position in the new text.
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, case_anywhere: bool = True, arrays: bool = False):
         self.t = text
         self.n = len(text)
         self.level = 0  # nesting of $…, <(…) and >(…)
-        self.comments: list[str] = []
+        self.case_anywhere = case_anywhere
+        self.arrays = arrays
 
     def join(self, i: int) -> None:
         """Remove the line continuations (backslash-newline) inside the token that starts at i.
@@ -173,9 +179,13 @@ class _Lexer:
         # followed by a word and a plain `in` starts one wherever it stands. Seeing too many
         # only keeps more text inside a $(, and G8 denies a settings name with a substitution.
         cases: list[list] = []
+        # case_anywhere=False: `case` is a reserved word only where bash reads one, at the start of a
+        # command (`start`) or after the words that bash allows before it (`ext`): `time`, `time -p`,
+        # `time --`, `coproc`, `coproc NAME`, `function NAME`. `lead` is the last of these words.
+        ext, lead = False, None
 
         def end():
-            nonlocal buf, subs, word, quoted, start
+            nonlocal buf, subs, word, quoted, start, ext, lead
             if word:
                 value = "".join(buf)
                 if toks and toks[-1] in (("redir", "<<"), ("redir", "<<-")):
@@ -197,8 +207,19 @@ class _Lexer:
                         cases[-1][1] = False
                 elif state == "body" and start and plain and value == "esac":
                     cases.pop()
-                elif plain and value == "case":
+                elif plain and value == "case" and (self.case_anywhere or start or ext):
                     cases.append(["word", False])
+                at_command = start or ext
+                if at_command and plain and value in ("coproc", "function", "time"):
+                    lead, ext = value, True
+                elif lead in ("coproc", "function"):
+                    lead, ext = None, True
+                elif lead == "time" and plain and value == "-p":
+                    lead, ext = "time -p", True
+                elif lead in ("time", "time -p") and plain and value == "--":
+                    lead, ext = None, True
+                else:
+                    lead, ext = None, False
                 start = plain and value in _COMMAND_FOLLOWS
             buf, subs, word, quoted = [], [], False, False
 
@@ -209,6 +230,10 @@ class _Lexer:
                 self.join(i)
                 t, n = self.t, self.n
             state = cases[-1][0] if cases else None
+            if (self.arrays and c == "(" and word and not quoted and not subs and state != "pattern"
+                    and _ARRAY_NAME.fullmatch("".join(buf))):
+                i = self.array(i, buf, subs)  # NAME=(…) is one word, so `x=(a)#` has no comment
+                continue
             if c in "()" and state != "pattern":
                 # `((` at the start of a word is an arithmetic command, as in `(( x = 1 << 2 ))`
                 arith = self.arith(i + 2, "))") if t.startswith("((", i) and not word else None
@@ -228,9 +253,7 @@ class _Lexer:
                 i += 1
             elif c == "#" and not word:  # a comment, up to the end of the line
                 j = t.find("\n", i)
-                j = n if j < 0 else j
-                self.comments.append(t[i:j])
-                i = j
+                i = n if j < 0 else j
             elif c == "\n":
                 end()
                 toks.append(("op", "\n"))
@@ -240,7 +263,7 @@ class _Lexer:
                     i, body = self.heredoc(i, delim, strip, joined=not q)
                     if not q:
                         body_subs: list[str] = []
-                        _Lexer(body).double(0, [], body_subs, None)
+                        _Lexer(body, self.case_anywhere, self.arrays).double(0, [], body_subs, None)
                         toks.append(("body", "", tuple(body_subs)))
                 heredocs = []
             elif c == "\\":
@@ -381,6 +404,25 @@ class _Lexer:
         finally:
             self.level -= 1
         subs.append(self.t[i + 2:j - 1])
+        buf.append(self.t[i:j])
+        return j
+
+    def array(self, i: int, buf: list[str], subs: list[str]) -> int:
+        """A compound array assignment NAME=(…) from its `(` at i, as part of the word (arrays=True).
+        The substitutions in its elements are kept. An operator other than a newline in it is a syntax
+        error in bash, after which bash may go on with the next line: the text cannot be read."""
+        if self.level >= _MAX_NESTING:
+            raise ValueError("the command is nested too deeply")
+        self.level += 1
+        try:
+            toks, j = self.script(i + 1, sub=True)
+        finally:
+            self.level -= 1
+        if any(tok[0] == "redir" or (tok[0] == "op" and tok[1] != "\n") for tok in toks):
+            raise ValueError("an operator inside an array assignment")
+        for tok in toks:
+            if tok[0] in ("w", "body"):
+                subs.extend(tok[2])
         buf.append(self.t[i:j])
         return j
 
@@ -551,17 +593,14 @@ class _Lexer:
         return n, t[start:]
 
 
-def _lex(command: str, comments: list[str] | None = None) -> list[tuple]:
+def _lex(command: str, case_anywhere: bool = True, arrays: bool = False) -> list[tuple]:
     """Tokens of the command. Raises ValueError if it cannot be parsed.
-    If `comments` is given, the texts of the comments the tokenizer skipped are added to it."""
-    lexer = _Lexer(command)
+    G8 uses the defaults. G1 reads array assignments NAME=(…) as one word (arrays=True), and reads the
+    command twice: with `case` as a reserved word anywhere, and only where bash reads one."""
     try:
-        toks = lexer.script(0, sub=False)[0]
+        return _Lexer(command, case_anywhere, arrays).script(0, sub=False)[0]
     except RecursionError:
         raise ValueError("the command is nested too deeply") from None
-    if comments is not None:
-        comments.extend(lexer.comments)
-    return toks
 
 
 def _simple_commands(toks: list[tuple]) -> tuple[list[list[tuple]], int]:
@@ -624,8 +663,7 @@ def _triggered(text: str) -> bool:
 
 
 def _check_simple_command(cmd: list[tuple], found: set[str]) -> None:
-    """Add "run" to `found` for a close run or a launcher run, "runner" for a runner or a
-    command word that holds an expansion."""
+    """Add "run" to `found` for a close run or a launcher run, "runner" for a runner."""
     words, target = [], False
     for tok in cmd:
         if tok[0] == "redir":
@@ -639,37 +677,30 @@ def _check_simple_command(cmd: list[tuple], found: set[str]) -> None:
         k += 1
     if k == len(words):
         return
-    _, word, subs = words[k]
+    word = words[k][1]
     name = word.rsplit("/", 1)[-1]
     rest = [tok[1] for tok in words[k + 1:]]
-    if subs or "$" in word or "`" in word or name in RUNNER_COMMANDS:
+    if name in RUNNER_COMMANDS:
         found.add("runner")
     if name == LAUNCHER_NAME or (name == CLI_NAME and "issue" in rest and "close" in rest[rest.index("issue") + 1:]):
         found.add("run")
 
 
-def _scan(text: str, found: set[str], depth: int = 0) -> None:
+def _scan(text: str, found: set[str], case_anywhere: bool, depth: int = 0) -> None:
     """Look at every simple command of `text`, also inside substitutions (recursively), and add to
-    `found` what they do: "run" and "runner" (see _check_simple_command), and "doubt" for a comment
-    or an array assignment `a=(…)`, where the tokenizer may read the text otherwise than bash.
-    Raises ValueError when the text cannot be read."""
+    `found` what they do (see _check_simple_command). Raises ValueError when the text cannot be read."""
     if depth > _MAX_NESTING:
         raise ValueError("the command is nested too deeply")
-    comments: list[str] = []
-    toks = _lex(text, comments)
-    if comments:
-        found.add("doubt")
+    toks = _lex(text, case_anywhere=case_anywhere, arrays=True)
     cmd: list[tuple] = []
     arith = False  # the simple command after `((` is an arithmetic command, not a command word
     for tok in (*toks, ("op", "")):
         if tok[0] in ("w", "body"):
             for sub in tok[2]:
-                _scan(sub, found, depth + 1)
+                _scan(sub, found, case_anywhere, depth + 1)
         if tok[0] != "op":
             cmd.append(tok)
             continue
-        if tok[1] == "(" and cmd and cmd[-1][0] == "w" and _ASSIGNMENT.fullmatch(cmd[-1][1]):
-            found.add("doubt")
         if not arith:
             _check_simple_command(cmd, found)
         arith = tok[1] == "(("
@@ -677,14 +708,17 @@ def _scan(text: str, found: set[str], depth: int = 0) -> None:
 
 
 def _runs_guarded(command: str) -> bool:
-    """True when the command runs a close run or the launcher, or may run one (spec 5.1)."""
+    """True when the command runs a close run or the launcher, or may run one (spec 5.1).
+    The tokenizer reads the command twice, with `case` as a reserved word anywhere and only where
+    bash reads one, and a simple command found in either reading counts."""
     triggered = _triggered(command) or _triggered(command.replace("\\\n", ""))
     found: set[str] = set()
     try:
-        _scan(command, found)
+        for case_anywhere in (True, False):
+            _scan(command, found, case_anywhere)
     except (ValueError, RecursionError):
         return triggered  # a command the tokenizer cannot read
-    return "run" in found or (triggered and bool(found & {"runner", "doubt"}))
+    return "run" in found or (triggered and "runner" in found)
 
 
 def g8(command: str) -> str | None:

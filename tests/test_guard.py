@@ -269,10 +269,50 @@ def test_runner_rule_denies(cmd):
 @pytest.mark.parametrize("cmd", [
     "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('docs/x.md')\n"
     "p.write_text(p.read_text().replace('gh issue close', 'the close'))\nEOF",
-    "bash -c 'echo gh issue close 5'", "echo gh close | xargs echo", "ls # gh close later",
-    '"$x"gh issue close 5', "x=(a)#; gh issue close 5",
+    "bash -c 'echo gh issue close 5'", "echo gh close | xargs echo",
 ])
 def test_accepted_false_denies_of_the_runner_rule(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+# No close run, launcher run or runner: a comment, an array assignment or an expansion decides nothing.
+NO_RUN_PASS = [
+    "ls # gh close later", "echo gh close # harmless", "a=(x); echo gh close", "x=(gh close); echo $x",
+    "a=(x\n# gh issue close 5\ny); echo ok", "declare -a x=(gh close)", "echo $x gh close",
+    "echo $(true) gh issue close 5",
+]
+
+
+@pytest.mark.parametrize("cmd", NO_RUN_PASS)
+def test_command_without_a_run_passes(cmd):
+    assert classify(bash(cmd)) is None
+
+
+# Known limit (spec 5.1): a command word built with an expansion is not the CLI name. bash runs these
+# (see test_bash_runs_the_known_limit), and G1 lets them pass, like `$GH issue close 5`.
+KNOWN_LIMIT_PASS = ["$(true)gh issue close 5", '"$x"gh issue close 5', "$GH issue close 5"]
+
+
+@pytest.mark.parametrize("cmd", KNOWN_LIMIT_PASS)
+def test_known_limit_command_word_with_an_expansion_passes(cmd):
+    assert classify(bash(cmd)) is None
+
+
+READ_AS_BASH = [
+    "x=(a $(gh issue close 5))", "x=(a\n`gh issue close 5`)",
+    "x=(a) gh issue close 5", "echo $(time -p case x in x) gh issue close 5;; esac)",
+    "echo $(time -p -- case x in x) gh issue close 5;; esac)", "echo $(coproc x case x in x) gh issue close 5;; esac)",
+    "echo $(! case x in x) gh issue close 5;; esac)", "echo $(echo case x in x)#; gh issue close 5\n)",
+]
+
+
+@pytest.mark.parametrize("cmd", READ_AS_BASH)
+def test_array_assignment_and_case_are_read_as_bash_reads_them(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+@pytest.mark.parametrize("cmd", ["a=(x; gh issue close 5)", "a=(x | y) gh close"])
+def test_array_assignment_with_an_operator_falls_back_to_the_word_rule(cmd):
     assert denied(bash(cmd)).startswith("G1:")
 
 
@@ -919,7 +959,7 @@ HIDDEN_CLOSE = [
     "(( 1<<2 ))\ngh issue close 5", "echo $[1<<2]\ngh issue close 5", "echo $'\\c'; gh issue close 5 #'",
     "function f { gh issue close 5; }\nf", "echo $(time -p case x in x) gh issue close 5;; esac)",
     "echo $(coproc case x in x) gh issue close 5;; esac)", "a=(x; echo ')\ngh issue close 5 #'",
-    "$(true)gh issue close 5", '"$x"gh issue close 5', "ionice gh issue close 5",
+    "ionice gh issue close 5",
     "find . -maxdepth 0 -exec gh issue close 5 \\;", "x=(a)#; gh issue close 5", "x+=(a)#; gh issue close 5",
     "declare -a x=(a)#; gh issue close 5", "echo $(echo case x in x)#; gh issue close 5\n)",
     "echo <(echo case x in x)#; gh issue close 5\n)",
@@ -932,7 +972,7 @@ def test_hidden_close_is_denied(cmd):
 
 
 @pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
-@pytest.mark.parametrize("cmd", HIDDEN_CLOSE)
+@pytest.mark.parametrize("cmd", [*HIDDEN_CLOSE, *READ_AS_BASH, *KNOWN_LIMIT_PASS[:2]])
 def test_bash_runs_the_hidden_close(cmd, tmp_path):
     """Parity check: the cases above are real. bash, with the fake gh first on PATH, runs `gh issue close`."""
     calls = tmp_path / "calls.jsonl"
@@ -945,7 +985,7 @@ def test_bash_runs_the_hidden_close(cmd, tmp_path):
 
 
 @pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
-@pytest.mark.parametrize("cmd", [c for c in [*MENTIONS_PASS, HEREDOC_BODY, HEREDOC_BODY_UNQUOTED]
+@pytest.mark.parametrize("cmd", [c for c in [*MENTIONS_PASS, *NO_RUN_PASS, HEREDOC_BODY, HEREDOC_BODY_UNQUOTED]
                                  if not c.startswith("git ")])
 def test_bash_runs_no_close_for_the_passing_mentions(cmd, tmp_path):
     """Parity check the other way: the commands that now pass really run no close."""
