@@ -11,6 +11,11 @@ FAKE_GH_STATES=<json>    map of issue number to state, e.g. {"3": "CLOSED"}: `gh
                          prints {"state": <value>}; a number not in the map exits 1
 FAKE_GH_SLEEP=<s>        sleep before answering
 FAKE_GH_STDERR=<text>    stderr of a failing call
+FAKE_GH_API=<path>       JSON object for `gh api <path> --paginate`, keyed by the read: "timeline",
+                         "blocked_by", "sub_issues", "issues" (the repo's issue list). A list value is
+                         printed as JSON; a string value is printed as it is (raw output, e.g. two
+                         pages or text that is not JSON). A missing file or key prints `[]`
+FAKE_GH_API_FAIL=<key>   only the `gh api` read with that key exits 1
 """
 import json
 import os
@@ -68,6 +73,33 @@ if args[:2] == ["issue", "comment"] and args[3:] == ["--body-file", "-"]:
         if data is not None:
             with open(env("FAKE_GH_ISSUE"), "w", encoding="utf-8") as f:
                 json.dump(data, f)
+    sys.exit(0)
+
+
+
+def api_key(path):
+    """The read that a `gh api` path names, or None."""
+    if path.endswith("/timeline"):
+        return "timeline"
+    if path.endswith("/dependencies/blocked_by"):
+        return "blocked_by"
+    if path.endswith("/sub_issues"):
+        return "sub_issues"
+    if path.split("?", 1)[0].endswith("/issues"):
+        return "issues"
+    return None
+
+
+if args[:1] == ["api"] and len(args) == 3 and args[2] == "--paginate" and api_key(args[1]):
+    key = api_key(args[1])
+    if env("FAKE_GH_API_FAIL") == key:
+        fail()
+    data = {}
+    if env("FAKE_GH_API") and os.path.exists(env("FAKE_GH_API")):
+        with open(env("FAKE_GH_API"), encoding="utf-8") as f:
+            data = json.load(f)
+    value = data.get(key, [])
+    sys.stdout.write(value if isinstance(value, str) else json.dumps(value))
     sys.exit(0)
 
 sys.stderr.write(f"fake gh: unsupported call {args}\n")

@@ -16,9 +16,11 @@ Start the app and run the browser check in one command. A background process doe
 Your output is a verdict: PASS, FAIL, UNVERIFIABLE or INVALID.
 
 - FAIL if a single acceptance criterion fails: the code or document does not meet it
-- Otherwise UNVERIFIABLE if you could not check at least one criterion. It is UNVERIFIABLE if a limit of your environment stops the check: a tool, sandbox, network or permission limit (for example, the browser crashes or `api.github.com` is blocked). Mark each such criterion `- [ ] … - INVALID` and say what stopped you. The issue then goes back to the PM, who makes the criterion checkable
+- Otherwise UNVERIFIABLE if you could not check at least one criterion. It is UNVERIFIABLE if a limit of your environment stops the check: a tool, sandbox, network or permission limit (for example, the browser crashes, or a check needs a GitHub read that you cannot make and that neither the GitHub state files nor the comment block answer). Mark each such criterion `- [ ] … - INVALID` and say what stopped you. The issue then goes back to the PM, who makes the criterion checkable
 - Otherwise PASS
 - INVALID only when the commit range is missing or cannot be used (no `Commits: <base>..<head>` line, or a head that does not resolve)
+
+Criteria about GitHub state (labels, timeline events, blockers, sub-issues, created issues, comments of the issue) are checkable. Under Codex the sandbox has no network, so `scripts/qa-codex` reads that state before Codex starts, and the prompt names the GitHub state files (`labels.json`, `timeline.json`, `blocked-by.json`, `sub-issues.json`, `created-issues.json`) and the comment block. Check such a criterion against those files and the comment block. A criterion that they answer is `pass` or `fail`, not `invalid`. Outside Codex, read the state with `gh`.
 
 FAIL comes before UNVERIFIABLE, and UNVERIFIABLE before PASS. Say what failed or what stopped you. Post it as a comment on the issue.
 

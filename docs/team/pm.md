@@ -33,7 +33,7 @@ If something does not belong in this task, do not silently drop it. File a follo
 
 QA could not check some criteria because of a limit of its environment (a tool, sandbox, network or permission limit). The QA comment marks each such criterion `- [ ] … - INVALID`. You get the URL of that comment. For each criterion that QA marked `INVALID`, do one of:
 
-- a) Rewrite it so it can be checked from the repo checkout and from the comment text that `scripts/qa-codex` passes to Codex (the first line of every comment and the full newest `## Engineer: DONE`). For example, write the expected values into the criterion. Keep the same intent and scope. Then post `## PM: GROOMED`
+- a) Rewrite it so it can be checked from the repo checkout, from the comment text that `scripts/qa-codex` passes to Codex (the first line of every comment and the full newest `## Engineer: DONE`), and from the GitHub state files that `scripts/qa-codex` writes for Codex (`labels.json`, `timeline.json`, `blocked-by.json`, `sub-issues.json`, `created-issues.json`: the issue's labels, its timeline events, its blockers and sub-issues, and the issues created since the base of the commit range, with title and body only for issues by the owner). For example, write the expected values into the criterion. Keep the same intent and scope. Then post `## PM: GROOMED`
 - b) Leave it unchanged when the limit is already gone (a fix has landed). Name the commit or issue of that fix. Then post `## PM: GROOMED`
 - c) Post `## PM: NEEDS OWNER` when the only way to make it checkable:
   - changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope), or
