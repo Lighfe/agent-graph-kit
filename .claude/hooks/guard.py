@@ -852,7 +852,7 @@ class _IO:
         self.end = time.monotonic() + seconds
 
     def deadline(self) -> _Deadline:
-        return _Deadline(f"guard: deadline of {self.seconds:g} s reached before the checks finished, call denied")
+        return _Deadline(f"guard error: deadline of {self.seconds:g} s reached before the checks finished, call denied")
 
     def remaining(self) -> float:
         return self.end - time.monotonic()

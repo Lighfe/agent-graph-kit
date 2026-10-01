@@ -20,6 +20,7 @@ FAKE_GH_API=<path>       JSON object for `gh api <path> --paginate`, keyed by th
                          The two sub-issue reads with --jq (issue #97) use the keys "sub_issues" (a
                          list of pages) and "issue" the same way
 FAKE_GH_API_FAIL=<key>   only the `gh api` read with that key exits 1
+FAKE_GH_API_SLEEP=<key>:<s>  only the `gh api` read with that key sleeps <s> seconds before answering
 """
 import json
 import os
@@ -134,6 +135,9 @@ if args[:1] == ["api"] and "--jq" in args:
         sys.exit(2)
     if env("FAKE_GH_API_FAIL") == key:
         fail()
+    slow_key, _, slow_s = env("FAKE_GH_API_SLEEP", "").partition(":")
+    if slow_key == key:
+        time.sleep(float(slow_s))
     data = api_data()
     if key == "issue":
         value = data.get("issue", DEFAULT_ISSUE)

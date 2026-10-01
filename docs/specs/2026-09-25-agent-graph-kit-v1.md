@@ -222,7 +222,7 @@ Notes:
 ### 5.6 Failure behavior
 
 - If `gh` or `git` fails (network, auth), or the hook script has any other error, the hook denies the call with an explicit deny response. A crash must never let the call through, except when Claude Code kills the hook at its timeout. Unknown facts do not allow a launch.
-- Timeout (S1): a hook that Claude Code kills at its settings `timeout` lets the call through, and a command wrapper cannot catch this. So the guard has one overall deadline (about 60 s) for all its work, including the wait for the lock (5.7). At the deadline, it denies. The settings `timeout` is higher (about 120 s). Only a hung machine can cause a fail-open.
+- Timeout (S1): a hook that Claude Code kills at its settings `timeout` lets the call through, and a command wrapper cannot catch this. So the guard has one overall deadline (about 60 s) for all its work, including the wait for the lock (5.7). At the deadline, it denies with a message that starts with `guard error`. The settings `timeout` is higher (about 120 s). Only a hung machine can cause a fail-open.
 - The guard never outputs "allow". An allowed call produces no output, so the normal permission check stays on.
 - Each deny message names the check that failed (for example `G3: current result is ## QA: PASS, expected ## PM: GROOMED or ## QA: FAIL`), so the orchestrator knows what is missing.
 

@@ -1378,6 +1378,18 @@ def test_guard_stage_close_failing_read_denies_with_guard_error(env, key):
     assert code == 0 and deny_reason(out).startswith("guard error")
 
 
+@pytest.mark.parametrize("key", ["sub_issues", "issue"])
+def test_guard_stage_close_timed_out_read_denies_with_guard_error(env, key):
+    """A read that runs past the guard's deadline denies with `guard error` too (issue #97, QA FAIL)."""
+    write_subs(env, [api_blocker(3)])
+    write_stage(env)
+    start = time.monotonic()
+    code, out = run_guard(CLOSE_7, env, GUARD_DEADLINE="1", FAKE_GH_API_SLEEP=f"{key}:5")
+    assert time.monotonic() - start < 4
+    reason = deny_reason(out)
+    assert code == 0 and reason.startswith("guard error") and "deadline" in reason
+
+
 @pytest.mark.parametrize("pages, total", [
     ("not json\n", 0),
     ([[{"number": 3, "state": "closed", "repository": {}}]], 1),
