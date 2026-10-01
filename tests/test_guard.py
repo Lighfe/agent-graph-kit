@@ -1048,8 +1048,9 @@ def test_decide_reads_blockers_for_every_role_launch_but_not_for_close():
 
 def test_decide_without_a_blocker_reader_denies_a_role_launch():
     fio = FakeIO(issue())
-    reason = decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment)
-    assert reason.startswith("guard error") and fio.posts == []
+    with pytest.raises(Deny) as e:  # main() turns a Deny from a reader into the deny output
+        decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment)
+    assert str(e.value).startswith("guard error") and fio.posts == []
 
 
 def test_decide_open_blocker_denies_and_posts_nothing():

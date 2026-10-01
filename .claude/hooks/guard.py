@@ -67,6 +67,10 @@ CALL_TIMEOUT_S = 20  # per gh/git call
 STDERR_MAX = 200  # P5: first stderr line, cut to 200 characters
 LOCK_NAME = "agent-graph-kit-guard.lock"
 
+# The two blocker reads (issue #64, read form from the #95 report). {owner}/{repo} is filled in by gh.
+BLOCKERS_JQ = ".[] | {repo: .repository.full_name, number, state}"
+OPEN_BLOCKERS_JQ = ".issue_dependencies_summary.blocked_by"
+
 # Bash rule of G1 (spec 5.1): what a real run is, the old word rule, and the only two forms a run may have.
 CLI_NAME = "gh"
 LAUNCHER_NAME = "qa-codex"
@@ -787,16 +791,16 @@ def event_call_hash(event: dict) -> str | None:
     return issue_state.call_hash(tool_use_id) if isinstance(tool_use_id, str) else None
 
 
-def _no_blocker_reader(number: int) -> bool:
-    raise Deny(f"guard error: no reader for the state of blocker #{number}")
+def _no_blocker_reader(number: int):
+    raise Deny(f"guard error: no reader for the blockers of issue #{number}")
 
 
 def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
-           read_blocker=_no_blocker_reader) -> str | None:
+           read_blockers=_no_blocker_reader) -> str | None:
     """Deny reason, or None to let the call through. `lock()` is held from reading
     the facts until the launch comment is posted (spec 5.7). The launch comment has a
-    `Call:` line when the event has a string tool_use_id (spec 5.3). For a PM call after
-    `## PM: WAITING`, `read_blocker(n)` (True = open) reads the blocker inside the lock."""
+    `Call:` line when the event has a string tool_use_id (spec 5.3). For every role launch
+    (not for close), `read_blockers(n)` gives (blocker list, open-blocker count) inside the lock."""
     try:
         call = classify(event)
     except Deny as e:
@@ -805,9 +809,9 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
         return None
     with lock():
         facts = read_facts(call.issue)
-        blocker = issue_state.blocker_to_read(call, facts)
-        if blocker is not None:
-            facts = dataclasses.replace(facts, blocker_open=read_blocker(blocker))
+        if call.role != "close":
+            blockers, count = read_blockers(call.issue)
+            facts = dataclasses.replace(facts, blockers=blockers, open_blockers=count)
         reason = issue_state.check(call, facts)
         if reason:
             return reason
@@ -864,15 +868,21 @@ class _IO:
                                     "number,state,labels,body,comments"]))
         return issue_state.parse_issue(data)
 
-    def read_blocker(self, number: int) -> bool:
-        """True when issue `number` is open, False when it is closed; anything else denies."""
+    def read_blockers(self, number: int) -> tuple[tuple[issue_state.Blocker, ...], int]:
+        """(blocker list of all pages, open-blocker count) of issue `number`; output that cannot be read denies."""
+        path = f"repos/{{owner}}/{{repo}}/issues/{number}"
+        listed = self.run(["gh", "api", "--paginate", f"{path}/dependencies/blocked_by", "--jq", BLOCKERS_JQ])
         try:
-            state = json.loads(self.run(["gh", "issue", "view", str(number), "--json", "state"]))["state"]
-        except (ValueError, KeyError, TypeError):
-            state = None
-        if state not in ("OPEN", "CLOSED"):
-            raise Deny(f"guard error: gh issue view {number} --json state gave no state OPEN or CLOSED")
-        return state == "OPEN"
+            blockers = issue_state.parse_blockers(listed)
+        except ValueError as e:
+            raise Deny(f"guard error: the blocker list of #{number} cannot be read: {_first_line(str(e))}") from None
+        counted = self.run(["gh", "api", path, "--jq", OPEN_BLOCKERS_JQ])
+        try:
+            count = issue_state.parse_open_blocker_count(counted)
+        except ValueError as e:
+            raise Deny(f"guard error: the open-blocker count of #{number} cannot be read: "
+                       f"{_first_line(str(e))}") from None
+        return blockers, count
 
     def read_facts(self, number: int) -> issue_state.Facts:
         iss = self.read_issue(number)
@@ -945,7 +955,7 @@ def main(stdin=sys.stdin, stdout=sys.stdout) -> int:
             except ValueError as e:
                 raise Deny(f"guard error: the hook input is not valid JSON ({_first_line(str(e))})") from None
             reason = decide(event, io.read_facts, io.post_comment, lock=io.lock,
-                            read_blocker=io.read_blocker)
+                            read_blockers=io.read_blockers)
     except Deny as e:
         reason = str(e)
     except BaseException as e:  # a crash must never let the call through

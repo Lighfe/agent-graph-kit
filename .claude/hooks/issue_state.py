@@ -9,6 +9,7 @@ Comment order is the order of the `gh` comments array (plan decision).
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 
@@ -49,7 +50,6 @@ REASON_MAX = 200
 _LANE = re.compile(r"^Lane: (\S+)$")
 _VERIFIED = re.compile(r"^Verified: (\S+)$")
 _COMMITS = re.compile(r"^Commits: (\S+?)\.\.(\S+)$")
-_WAITING_ON = re.compile(r"^Waiting on: #([1-9][0-9]*)$")
 
 
 @dataclass(frozen=True)
@@ -62,11 +62,25 @@ class Issue:
 
 
 @dataclass(frozen=True)
+class Blocker:
+    """One native "blocked by" link of an issue (issue #64)."""
+    repo: str  # owner/repo of the blocker, also another repo
+    number: int
+    state: str  # "open" or "closed"
+
+    def name(self) -> str:
+        return f"{self.repo}#{self.number}"
+
+
+@dataclass(frozen=True)
 class Facts:
     issue: Issue
     head: str  # full SHA of HEAD
     clean: bool  # git status --porcelain is empty
-    blocker_open: bool | None = None  # state of the Waiting on: issue, read only when blocker_to_read asks
+    # The two blocker reads (issue #64), None when not read. The guard reads them for every role
+    # launch, never for close: the blocker list (all pages, a set) and the open-blocker count.
+    blockers: tuple[Blocker, ...] | None = None
+    open_blockers: int | None = None
 
 
 @dataclass(frozen=True)
@@ -178,10 +192,62 @@ def commits_range(body: str) -> tuple[str, str] | None:
     return (m[0], m[1]) if m else None
 
 
-def waiting_on(body: str) -> int | None:
-    """The issue number of the Waiting on: line, or None when it is missing or lines disagree."""
-    m = _value(body, _WAITING_ON)
-    return int(m[0]) if m else None
+def _decode_stream(text: str) -> list:
+    """The JSON values of a text, one after the other (gh --jq prints one value per line)."""
+    decoder, values, i = json.JSONDecoder(), [], 0
+    while True:
+        while i < len(text) and text[i] in " \t\r\n":
+            i += 1
+        if i == len(text):
+            return values
+        value, i = decoder.raw_decode(text, i)
+        values.append(value)
+
+
+def parse_blockers(text: str) -> tuple[Blocker, ...]:
+    """The blockers from the output of
+    `gh api --paginate repos/<owner>/<repo>/issues/<n>/dependencies/blocked_by
+    --jq '.[] | {repo: .repository.full_name, number, state}'`: one object per blocker, all pages.
+    Counted per item; the order means nothing. ValueError for output that cannot be read."""
+    blockers = []
+    for item in _decode_stream(text):
+        if not isinstance(item, dict):
+            raise ValueError(f"blocker item is not an object (got {type(item).__name__})")
+        repo, number, state = item.get("repo"), item.get("number"), item.get("state")
+        if not isinstance(repo, str) or not re.fullmatch(r"[^/\s]+/[^/\s]+", repo):
+            raise ValueError("blocker item has no repo owner/name")
+        if type(number) is not int or number < 1:
+            raise ValueError("blocker item has no positive issue number")
+        if state not in ("open", "closed"):
+            raise ValueError("blocker item has no state open or closed")
+        blockers.append(Blocker(repo=repo, number=number, state=state))
+    return tuple(blockers)
+
+
+def parse_open_blocker_count(text: str) -> int:
+    """The open-blocker count from the output of
+    `gh api repos/<owner>/<repo>/issues/<n> --jq .issue_dependencies_summary.blocked_by`.
+    ValueError for anything but one non-negative integer."""
+    values = _decode_stream(text)
+    if len(values) != 1 or type(values[0]) is not int or values[0] < 0:
+        raise ValueError("the open-blocker count is not one non-negative integer")
+    return values[0]
+
+
+def open_blocker_problem(facts: Facts) -> str | None:
+    """None when both blocker reads ran and show no open blocker, else the text for a deny:
+    the reads are missing, the open blockers by name, or an open blocker the login cannot read
+    (the count is greater than the open entries of the list; the list may be incomplete, #95)."""
+    if facts.blockers is None or facts.open_blockers is None:
+        return "the blockers were not read"
+    names = sorted(b.name() for b in facts.blockers if b.state == "open")
+    parts = []
+    if names:
+        parts.append(f"open blocker {', '.join(names)}")
+    if facts.open_blockers > len(names):
+        parts.append(f"the open-blocker count is {facts.open_blockers} but the blocker list holds "
+                     f"{len(names)} open, so an open blocker the login cannot read")
+    return "; ".join(parts) or None
 
 
 # --- validity, pending, current result (spec 5.3) --------------------------------
@@ -365,9 +431,9 @@ def g1(call: Call, facts: Facts) -> str | None:
         return f"G1: facts are for issue #{iss.number}, expected issue #{call.issue}"
     if not iss.open:
         return f"G1: issue #{iss.number} is closed, expected an open issue"
-    if "waiting" in iss.labels:  # before the ready check: a waiting issue waits, also with ready
-        return (f"G1: issue #{iss.number} has the label waiting, expected no label waiting "
-                f"(the orchestrator adds ready again when the blocker is closed)")
+    if call.role != "close" and (problem := open_blocker_problem(facts)):  # close reads no blockers
+        return (f"G1: issue #{iss.number}: {problem}, expected no open blocker "
+                f"(the orchestrator picks the issue when its blockers are closed)")
     if "ready" not in iss.labels:
         return f"G1: issue #{iss.number} has no label ready, expected the label ready"
     for label in ("later", "needs-owner"):
@@ -386,45 +452,20 @@ def g1(call: Call, facts: Facts) -> str | None:
     return None
 
 
-def _waiting_blocker(facts: Facts) -> tuple[int | None, str | None]:
-    """(blocker, None) for a current WAITING result with a usable Waiting on: line, else (None, G2 reason)."""
-    i, _, _ = _current(facts.issue)
-    body = facts.issue.comments[i]
-    n = waiting_on(body)
-    if n is None:
-        count = len({line.rstrip() for line in _unfenced_lines(body) if line.startswith("Waiting on:")})
-        what = "no Waiting on: line" if count == 0 else "Waiting on: lines that disagree or are not #<N>"
-        return None, f"G2: current result is {WAITING} with {what}, expected exactly one line Waiting on: #<N>"
-    if n == facts.issue.number:
-        return None, (f"G2: current result is {WAITING} on #{n}, the issue itself, "
-                      f"expected Waiting on: another issue")
-    return n, None
-
-
-def blocker_to_read(call: Call, facts: Facts) -> int | None:
-    """The issue whose state the guard must read and pass in as facts.blocker_open: only for a PM
-    call whose current result is WAITING with a usable Waiting on: line, and only when G1 allows it."""
-    if call.role != "pm" or _current(facts.issue)[1] != WAITING or g1(call, facts) is not None:
-        return None
-    return _waiting_blocker(facts)[0]
-
-
 def g2(call: Call, facts: Facts) -> str | None:
     lines = _lines(facts.issue)
     _, marker, found = _current(facts.issue)
     if _newest_launch(lines) is None or marker in (BLOCKED, UNVERIFIABLE, RESUME):
         return None
     if marker == WAITING:
-        n, reason = _waiting_blocker(facts)
-        if reason:
-            return reason
-        if facts.blocker_open is None:
-            return f"G2: current result is {WAITING} on #{n}, but the state of #{n} was not read"
-        if facts.blocker_open:
-            return f"G2: current result is {WAITING} on #{n}, and #{n} is open, expected #{n} closed"
+        if facts.blockers == ():
+            return (f"G2: current result is {WAITING}, but issue #{facts.issue.number} has no blocker link, "
+                    f"expected at least one native blocked-by link, all closed")
+        if problem := open_blocker_problem(facts):
+            return f"G2: current result is {WAITING}: {problem}, expected every blocker closed"
         return None
     return (f"G2: current result is {found}, expected no launch comment yet, "
-            f"{BLOCKED}, {UNVERIFIABLE}, {RESUME} or {WAITING} with a closed blocker")
+            f"{BLOCKED}, {UNVERIFIABLE}, {RESUME} or {WAITING} with blockers that are all closed")
 
 
 def g3(call: Call, facts: Facts) -> str | None:
