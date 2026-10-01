@@ -1,6 +1,6 @@
 # agent-graph-kit v1 Implementation Plan
 
-Execution is deferred. In a later session, convert these tasks to issues using docs/task-template.md and follow docs/process.md.
+This plan was executed: its tasks became issues. It is not kept up to date.
 
 **Goal:** Turn the prose loop PM → Engineer → QA into a graph. Hooks check every prescribed handoff call. Codex is the default QA checker. Frontend work goes to Lovable.
 
@@ -48,7 +48,7 @@ Execution is deferred. In a later session, convert these tasks to issues using d
   2. paint-math is two tasks. The owner runs the demo loop in paint-math (Tasks 11 and 12).
   3. A result without a launch comment of its role is not valid.
   4. Section 5.8 needs no role-file change. The launch line is only in the orchestrator's prompt template.
-- **Owner decisions of 2026-09-26** on the S1–S3 findings are merged into the spec (sections 5.6, 5.7, 5.9, 6, 7, 8, 9, 12.4) and into Tasks 5–11 below. History: `docs/archive/2026-09-26-s1-3-owner-decisions.md`. Where a task below and the spec differ, the spec wins.
+- **Owner decisions of 2026-09-26** on the S1–S3 findings are merged into the spec (sections 5.6, 5.7, 5.9, 6, 7, 8, 9, 12.4) and into Tasks 5–11 below. History: `docs/archive/2026-09-26-s1-3-owner-decisions.md`.
 - **Plan decisions** (no spec change):
   - The hook module, the guard and `qa-codex` are built before the hooks are wired (Task 7). If the hooks were wired earlier, QA would deadlock: G4 needs `qa-codex`, and G5 needs `## QA: UNAVAILABLE`.
   - The shared Codex runner is `scripts/codex_exec.py`.

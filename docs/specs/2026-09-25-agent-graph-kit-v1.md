@@ -1,9 +1,9 @@
 # agent-graph-kit v1
 
 - Date: 2026-09-25
-- Status: draft, for owner review
+- Status: v1 is implemented.
 - Source: design session with the owner on 2026-09-25. Research inputs: `docs/research/`.
-- Updated 2026-09-26 with the owner decisions on the spike findings S1–S3 (section 13).
+- Updated 2026-10-01: status set to implemented.
 
 This spec is the accepted design of the kit for version 1. Earlier notes in `docs/archive/` are historical input only.
 
