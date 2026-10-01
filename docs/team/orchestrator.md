@@ -123,7 +123,7 @@ Post your own comments (the escalation comment) only with `gh issue comment <n> 
 
 ## Close an issue
 
-Run exactly `gh issue close <number>` as the whole command. The hook checks the verified SHA.
+Run exactly `gh issue close <number>` as the whole command. The hook checks the verified SHA. On a stage issue (label `stage`), the hook checks that all its sub-issues are closed instead of the verified SHA.
 
 ## Definition of done
 
