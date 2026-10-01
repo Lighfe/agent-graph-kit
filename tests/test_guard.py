@@ -133,14 +133,16 @@ def test_malformed_events_are_denied(event):
         classify(event)
 
 
-# --- Bash classification: the trigger rule ------------------------------------------------
+# --- Bash classification: real runs (issue #107) ------------------------------------------
 #
-# A command that mentions `gh` and `close`, or `qa-codex`, is triggered. A triggered command
-# is a guarded call only in one of two exact forms; any other triggered command is denied.
+# The guard reads the command with the tokenizer and looks at every simple command, also inside
+# substitutions. A close run (gh … issue … close) or a launcher run (…/qa-codex) is a guarded call
+# only in one of two exact forms; any other real run is denied. Text that only mentions the words
+# passes. A runner (bash -c, eval, xargs …) counts as a run when the old word rule triggers.
 
 
 @pytest.mark.parametrize("cmd", ["gh issue clo\\\nse 5", "g\\\nh issue close 5", "scripts/qa-\\\ncodex ROLE=qa ISSUE=5"])
-def test_backslash_newline_copy_is_triggered_and_denied(cmd):
+def test_backslash_newline_in_a_word_is_a_real_run_and_denied(cmd):
     assert denied(bash(cmd)).startswith("G1:")
 
 
@@ -151,8 +153,34 @@ def test_text_without_both_words_is_not_triggered(cmd):
 
 
 def test_trigger_word_boundaries_are_ascii():
-    """With re.ASCII, a non-ASCII letter is no word character, so `\\bgh\\b` matches in `éghé`."""
-    assert denied(bash("echo éghé close")).startswith("G1:")
+    """With re.ASCII, a non-ASCII letter is no word character, so `\\bgh\\b` matches in `éghé`.
+    The old word rule still decides the runner rule and unreadable commands."""
+    assert denied(bash("bash -c 'echo éghé close'")).startswith("G1:")
+    assert denied(bash("echo éghé close '")).startswith("G1:")
+    assert classify(bash("echo éghé close")) is None
+
+
+# Cases of issue #107 that pass G1: the text only mentions the words.
+MENTIONS_PASS = [
+    "cat scripts/qa-codex", "wc -l scripts/qa-codex", "git add scripts/qa-codex",
+    'git commit -m "Fix gh close handling"',
+    "git commit -m \"$(cat <<'EOF'\nAdd qa-codex launcher\nEOF\n)\"",
+    "echo gh issue close 5", 'grep "gh issue close 5" AGENTS.md', "gh issue view 5 | grep close",
+    "gh pr close 5", 'gh issue create --title "Fix the close check" --body-file /tmp/x.md',
+    # former DENIED cases that now pass
+    'grep "gh issue close" AGENTS.md', "cat <<'EOF'\ngh issue close 5\nEOF",
+]
+
+HEREDOC_BODY = ("cat > /tmp/x/body.md <<'EOF'\n## PM: GROOMED\n\nThe orchestrator runs gh issue close 5.\n"
+                "QA runs scripts/qa-codex ROLE=qa ISSUE=5 in the background.\n"
+                "Run `gh issue close 5` only after QA PASS.\nEOF")
+HEREDOC_BODY_UNQUOTED = ("cat > /tmp/x/body.md <<EOF\n## PM: GROOMED\n\nThe orchestrator runs gh issue close 5.\n"
+                         "EOF")
+
+
+@pytest.mark.parametrize("cmd", [*MENTIONS_PASS, HEREDOC_BODY, HEREDOC_BODY_UNQUOTED])
+def test_text_that_only_mentions_the_words_passes(cmd):
+    assert classify(bash(cmd)) is None
 
 
 ALLOWED = [
@@ -176,32 +204,30 @@ def test_qa_codex_in_the_background_is_the_guarded_call():
     assert classify(event) == Call(role="qa", agent="qa-codex", issue=12)
 
 
-# The cases of the deny criterion, word for word, and the accepted false denies.
+# Real runs that are not the exact form. The cases of the deny criterion of issue #107 come first.
 DENIED = [
-    "scripts/qa-codex ROLE=qa ISSUE=5\r", " gh issue close 5", "gh  issue close 5", "gh\tissue close 5",
-    "/usr/bin/gh issue close 5", "command gh issue close 5", "scripts/qa-codex ROLE=qa ISSUE=5 &",
-    "gh issue close 5 > /dev/null", "gh issue close 5 && ls", "gh issue close 5\n\n", "gh issue close 0",
-    "gh issue close 05", "gh issue close #5", "gh issue close 5 --reason other", "gh issue close 5 -R o/r",
+    " gh issue close 5", "gh  issue close 5", "gh\tissue close 5", "/usr/bin/gh issue close 5",
+    "command gh issue close 5", "env gh issue close 5", "time gh issue close 5", "GH_REPO=x/y gh issue close 5",
+    "gh issue close 5 > /dev/null", "gh issue close 5 --reason other", "gh issue close $N",
+    "gh issue close 5 # done", "gh issue \\\nclose 5",
+    "./scripts/qa-codex ROLE=qa ISSUE=5", "uv run scripts/qa-codex ROLE=qa ISSUE=5",
+    "python3 scripts/qa-codex ROLE=qa ISSUE=5", "scripts/qa-codex ROLE=qa ISSUE=5 &",
+    "scripts/qa-codex ROLE=qa ISSUE=05", "{fd}>/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
+    # more forms that are not exact (kept from before issue #107)
+    "scripts/qa-codex ROLE=qa ISSUE=5\r", "gh issue close 5 && ls", "gh issue close 5\n\n", "gh issue close 0",
+    "gh issue close 05", "gh issue close #5", "gh issue close 5 -R o/r",
     "scripts/qa-codex ROLE=qa ISSUE=0", "scripts/qa-codex ISSUE=5 ROLE=qa",
-    "./scripts/qa-codex ROLE=qa ISSUE=5", "uv run scripts/qa-codex ROLE=qa ISSUE=5", "cat scripts/qa-codex",
-    "git add scripts/qa-codex", 'git commit -m "Fix gh close handling"', "gh issue view 5 | grep close",
-    "gh pr close 5", "git commit -m \"$(cat <<'EOF'\nAdd qa-codex launcher\nEOF\n)\"",
-    # more forms that are not exact
     "gh issue close 12\r", "gh issue close 12\r\n", "gh issue close", "gh issue close 5 6", "gh issue close 5x",
     "gh issue close -- 5", "gh issue close 5 --reason", "gh issue close 5 --reason 'not planned' --reason completed",
     "gh issue close --reason completed 5", "gh issue close 5 --reason 'Not planned'", "gh issue close 5 -r not planned",
-    "gh issue close ٥", "GH_REPO=x/y gh issue close 5", "gh issue close $N", "gh issue close $(echo 5)",
-    "gh issue \\\nclose 5", "gh issue close 5 # done", "scripts/qa-codex ROLE=qa", "scripts/qa-codex",
-    "scripts/qa-codex ROLE=qa ISSUE=5 extra", "scripts/qa-codex ROLE=qa ISSUE=05", "qa-codex ROLE=qa ISSUE=5",
-    "python3 scripts/qa-codex ROLE=qa ISSUE=5", "/abs/scripts/qa-codex ROLE=qa ISSUE=5",
-    'grep "gh issue close" AGENTS.md', "wc -l scripts/qa-codex", "echo gh issue close 5",
-    "cat <<'EOF'\ngh issue close 5\nEOF", "x=(a)#; scripts/qa-codex ROLE=qa ISSUE=5",
-    "{fd}>/dev/null scripts/qa-codex ROLE=qa ISSUE=5", "python3 >/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
+    "gh issue close ٥", "gh issue close $(echo 5)", "scripts/qa-codex ROLE=qa", "scripts/qa-codex",
+    "scripts/qa-codex ROLE=qa ISSUE=5 extra", "qa-codex ROLE=qa ISSUE=5", "/abs/scripts/qa-codex ROLE=qa ISSUE=5",
+    "x=(a)#; scripts/qa-codex ROLE=qa ISSUE=5", "python3 >/dev/null scripts/qa-codex ROLE=qa ISSUE=5",
 ]
 
 
 @pytest.mark.parametrize("cmd", DENIED)
-def test_other_triggered_commands_are_denied_with_g1(cmd):
+def test_real_runs_not_in_the_exact_form_are_denied_with_g1(cmd):
     assert denied(bash(cmd)).startswith("G1:")
 
 
@@ -210,40 +236,81 @@ def test_guarded_call_with_any_operator_is_denied(op):
     assert denied(bash(f"gh issue close 5 {op} ls")).startswith("G1:")
     assert denied(bash(f"ls {op} gh issue close 5")).startswith("G1:")
     assert denied(bash(f"scripts/qa-codex ROLE=qa ISSUE=5 {op} ls")).startswith("G1:")
+    assert denied(bash(f"ls {op} scripts/qa-codex ROLE=qa ISSUE=5")).startswith("G1:")
 
 
 @pytest.mark.parametrize("cmd", [
     "{ gh issue close 5; }", "if true; then gh issue close 5; fi", "! gh issue close 5", "time gh issue close 5",
     "exec gh issue close 5", "env gh issue close 5", "echo <(gh issue close 5)", "echo x#; gh issue close 5",
-    "(gh issue close 5)", 'echo "$(gh issue close 5)"', "echo `gh issue close 5`",
-    "echo `scripts/qa-codex ROLE=qa ISSUE=5`",
+    "(gh issue close 5)", 'echo "$(gh issue close 5)"', "echo `gh issue close 5`", 'echo "x `gh issue close 5`"',
+    "echo `scripts/qa-codex ROLE=qa ISSUE=5`", "f() { gh issue close 5; }", "cat >(gh issue close 5)",
+    "cat > /tmp/x/body.md <<EOF\nRun `gh issue close 5` now.\nEOF",
+    "cat > /tmp/x/body.md <<EOF\nRun $(gh issue close 5) now.\nEOF",
 ])
 def test_guarded_call_behind_shell_syntax_or_in_a_substitution_is_denied(cmd):
     assert denied(bash(cmd)).startswith("G1:")
 
 
-DENY_TEXTS = ["gh issue close <n>", "scripts/qa-codex ROLE=qa ISSUE=<n>", "git commit -F", "--body-file", "Read",
-              "Grep", "git add scripts/", "run_in_background"]
+@pytest.mark.parametrize("cmd", ["gh issue cl''ose 5", "gh issue c\\lose 5", "gh issue $'close' 5",
+                                 "gh 'issue' \"close\" 5", "scripts/qa-cod''ex ROLE=qa ISSUE=5"])
+def test_words_are_compared_after_quote_removal(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
 
 
-@pytest.mark.parametrize("cmd", ["cat scripts/qa-codex", "gh  issue close 5", "scripts/qa-codex ROLE=qa ISSUE=5 &"])
-def test_deny_message_names_the_forms_and_the_ways_around(cmd):
-    reason = denied(bash(cmd))
-    assert reason.startswith("G1:")
-    for text in DENY_TEXTS:
-        assert text in reason
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'gh issue close 5'", "echo 'gh issue close 5' | bash", "bash <<'EOF'\ngh issue close 5\nEOF",
+    "eval 'gh issue close 5'", "echo 5 | xargs gh issue close", "sh -c 'scripts/qa-codex ROLE=qa ISSUE=5'",
+    "/bin/bash -c 'gh issue close 5'", "python3 - <<'EOF'\nimport subprocess\nsubprocess.run('gh issue close 5')\nEOF",
+])
+def test_runner_rule_denies(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
 
 
-def test_trigger_rule_uses_no_tokenizer(monkeypatch):
-    """With G8 switched off and the tokenizer broken, the trigger rule still decides."""
-    def no_lexer(*args, **kwargs):
-        raise AssertionError("the tokenizer must not be used for guarded calls")
+def test_runner_list_holds_the_required_commands():
+    required = {"command", "builtin", "exec", "env", "time", "coproc", "nohup", "sudo", "doas", "nice", "timeout",
+                "xargs", "setsid", "stdbuf", "watch", "find", "parallel", "flock", "eval", "source", ".", "function",
+                "bash", "sh", "zsh", "dash", "ksh", "fish", "python", "python3", "uv", "uvx", "perl", "ruby", "node",
+                "npx", "bunx", "make", "script", "ssh"}
+    assert required <= guard.RUNNER_COMMANDS
+
+
+@pytest.mark.parametrize("cmd", ["bash -c 'echo hi'", "uv run --with pytest pytest", "python3 -c 'print(1)'",
+                                 "xargs ls", "find . -name '*.py'"])
+def test_runner_without_the_words_passes(cmd):
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", ["gh issue close 5 '", "gh issue close 5 $(", "scripts/qa-codex ROLE=qa ISSUE=5 `"])
+def test_unreadable_command_with_the_words_is_denied(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
+def test_unreadable_command_falls_back_to_the_word_rule(monkeypatch):
+    """When the tokenizer fails, the old word rule decides, as before issue #107."""
+    def broken(*args, **kwargs):
+        raise ValueError("synthetic")
 
     monkeypatch.setattr(guard, "g8", lambda command: None)
-    monkeypatch.setattr(guard, "_lex", no_lexer)
+    monkeypatch.setattr(guard, "_lex", broken)
+    assert denied(bash("echo gh issue close 5")).startswith("G1:")
+    assert denied(bash("cat scripts/qa-codex")).startswith("G1:")
     assert classify(bash("gh issue close 5")) == Call(role="close", agent="", issue=5)
-    assert denied(bash("gh  issue close 5")).startswith("G1:")
     assert classify(bash("ls")) is None
+
+
+DENY_TEXTS = ["gh issue close <n>", "scripts/qa-codex ROLE=qa ISSUE=<n>", "whole command", "operators",
+              "redirections", "wrappers", "substitutions", "run_in_background", "only mentions", "<<'EOF'"]
+NOT_IN_DENY = ["git commit -F", "--body-file", "Read", "Grep", "git add scripts/"]
+
+
+@pytest.mark.parametrize("cmd", ["gh  issue close 5", "scripts/qa-codex ROLE=qa ISSUE=5 &", "bash -c 'gh issue close 5'"])
+def test_deny_message_names_the_forms_and_says_that_mentions_pass(cmd):
+    reason = denied(bash(cmd))
+    assert reason.startswith("G1:") and reason == guard.TRIGGER_DENY
+    for text in DENY_TEXTS:
+        assert text in reason
+    for text in NOT_IN_DENY:
+        assert text not in reason
 
 
 @pytest.mark.parametrize("cmd", [
@@ -454,11 +521,12 @@ def test_comment_body_file_in_settings_is_denied_with_g8():
     assert denied(bash("gh issue comment 5 --body-file .claude/settings.local.json")).startswith("G8:")
 
 
-def test_comment_body_file_in_a_close_folder_is_denied_with_g1(tmp_path):
+def test_comment_body_file_in_a_close_folder_passes(tmp_path):
+    """Before issue #107, G1 denied this for the words gh and close. It runs no close, so it passes."""
     folder = tmp_path / "close"
     folder.mkdir()
     path = body_file(folder, "## PM: GROOMED\n")
-    assert denied(bash(f"gh issue comment 5 --body-file {path}")).startswith("G1:")
+    assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
 
 
 def test_comment_command_makes_no_gh_or_git_call(tmp_path, env):
@@ -802,18 +870,19 @@ def test_guard_script_has_pep723_header_and_stdlib_only():
     assert "# /// script" in text and "# dependencies = []" in text
 
 
-@pytest.mark.parametrize("cmd", ["cat scripts/qa-codex", "gh  issue close 5", "/usr/bin/gh issue close 5",
+@pytest.mark.parametrize("cmd", ["bash -c 'gh issue close 5'", "gh  issue close 5", "/usr/bin/gh issue close 5",
                                  "scripts/qa-codex ROLE=qa ISSUE=5 &", "gh issue close 5 && ls",
                                  "x=(a)#; gh issue close 5", "gh {fd}>/dev/null issue close 5"])
 def test_triggered_command_without_form_denies_before_any_gh_call(env, cmd):
-    code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1")
+    code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1", FAKE_GIT_FAIL="1")
     assert code == 0 and deny_reason(out).startswith("G1:")
     assert lines(env["FAKE_GH_CALLS"]) == []
 
 
-@pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue list --state closed"])
+@pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue list --state closed",
+                                 "cat scripts/qa-codex", HEREDOC_BODY])
 def test_command_without_trigger_prints_nothing_and_makes_no_gh_call(env, cmd):
-    code, out = run_guard(bash(cmd), env)
+    code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1", FAKE_GIT_FAIL="1")
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_CALLS"]) == []
 
@@ -863,6 +932,21 @@ def test_bash_runs_the_hidden_close(cmd, tmp_path):
             "HOME": str(tmp_path), "GH_CONFIG_DIR": str(tmp_path / "gh"), "XDG_CONFIG_HOME": str(tmp_path)}
     subprocess.run(["bash", "-c", cmd], cwd=tmp_path, env=env, capture_output=True, timeout=30)
     assert any(c[:1] == ["issue"] and "close" in c[1:] for c in lines(calls))
+
+
+@pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
+@pytest.mark.parametrize("cmd", [c for c in [*MENTIONS_PASS, HEREDOC_BODY, HEREDOC_BODY_UNQUOTED]
+                                 if not c.startswith("git ")])
+def test_bash_runs_no_close_for_the_passing_mentions(cmd, tmp_path):
+    """Parity check the other way: the commands that now pass really run no close."""
+    calls = tmp_path / "calls.jsonl"
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN")}
+    env |= {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_CALLS": str(calls),
+            "HOME": str(tmp_path), "GH_CONFIG_DIR": str(tmp_path / "gh"), "XDG_CONFIG_HOME": str(tmp_path)}
+    (tmp_path / "x").mkdir()
+    cmd = cmd.replace("/tmp/x/", f"{tmp_path}/x/")
+    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, env=env, capture_output=True, timeout=30)
+    assert not any(c[:1] == ["issue"] and "close" in c[1:] for c in lines(calls))
 
 
 # --- PM: WAITING, the blocker read (issue #56) ------------------------------------------------
