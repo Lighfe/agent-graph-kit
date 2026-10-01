@@ -14,11 +14,11 @@ import pytest
 from helpers import HEAD, OLD, cont, facts, issue, launch
 from issue_state import (
     AGENT_LANE,
+    Blocker,
     MARKERS,
     RESUME,
     Call,
     attempt,
-    blocker_to_read,
     check,
     commits_range,
     current_result,
@@ -27,10 +27,11 @@ from issue_state import (
     lane,
     launch_comment,
     newest_done,
+    parse_blockers,
     parse_issue,
+    parse_open_blocker_count,
     returns_since_resume,
     verified_sha,
-    waiting_on,
 )
 
 PM = Call(role="pm", agent="pm", issue=7)
@@ -1175,87 +1176,201 @@ def test_invalid_is_not_a_return():
     assert returns_since_resume(iss) == 0
 
 
-# --- PM: WAITING (issue #56) -----------------------------------------------------
+# --- PM: WAITING and native blockers (issues #56, #64) ------------------------------
 
 
 WAITING = "## PM: WAITING"
+REPO = "octo/kit"
+
+
+def b(number, state="closed", repo=REPO):
+    return Blocker(repo=repo, number=number, state=state)
 
 
 def waiting(*lines):
     """Issue #7: groomed, engineer BLOCKED, then a PM launch with a WAITING result."""
-    body = "\n".join((WAITING, "The criterion needs issue #3 first.", *lines))
+    body = "\n".join((WAITING, "The criterion needs octo/kit#3 first.", *lines))
     return groomed(launch("engineer"), "## Engineer: BLOCKED\nwhy", launch("pm", 2), body)
 
 
 def test_waiting_is_a_pm_result_and_not_pending():
-    iss = issue(launch("pm"), f"{WAITING}\nWaiting on: #3")
+    iss = issue(launch("pm"), WAITING)
     assert current_result(iss) == (1, WAITING)
     assert not is_pending(iss)
 
 
-def test_waiting_on_reads_one_number():
-    assert waiting_on(f"{WAITING}\nWaiting on: #3") == 3
-    assert waiting_on(f"{WAITING}\nWaiting on: #3\r\nWaiting on: #3 ") == 3
-    assert waiting_on(f"{WAITING}\nno line") is None
-    assert waiting_on(f"{WAITING}\nWaiting on: #3\nWaiting on: #4") is None
-    assert waiting_on(f"{WAITING}\n```\nWaiting on: #3\n```") is None
+# the blocker reads, parsed (the guard runs gh, issue_state only reads the text)
 
 
-def test_blocker_to_read_only_for_pm_after_waiting():
-    iss = waiting("Waiting on: #3")
-    assert blocker_to_read(PM, facts(iss)) == 3
-    assert blocker_to_read(Call(role="pm", agent="a1", issue=7, continued=True), facts(iss)) == 3
-    assert blocker_to_read(ENG, facts(iss)) is None
-    assert blocker_to_read(QA, facts(iss)) is None
-    assert blocker_to_read(PM, facts(groomed(launch("engineer"), "## Engineer: BLOCKED"))) is None
-    # no read when the line is missing, conflicting or the issue's own number (G2 denies without it)
-    assert blocker_to_read(PM, facts(waiting())) is None
-    assert blocker_to_read(PM, facts(waiting("Waiting on: #3", "Waiting on: #4"))) is None
-    assert blocker_to_read(PM, facts(waiting("Waiting on: #7"))) is None
-    # no read when G1 denies anyway
-    assert blocker_to_read(PM, facts(iss, clean=False)) is None
+def test_parse_blockers_reads_one_object_per_line():
+    text = ('{"number":3,"repo":"octo/kit","state":"open"}\n'
+            '{"number":12,"repo":"other/lib","state":"closed"}\n')
+    assert parse_blockers(text) == (b(3, "open"), b(12, "closed", "other/lib"))
 
 
-def test_g2_allows_pm_after_waiting_with_closed_blocker():
-    assert check(PM, facts(waiting("Waiting on: #3"), blocker_open=False)) is None
-    cont_pm = Call(role="pm", agent="a1", issue=7, continued=True)
-    assert check(cont_pm, facts(waiting("Waiting on: #3"), blocker_open=False)) is None
+def test_parse_blockers_of_no_blocker_is_empty():
+    assert parse_blockers("") == ()
+    assert parse_blockers("\n") == ()
 
 
-def test_g2_denies_waiting_with_open_blocker():
-    msg = check(PM, facts(waiting("Waiting on: #3"), blocker_open=True))
-    assert msg.startswith("G2:") and "#3" in msg and "open" in msg, msg
+def test_parse_blockers_counts_every_item_of_every_page():
+    # gh --paginate --jq prints the items of all pages, one per line; 31 items are more than one page (30)
+    text = "".join(f'{{"number":{n},"repo":"octo/kit","state":"closed"}}\n' for n in range(1, 32))
+    assert len(parse_blockers(text)) == 31
 
 
-def test_g2_denies_waiting_without_line():
-    msg = check(PM, facts(waiting(), blocker_open=False))
-    assert msg.startswith("G2:") and "Waiting on:" in msg, msg
+@pytest.mark.parametrize("text", [
+    "not json", "[]", '{"number":3,"repo":"octo/kit"}', '{"number":"3","repo":"octo/kit","state":"open"}',
+    '{"number":3,"repo":"octo/kit","state":"OPEN"}', '{"number":3,"repo":5,"state":"open"}',
+    '{"number":true,"repo":"octo/kit","state":"open"}', '{"number":0,"repo":"octo/kit","state":"open"}',
+    '{"number":3,"repo":"","state":"open"}', '5',
+])
+def test_parse_blockers_rejects_output_it_cannot_read(text):
+    with pytest.raises(ValueError):
+        parse_blockers(text)
 
 
-def test_g2_denies_waiting_with_two_different_lines():
-    msg = check(PM, facts(waiting("Waiting on: #3", "Waiting on: #4"), blocker_open=False))
-    assert msg.startswith("G2:") and "Waiting on:" in msg, msg
+def test_parse_open_blocker_count():
+    assert parse_open_blocker_count("0\n") == 0
+    assert parse_open_blocker_count("2") == 2
 
 
-def test_g2_denies_waiting_on_own_number():
-    msg = check(PM, facts(waiting("Waiting on: #7"), blocker_open=False))
-    assert msg.startswith("G2:") and "#7" in msg, msg
+@pytest.mark.parametrize("text", ["", "null", "-1", "x", "1.5", "true", '"2"', "1\n2"])
+def test_parse_open_blocker_count_rejects_output_it_cannot_read(text):
+    with pytest.raises(ValueError):
+        parse_open_blocker_count(text)
 
 
-def test_g2_denies_waiting_when_blocker_state_unknown():
-    assert check(PM, facts(waiting("Waiting on: #3"))).startswith("G2:")
+# G1: an open blocker denies every role launch
+
+
+ROLE_CALLS = [PM, ENG, FE_ENG, QA, QA_FALLBACK, Call(role="engineer", agent="a1", issue=7, continued=True)]
+
+
+@pytest.mark.parametrize("call", ROLE_CALLS)
+def test_g1_allows_no_blocker(call):
+    msg = check(call, facts(issue(), blockers=(), open_blockers=0))
+    assert msg is None or not msg.startswith("G1:"), msg
+
+
+def test_g1_allows_a_pm_launch_with_only_closed_blockers():
+    assert check(PM, facts(issue(), blockers=(b(3), b(4)), open_blockers=0)) is None
+
+
+@pytest.mark.parametrize("call", ROLE_CALLS)
+def test_g1_denies_one_open_blocker_and_names_it(call):
+    msg = check(call, facts(issue(), blockers=(b(3, "open"),), open_blockers=1))
+    assert msg.startswith("G1:") and "octo/kit#3" in msg and "open blocker" in msg, msg
+
+
+def test_g1_denies_several_blockers_one_open_and_names_only_the_open_one():
+    blockers = (b(3), b(5, "open"), b(9, "closed", "other/lib"))
+    msg = check(PM, facts(issue(), blockers=blockers, open_blockers=1))
+    assert msg.startswith("G1:") and "octo/kit#5" in msg, msg
+    assert "octo/kit#3" not in msg and "other/lib#9" not in msg, msg
+
+
+def test_g1_names_several_open_blockers_in_any_order():
+    for blockers in ((b(5, "open"), b(2, "open", "other/lib")), (b(2, "open", "other/lib"), b(5, "open"))):
+        msg = check(PM, facts(issue(), blockers=blockers, open_blockers=2))
+        assert msg.startswith("G1:") and "octo/kit#5" in msg and "other/lib#2" in msg, msg
+
+
+def test_g1_allows_a_closed_blocker_in_another_repo():
+    assert check(PM, facts(issue(), blockers=(b(8, "closed", "other/lib"),), open_blockers=0)) is None
+
+
+def test_g1_denies_an_open_blocker_in_another_repo():
+    msg = check(PM, facts(issue(), blockers=(b(8, "open", "other/lib"),), open_blockers=1))
+    assert msg.startswith("G1:") and "other/lib#8" in msg, msg
+
+
+def test_g1_denies_an_open_blocker_on_the_second_page():
+    blockers = tuple(b(n) for n in range(1, 31)) + (b(31, "open"),)
+    msg = check(PM, facts(issue(), blockers=blockers, open_blockers=1))
+    assert msg.startswith("G1:") and "octo/kit#31" in msg, msg
+
+
+@pytest.mark.parametrize("blockers", [(), (b(3),), (b(3, "open"),)])
+def test_g1_denies_a_count_greater_than_the_open_entries(blockers):
+    """The #95 report: a hidden blocker is not observed, so the list may be incomplete."""
+    count = sum(x.state == "open" for x in blockers) + 1
+    msg = check(PM, facts(issue(), blockers=blockers, open_blockers=count))
+    assert msg.startswith("G1:") and "count" in msg and "cannot read" in msg, msg
+
+
+def test_g1_count_lower_than_the_open_entries_still_names_the_open_entry():
+    # a count below the open entries is no hidden blocker; the open entry itself denies
+    msg = check(PM, facts(issue(), blockers=(b(3, "open"),), open_blockers=0))
+    assert msg.startswith("G1:") and "octo/kit#3" in msg and "cannot read" not in msg, msg
+
+
+@pytest.mark.parametrize("missing", [{"blockers": None}, {"open_blockers": None}])
+def test_g1_denies_role_launch_when_a_blocker_read_is_missing(missing):
+    kw = {"blockers": (), "open_blockers": 0, **missing}
+    msg = check(PM, facts(issue(), **kw))
+    assert msg.startswith("G1:") and "not read" in msg, msg
+
+
+def test_close_does_not_read_blockers():
+    passed = issue(launch("qa"), f"## QA: PASS\nVerified: {HEAD}")
+    assert check(CLOSE, facts(passed, blockers=None, open_blockers=None)) is None
+    assert check(CLOSE, facts(passed, blockers=(b(3, "open"),), open_blockers=1)) is None
 
 
 @pytest.mark.parametrize("call", [PM, ENG, QA, QA_FALLBACK, CLOSE])
-def test_g1_denies_label_waiting(call):
-    for labels in (("waiting",), ("ready", "waiting")):
-        msg = check(call, facts(issue(labels=labels), blocker_open=False))
-        assert msg is not None and msg.startswith("G1:") and "waiting" in msg, msg
+def test_label_waiting_is_no_longer_checked(call):
+    iss = issue(labels=("ready", "waiting"))
+    msg = check(call, facts(iss))
+    assert msg is None or "waiting" not in msg, msg
+
+
+def test_g1_does_not_mention_the_label_waiting_or_the_waiting_on_line():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "issue_state.py").read_text()
+    assert '"waiting"' not in text and "Waiting on:" not in text
+
+
+# G2 after ## PM: WAITING
+
+
+def test_g2_allows_pm_after_waiting_with_closed_blockers():
+    for blockers in ((b(3),), (b(3), b(4, "closed", "other/lib"))):
+        assert check(PM, facts(waiting(), blockers=blockers, open_blockers=0)) is None
+    cont_pm = Call(role="pm", agent="a1", issue=7, continued=True)
+    assert check(cont_pm, facts(waiting(), blockers=(b(3),), open_blockers=0)) is None
+
+
+def test_g2_denies_waiting_with_an_empty_blocker_list():
+    msg = check(PM, facts(waiting(), blockers=(), open_blockers=0))
+    assert msg.startswith("G2:") and WAITING in msg and "no blocker" in msg, msg
+
+
+def test_g2_ignores_a_waiting_on_line():
+    msg = check(PM, facts(waiting("Waiting on: #3"), blockers=(), open_blockers=0))
+    assert msg.startswith("G2:") and "no blocker" in msg, msg
+
+
+def test_g2_denies_waiting_with_an_open_blocker_by_name():
+    from issue_state import g2
+    msg = g2(PM, facts(waiting(), blockers=(b(3), b(4, "open")), open_blockers=1))
+    assert msg.startswith("G2:") and "octo/kit#4" in msg and "open" in msg, msg
+
+
+def test_g2_denies_waiting_with_a_hidden_open_blocker():
+    from issue_state import g2
+    msg = g2(PM, facts(waiting(), blockers=(b(3),), open_blockers=1))
+    assert msg.startswith("G2:") and "cannot read" in msg, msg
+
+
+def test_g2_denies_waiting_when_the_blockers_were_not_read():
+    from issue_state import g2
+    assert g2(PM, facts(waiting(), blockers=None, open_blockers=None)).startswith("G2:")
 
 
 def test_waiting_is_not_a_return_and_does_not_reset_the_count():
     seq = done(launch("qa"), "## QA: FAIL",
-               launch("pm", 2), f"{WAITING}\nWaiting on: #3",
+               launch("pm", 2), WAITING,
                launch("engineer", 2), "## Engineer: BLOCKED")
     assert returns_since_resume(seq) == 2
     assert check(PM, facts(seq)) is None
@@ -1265,9 +1380,9 @@ def test_waiting_is_not_a_return_and_does_not_reset_the_count():
 
 
 def test_waiting_denies_engineer_and_qa():
-    iss = waiting("Waiting on: #3")
-    assert check(ENG, facts(iss, blocker_open=False)).startswith("G3:")
-    assert check(QA, facts(iss, blocker_open=False)).startswith("G4:")
+    iss = waiting()
+    assert check(ENG, facts(iss, blockers=(b(3),))).startswith("G3:")
+    assert check(QA, facts(iss, blockers=(b(3),))).startswith("G4:")
 
 
 def test_issue_state_has_no_io_imports():

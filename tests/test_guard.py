@@ -21,7 +21,7 @@ import guard
 import issue_state
 from guard import Deny, classify, decide
 from helpers import cont, facts, issue, launch
-from issue_state import Call
+from issue_state import Blocker, Call
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / ".claude" / "hooks" / "guard.py"
@@ -472,7 +472,7 @@ def decide_nothing_read(event):
     """decide() with read_facts and post_comment that must not be called."""
     def never(*args):
         raise AssertionError("read_facts or post_comment was called")
-    return decide(event, never, never)
+    return decide(event, never, never, read_blockers=never)
 
 
 @pytest.mark.parametrize("content", [
@@ -602,13 +602,21 @@ def test_owner_marker_comment_through_main_is_allowed(tmp_path, env, monkeypatch
 
 
 class FakeIO:
-    def __init__(self, iss, head=FAKE_HEAD, clean=True):
-        self.facts = facts(iss, head=head, clean=clean)
-        self.reads, self.posts = [], []
+    def __init__(self, iss, head=FAKE_HEAD, clean=True, blockers=(), open_blockers=0):
+        self.facts = facts(iss, head=head, clean=clean, blockers=None, open_blockers=None)
+        self.blockers = (blockers, open_blockers)
+        self.reads, self.posts, self.blocker_reads = [], [], []
 
     def read_facts(self, number):
         self.reads.append(number)
         return self.facts
+
+    def read_blockers(self, number):
+        self.blocker_reads.append(number)
+        return self.blockers
+
+    def decide(self, event):
+        return decide(event, self.read_facts, self.post_comment, read_blockers=self.read_blockers)
 
     def post_comment(self, number, body):
         self.posts.append((number, body))
@@ -616,20 +624,20 @@ class FakeIO:
 
 def test_decide_unguarded_call_reads_nothing():
     fio = FakeIO(issue())
-    assert decide(bash("ls"), fio.read_facts, fio.post_comment) is None
-    assert decide(agent("Explore", "x"), fio.read_facts, fio.post_comment) is None
+    assert fio.decide(bash("ls")) is None
+    assert fio.decide(agent("Explore", "x")) is None
     assert fio.reads == [] and fio.posts == []
 
 
 def test_decide_g8_reads_nothing():
     fio = FakeIO(issue())
-    assert decide(bash("cp x .claude/settings.json"), fio.read_facts, fio.post_comment).startswith("G8:")
+    assert fio.decide(bash("cp x .claude/settings.json")).startswith("G8:")
     assert fio.reads == []
 
 
 def test_decide_allowed_launch_posts_one_launch_comment():
     fio = FakeIO(issue())
-    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment) is None
+    assert fio.decide(agent("pm", "ROLE=pm ISSUE=7")) is None
     assert fio.reads == [7]
     assert fio.posts == [(7, "## Launch: pm (attempt 1)\nAgent: pm")]
 
@@ -638,7 +646,7 @@ def test_decide_launch_with_tool_use_id_posts_call_line():
     import hashlib
     fio = FakeIO(issue())
     event = {**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": "toolu_synthetic_1"}
-    assert decide(event, fio.read_facts, fio.post_comment) is None
+    assert fio.decide(event) is None
     expected = hashlib.sha256("toolu_synthetic_1".encode()).hexdigest()[:12]
     assert fio.posts == [(7, f"## Launch: pm (attempt 1)\nAgent: pm\nCall: {expected}")]
 
@@ -647,32 +655,32 @@ def test_decide_launch_with_tool_use_id_posts_call_line():
 def test_decide_launch_with_non_string_tool_use_id_has_no_call_line(tool_use_id):
     fio = FakeIO(issue())
     event = {**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": tool_use_id}
-    assert decide(event, fio.read_facts, fio.post_comment) is None
+    assert fio.decide(event) is None
     assert fio.posts == [(7, "## Launch: pm (attempt 1)\nAgent: pm")]
 
 
 def test_decide_qa_codex_posts_agent_qa_codex():
     fio = FakeIO(issue(launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: DONE\nCommits: a..b"))
-    assert decide(bash("scripts/qa-codex ROLE=qa ISSUE=7"), fio.read_facts, fio.post_comment) is None
+    assert fio.decide(bash("scripts/qa-codex ROLE=qa ISSUE=7")) is None
     assert fio.posts == [(7, "## Launch: qa (attempt 1)\nAgent: qa-codex")]
 
 
 def test_decide_send_message_posts_continued_round():
     fio = FakeIO(issue(launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: DONE\nCommits: a..b",
                        launch("qa"), "## QA: FAIL"))
-    assert decide(send("a1b2c3", "ROLE=engineer ISSUE=7"), fio.read_facts, fio.post_comment) is None
+    assert fio.decide(send("a1b2c3", "ROLE=engineer ISSUE=7")) is None
     assert fio.posts == [(7, "## Launch: engineer (continued, round 2)\nAgent: a1b2c3")]
 
 
 def test_decide_close_posts_nothing():
     fio = FakeIO(issue(launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}"))
-    assert decide(bash("gh issue close 7"), fio.read_facts, fio.post_comment) is None
+    assert fio.decide(bash("gh issue close 7")) is None
     assert fio.reads == [7] and fio.posts == []
 
 
 def test_decide_failed_check_posts_nothing():
     fio = FakeIO(issue(launch("pm")))
-    reason = decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment)
+    reason = fio.decide(agent("pm", "ROLE=pm ISSUE=7"))
     assert reason.startswith("G1:") and "pending" in reason
     assert fio.posts == []
 
@@ -691,8 +699,9 @@ def test_decide_holds_the_lock_from_read_to_post():
         events.append("read")
         return facts(issue())
 
-    decide(agent("pm", "ROLE=pm ISSUE=7"), read, lambda n, b: events.append("post"), lock=Lock)
-    assert events == ["lock", "read", "post", "unlock"]
+    decide(agent("pm", "ROLE=pm ISSUE=7"), read, lambda n, b: events.append("post"), lock=Lock,
+           read_blockers=lambda n: events.append("blockers") or ((), 0))
+    assert events == ["lock", "read", "blockers", "post", "unlock"]
 
 
 # --- entry point (subprocess with fakes) --------------------------------------------------------
@@ -999,39 +1008,58 @@ def test_bash_runs_no_close_for_the_passing_mentions(cmd, tmp_path):
     assert not any(c[:1] == ["issue"] and "close" in c[1:] for c in lines(calls))
 
 
-# --- PM: WAITING, the blocker read (issue #56) ------------------------------------------------
+# --- native blockers (issues #56, #64) ------------------------------------------------------
 
-WAITING_ON_3 = (launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: BLOCKED\nwhy",
-                launch("pm", 2), "## PM: WAITING\nWaiting on: #3")
+WAITING_SEQ = (launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: BLOCKED\nwhy",
+               launch("pm", 2), "## PM: WAITING\nBlocked by octo/kit#3.")
+BLOCKED_BY_PATH = "repos/{owner}/{repo}/issues/7/dependencies/blocked_by"
+BLOCKERS_READ = ["api", "--paginate", BLOCKED_BY_PATH, "--jq", ".[] | {repo: .repository.full_name, number, state}"]
+COUNT_READ = ["api", "repos/{owner}/{repo}/issues/7", "--jq", ".issue_dependencies_summary.blocked_by"]
 
 
-def test_decide_reads_blocker_only_after_waiting():
-    reads = []
+def api_blocker(number, state="closed", repo="octo/kit"):
+    """One item of the blocked_by REST list, in the shape GitHub returns (synthetic)."""
+    return {"number": number, "state": state, "title": f"Blocker {number}", "repository": {"full_name": repo}}
 
-    def read_blocker(n):
-        reads.append(n)
-        return False
 
-    fio = FakeIO(issue(*WAITING_ON_3))
-    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment,
-                  read_blocker=read_blocker) is None
-    assert reads == [3]
-    assert fio.posts == [(7, "## Launch: pm (attempt 3)\nAgent: pm")]
-    reads.clear()
-    fio = FakeIO(issue(*WAITING_ON_3[:4]))
-    assert decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment,
-                  read_blocker=read_blocker) is None
-    assert reads == []
+def write_api(env, blocked_by=None, count=None, pages=None):
+    """FAKE_GH_API data: the blocker list (one page, or `pages`) and the open-blocker count."""
+    data = {"blocked_by": pages if pages is not None else [blocked_by or []]}
+    if count is not None:
+        data["issue"] = count if isinstance(count, str) else {"issue_dependencies_summary": {"blocked_by": count}}
+    path = Path(env["FAKE_GH_ISSUE"]).with_name("api.json")
+    path.write_text(json.dumps(data))
+    env["FAKE_GH_API"] = str(path)
+
+
+def test_decide_reads_blockers_for_every_role_launch_but_not_for_close():
+    for event, comments in [(agent("pm", "ROLE=pm ISSUE=7"), ()),
+                            (agent("software-engineer", "ROLE=engineer ISSUE=7"), (launch("pm"), "## PM: GROOMED")),
+                            (send("a1", "ROLE=engineer ISSUE=7"), (launch("pm"), "## PM: GROOMED")),
+                            (bash("scripts/qa-codex ROLE=qa ISSUE=7"),
+                             (launch("pm"), "## PM: GROOMED", launch("engineer"), "## Engineer: DONE\nCommits: a..b"))]:
+        fio = FakeIO(issue(*comments))
+        assert fio.decide(event) is None
+        assert fio.blocker_reads == [7]
+    fio = FakeIO(issue(launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}"))
+    assert fio.decide(bash("gh issue close 7")) is None
+    assert fio.blocker_reads == []
+
+
+def test_decide_without_a_blocker_reader_denies_a_role_launch():
+    fio = FakeIO(issue())
+    reason = decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment)
+    assert reason.startswith("guard error") and fio.posts == []
 
 
 def test_decide_open_blocker_denies_and_posts_nothing():
-    fio = FakeIO(issue(*WAITING_ON_3))
-    reason = decide(agent("pm", "ROLE=pm ISSUE=7"), fio.read_facts, fio.post_comment, read_blocker=lambda n: True)
-    assert reason.startswith("G2:") and "#3" in reason and "open" in reason
+    fio = FakeIO(issue(*WAITING_SEQ), blockers=(Blocker("octo/kit", 3, "open"),), open_blockers=1)
+    reason = fio.decide(agent("pm", "ROLE=pm ISSUE=7"))
+    assert reason.startswith("G1:") and "octo/kit#3" in reason
     assert fio.posts == []
 
 
-def test_decide_reads_blocker_inside_the_lock_before_the_post():
+def test_decide_reads_blockers_inside_the_lock_before_the_post():
     events = []
 
     class Lock:
@@ -1041,41 +1069,113 @@ def test_decide_reads_blocker_inside_the_lock_before_the_post():
         def __exit__(self, *exc):
             events.append("unlock")
 
-    decide(agent("pm", "ROLE=pm ISSUE=7"), lambda n: facts(issue(*WAITING_ON_3)),
+    decide(agent("pm", "ROLE=pm ISSUE=7"), lambda n: events.append("read") or facts(issue(*WAITING_SEQ)),
            lambda n, b: events.append("post"), lock=Lock,
-           read_blocker=lambda n: events.append("blocker") or False)
-    assert events == ["lock", "blocker", "post", "unlock"]
+           read_blockers=lambda n: events.append("blockers") or ((Blocker("octo/kit", 3, "closed"),), 0))
+    assert events == ["lock", "read", "blockers", "post", "unlock"]
 
 
-def test_guard_views_the_closed_blocker_and_allows(env):
-    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
-    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "CLOSED"}')
+def test_guard_reads_blockers_with_the_paginated_read_form_and_the_count(env):
+    write_api(env, [api_blocker(3)], count=0)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
     assert (code, out) == (0, "")
     calls = lines(env["FAKE_GH_CALLS"])
-    assert ["issue", "view", "3", "--json", "state"] in calls
+    assert BLOCKERS_READ in calls and COUNT_READ in calls
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 3)\nAgent: pm"}]
 
 
-def test_guard_denies_open_blocker(env):
-    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
-    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "OPEN"}')
+def test_guard_allows_no_blocker(env):
+    write_api(env, [], count=0)
+    assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
+
+
+def test_guard_denies_one_open_blocker(env):
+    write_api(env, [api_blocker(3, "open")], count=1)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
     reason = deny_reason(out)
-    assert reason.startswith("G2:") and "#3" in reason and "open" in reason
+    assert reason.startswith("G1:") and "octo/kit#3" in reason
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
-def test_guard_makes_no_second_view_after_blocked(env):
-    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3[:4])
-    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES='{"3": "CLOSED"}')
-    assert (code, out) == (0, "")
-    views = [c for c in lines(env["FAKE_GH_CALLS"]) if c[:2] == ["issue", "view"]]
-    assert len(views) == 1 and views[0][2] == "7"
+def test_guard_denies_several_blockers_one_open(env):
+    write_api(env, [api_blocker(3), api_blocker(4, "open"), api_blocker(5, "closed", "other/lib")], count=1)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm"), "## PM: GROOMED")
+    reason = deny_reason(run_guard(agent("software-engineer", "ROLE=engineer ISSUE=7"), env)[1])
+    assert reason.startswith("G1:") and "octo/kit#4" in reason and "#3" not in reason
 
 
-@pytest.mark.parametrize("states", ["{}", '{"3": "MERGED"}', '{"3": 5}'])
-def test_guard_failing_blocker_read_denies_with_guard_error(env, states):
-    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_ON_3)
-    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_STATES=states)
+def test_guard_allows_a_closed_blocker_in_another_repo(env):
+    write_api(env, [api_blocker(9, "closed", "other/lib")], count=0)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
+    assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
+
+
+def test_guard_reads_every_page_of_blockers(env):
+    page1 = [api_blocker(n) for n in range(1, 31)]
+    page2 = [api_blocker(31, "open")]
+    write_api(env, pages=[page1, page2], count=1)
+    reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
+    assert reason.startswith("G1:") and "octo/kit#31" in reason
+
+
+def test_fake_gh_without_paginate_shows_only_the_first_page(env):
+    """Control for the test above: the open blocker on page 2 is found only with --paginate."""
+    write_api(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]], count=1)
+    args = [a for a in BLOCKERS_READ if a != "--paginate"]
+    out = subprocess.run(["gh", *args], env={**os.environ, **env}, capture_output=True, text=True).stdout
+    assert len(out.splitlines()) == 30 and '"number": 31' not in out and '"number":31' not in out
+
+
+def test_guard_denies_a_count_greater_than_the_open_entries(env):
+    write_api(env, [api_blocker(3)], count=1)
+    reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
+    assert reason.startswith("G1:") and "cannot read" in reason
+
+
+def test_guard_denies_waiting_with_an_empty_blocker_list(env):
+    write_api(env, [], count=0)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
+    reason = deny_reason(out)
+    assert reason.startswith("G2:") and "no blocker" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_close_makes_no_blocker_read(env):
+    write_api(env, [api_blocker(3, "open")], count=1)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
+    assert run_guard(bash("gh issue close 7"), env) == (0, "")
+    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
+
+
+def test_guard_ignores_the_label_waiting(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), labels=("ready", "waiting"))
+    assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
+
+
+@pytest.mark.parametrize("key", ["blocked_by", "issue"])
+def test_guard_failing_blocker_read_denies_with_guard_error(env, key):
+    write_api(env, [], count=0)
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_API_FAIL=key)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+@pytest.mark.parametrize("pages, count", [
+    ("not json\n", 0),
+    ([[{"number": 3, "state": "open", "repository": {}}]], 0),
+    ([[]], "null"),
+    ([[]], "x"),
+    ([[]], {}),
+])
+def test_guard_blocker_output_it_cannot_read_denies_with_guard_error(env, pages, count):
+    data = {"blocked_by": pages}
+    data["issue"] = count if isinstance(count, (str, dict)) else {"issue_dependencies_summary": {"blocked_by": count}}
+    path = Path(env["FAKE_GH_ISSUE"]).with_name("api.json")
+    path.write_text(json.dumps(data))
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), {**env, "FAKE_GH_API": str(path)})
     assert code == 0 and deny_reason(out).startswith("guard error")
     assert lines(env["FAKE_GH_LOG"]) == []
 

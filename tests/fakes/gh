@@ -14,11 +14,14 @@ FAKE_GH_STDERR=<text>    stderr of a failing call
 FAKE_GH_API=<path>       JSON object for `gh api <path> --paginate`, keyed by the read: "timeline",
                          "blocked_by", "sub_issues", "issues" (the repo's issue list). A list value is
                          printed as JSON; a string value is printed as it is (raw output, e.g. two
-                         pages or text that is not JSON). A missing file or key prints `[]`
+                         pages or text that is not JSON). A missing file or key prints `[]`.
+                         The two blocker reads with --jq (issue #64) use the keys "blocked_by" (a
+                         list of pages) and "issue" (the issue object); see the comment at that branch
 FAKE_GH_API_FAIL=<key>   only the `gh api` read with that key exits 1
 """
 import json
 import os
+import re
 import sys
 import time
 
@@ -88,6 +91,58 @@ def api_key(path):
     if path.split("?", 1)[0].endswith("/issues"):
         return "issues"
     return None
+
+
+BLOCKERS_JQ = ".[] | {repo: .repository.full_name, number, state}"
+COUNT_JQ = ".issue_dependencies_summary.blocked_by"
+DEFAULT_ISSUE = {"issue_dependencies_summary": {"blocked_by": 0}}
+
+
+def api_data():
+    if env("FAKE_GH_API") and os.path.exists(env("FAKE_GH_API")):
+        with open(env("FAKE_GH_API"), encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def dig(value, *keys):
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+# The blocker reads of the guard (issue #64), with the two --jq expressions emulated:
+#   gh api --paginate repos/{owner}/{repo}/issues/<n>/dependencies/blocked_by --jq BLOCKERS_JQ
+#     FAKE_GH_API key "blocked_by": a list of pages (lists of REST items); with --paginate every page,
+#     without it only the first page; a string is printed as it is
+#   gh api repos/{owner}/{repo}/issues/<n> --jq COUNT_JQ
+#     FAKE_GH_API key "issue": the REST issue object (default: count 0); a string is printed as it is
+if args[:1] == ["api"] and "--jq" in args:
+    jq = args[args.index("--jq") + 1] if args.index("--jq") + 1 < len(args) else None
+    rest = [a for i, a in enumerate(args[1:], 1) if a not in ("--paginate", "--jq") and args[i - 1] != "--jq"]
+    path = rest[0] if len(rest) == 1 else ""
+    key = "issue" if re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+", path) else api_key(path)
+    if (key, jq) not in (("blocked_by", BLOCKERS_JQ), ("issue", COUNT_JQ)):
+        sys.stderr.write(f"fake gh: unsupported call {args}\n")
+        sys.exit(2)
+    if env("FAKE_GH_API_FAIL") == key:
+        fail()
+    data = api_data()
+    if key == "issue":
+        value = data.get("issue", DEFAULT_ISSUE)
+        sys.stdout.write(value if isinstance(value, str) else json.dumps(dig(value, *COUNT_JQ[1:].split("."))) + "\n")
+        sys.exit(0)
+    value = data.get("blocked_by", [[]])
+    if isinstance(value, str):
+        sys.stdout.write(value)
+        sys.exit(0)
+    pages = value if "--paginate" in args else value[:1]
+    for page in pages:
+        for item in page:
+            out = {"number": item.get("number"), "repo": dig(item, "repository", "full_name"),
+                   "state": item.get("state")}
+            sys.stdout.write(json.dumps(out, separators=(",", ":"), sort_keys=True) + "\n")
+    sys.exit(0)
 
 
 if args[:1] == ["api"] and len(args) == 3 and args[2] == "--paginate" and api_key(args[1]):
