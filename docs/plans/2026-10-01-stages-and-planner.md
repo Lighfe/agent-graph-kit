@@ -139,7 +139,7 @@ Lane: default
 - [ ] Set-up: present the options of the newest stage review, answer questions, the owner chooses and validates the purpose; write the stage issue, file or link sub-issues (`gh issue edit <stage> --add-sub-issue`), set blockers, add `ready` to the sub-issues, close the finished stage issue, archive the plan; end with the line "Stage #N is ready. Run `/goal …` here or in a new session."
 - [ ] `.claude/agents/planner.md` points to the role file, like the other subagent files; tools: Read, Grep, Glob, Bash
 
-**Out of scope:** the hook (2.2), the skill (2.4).
+**Out of scope:** the hook (task 2.2), the skill (task 2.4).
 
 **Constraints:** the two new files only.
 
@@ -157,7 +157,7 @@ Lane: default
 - [ ] Tests cover the allowed launch, a launch on a non-stage issue, a closed stage issue, and the marker
 - [ ] The v1 spec sections on the launch line, the checks and the result markers name the planner
 
-**Out of scope:** the prose of the stage end (2.3).
+**Out of scope:** the prose of the stage end (task 2.3).
 
 **Constraints:** `.claude/hooks/` and their tests, the v1 spec sections named.
 
@@ -222,7 +222,7 @@ Lane: default
 - [ ] `docs/specs/2026-09-25-agent-graph-kit-v1.md` is moved unchanged to `docs/archive/`; `docs/specs/2026-10-01-stages-and-planner.md` and the proposals of #83 and #84 too
 - [ ] Every instruction file that pointed to the v1 spec points to the living spec
 
-**Out of scope:** code references to section numbers (3.2).
+**Out of scope:** code references to section numbers (task 3.2).
 
 ### Task 3.2: Code cites spec anchors; fact test for anchors and guarantee IDs
 
