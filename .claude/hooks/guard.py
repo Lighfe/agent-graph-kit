@@ -14,18 +14,27 @@ allowed call prints nothing, so the normal permission check stays on.
 Any error denies: a failing `gh` or `git`, broken input, a crash, and the
 overall deadline (GUARD_DEADLINE seconds, default 60). Stdlib only.
 
-Bash commands are not parsed for guarded calls (spec 5.1). A command that
-mentions the words `gh` and `close`, or the text `qa-codex`, is triggered.
-A triggered command is a guarded call only if its whole text is one of two
-exact forms (CLOSE_FORM, QA_FORM). Any other triggered command is denied,
-also when it runs no guarded call (`cat scripts/qa-codex`); these false
-denies are accepted. The shell tokenizer below serves G8 only.
+Bash commands (spec 5.1, issue #107): the guard reads the command with the
+shell tokenizer below (the one G8 uses) and looks at every simple command in
+it, also inside $(…), backticks, <(…), >(…) and the substitutions of an
+unquoted here-document body. The command word is the first word after
+assignments, redirections with their target and the reserved words. A close
+run is `gh` (or a path ending in /gh) with the words `issue` and then `close`
+after it; a launcher run is `qa-codex` (or a path ending in /qa-codex). A
+runner (RUNNER_COMMANDS: bash -c, eval, xargs, env, python3 …), a command
+word that holds an expansion, a comment or an array assignment counts as a
+run when the old word rule triggers on the text (the words `gh` and `close`,
+or the text `qa-codex`); these false denies are accepted. A command with a
+run is a guarded call only if its whole text is one of two exact forms
+(CLOSE_FORM, QA_FORM); otherwise it is denied. Text that only mentions the
+words passes (`cat scripts/qa-codex`, a here-document body, a commit
+message). A command the tokenizer cannot read is denied if the old word rule
+triggers, and passes otherwise.
 
-Known limits by design (P1, hooks are not a security boundary): a text that
-does not literally contain the trigger is not recognized, for example
-variables (`$GH issue close 5`), `$'…'` escapes, brace expansion, globs,
-quotes or backslashes inside a word, and other letter case. Calls outside
-the prescribed ones (`gh api`, `gh issue edit --state closed`) are not checked.
+Known limits by design (P1, hooks are not a security boundary): variables
+(`$GH issue close 5`), brace expansion, globs, other letter case, runners not
+in the list, a script file that holds a close run, and calls outside the
+prescribed ones (`gh api`, `gh issue edit --state closed`) are not recognized.
 """
 
 from __future__ import annotations
@@ -55,19 +64,34 @@ CALL_TIMEOUT_S = 20  # per gh/git call
 STDERR_MAX = 200  # P5: first stderr line, cut to 200 characters
 LOCK_NAME = "agent-graph-kit-guard.lock"
 
-# Bash trigger rule (spec 5.1): the trigger words, and the only two forms a triggered command may have.
+# Bash rule of G1 (spec 5.1): what a real run is, the old word rule, and the only two forms a run may have.
+CLI_NAME = "gh"
+LAUNCHER_NAME = "qa-codex"
 GH_WORD = re.compile(r"\bgh\b", re.ASCII)
 CLOSE_WORD = re.compile(r"\bclose\b", re.ASCII)
 CLOSE_FORM = re.compile(
     r"""gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?""")
 QA_FORM = re.compile(r"scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?")
+# Commands that can run another command from their arguments, from stdin or from a here-document.
+RUNNER_COMMANDS = frozenset({
+    "command", "builtin", "exec", "env", "time", "coproc", "nohup", "sudo", "doas", "nice", "timeout", "xargs",
+    "setsid", "stdbuf", "watch", "find", "parallel", "flock", "eval", "source", ".", "function",
+    "bash", "sh", "zsh", "dash", "ksh", "fish", "python", "python3", "uv", "uvx", "perl", "ruby", "node", "npx",
+    "bunx", "make", "script", "ssh",
+    # more of the same kind
+    "ionice", "chrt", "taskset", "unbuffer", "strace", "ltrace", "chroot", "nsenter", "unshare", "su", "runuser",
+    "pkexec", "busybox", "ash", "mksh", "csh", "tcsh", "pwsh", "awk", "gawk", "mawk", "php", "lua", "deno", "bun",
+    "npm", "pnpm", "yarn", "pipx", "poetry", "just", "trap",
+})
+_RESERVED_WORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")  # NAME=value, a[i]=value, NAME+=value
 TRIGGER_DENY = (
-    "G1: the command mentions gh and close, or qa-codex, but is not one of the two exact forms: "
-    "gh issue close <n> (optionally --reason completed or --reason 'not planned'), or "
-    "scripts/qa-codex ROLE=qa ISSUE=<n>, as the whole command. Ways around: write a commit message "
-    "to a file and use git commit -F <file>; write a comment body to a file and use gh … --body-file <file>; "
-    "use the Read or Grep tool instead of Bash to read or search; use a path without the trigger word "
-    "(git add scripts/); run qa-codex with the Bash tool's run_in_background option instead of &")
+    "G1: the command runs gh issue close or qa-codex (or may run it through a runner such as bash -c, eval, "
+    "xargs or env) but is not one of the two exact forms: gh issue close <n> (optionally --reason completed "
+    "or --reason 'not planned'), or scripts/qa-codex ROLE=qa ISSUE=<n>. The run must be the whole command: "
+    "no operators, redirections, wrappers or substitutions. Run qa-codex with the Bash tool's "
+    "run_in_background option instead of &. Text that only mentions these words passes, for example a body "
+    "written to a file with a quoted here-document (cat > /tmp/body.md <<'EOF' … EOF)")
 
 # G8 (spec 5.9)
 SETTINGS_NAME = re.compile(r"settings[^/\s]*\.json", re.IGNORECASE)
@@ -82,8 +106,8 @@ class Deny(Exception):
 
 # --- shell tokenizer ------------------------------------------------------------------
 #
-# A small bash-like tokenizer for G8 (spec 5.9). It is not used to find guarded calls.
-# It knows quotes ('…', "…", $'…', $"…"), backslashes,
+# A small bash-like tokenizer for G8 (spec 5.9) and for the Bash rule of G1 (spec 5.1), which
+# finds the simple commands that really run. It knows quotes ('…', "…", $'…', $"…"), backslashes,
 # line continuations, $name, ${…}, $(…), <(…), >(…), backticks, arithmetic ((…)),
 # $((…)), $[…] and subscripts a[…], operators, redirections (also with {fd}),
 # here-documents, comments and the patterns of `case`. As in bash, `#` starts a
@@ -93,6 +117,7 @@ class Deny(Exception):
 # <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double quotes);
 # ("op", op) a command separator, also "((" before an arithmetic command; ("redir", op)
 # a redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
+# The texts of the comments it skips are kept in `comments`: G1 doubts its reading where it sees one.
 
 _OPS = (";;&", "&>>", "<<<", "<<-", "&&", "||", "|&", ";;", ";&", ">>", ">|", "<>", "<&", ">&",
         "&>", "<<", ";", "&", "|", "(", ")", "<", ">")
@@ -118,6 +143,7 @@ class _Lexer:
         self.t = text
         self.n = len(text)
         self.level = 0  # nesting of $…, <(…) and >(…)
+        self.comments: list[str] = []
 
     def join(self, i: int) -> None:
         """Remove the line continuations (backslash-newline) inside the token that starts at i.
@@ -202,7 +228,9 @@ class _Lexer:
                 i += 1
             elif c == "#" and not word:  # a comment, up to the end of the line
                 j = t.find("\n", i)
-                i = n if j < 0 else j
+                j = n if j < 0 else j
+                self.comments.append(t[i:j])
+                i = j
             elif c == "\n":
                 end()
                 toks.append(("op", "\n"))
@@ -523,12 +551,17 @@ class _Lexer:
         return n, t[start:]
 
 
-def _lex(command: str) -> list[tuple]:
-    """Tokens of the command. Raises ValueError if it cannot be parsed."""
+def _lex(command: str, comments: list[str] | None = None) -> list[tuple]:
+    """Tokens of the command. Raises ValueError if it cannot be parsed.
+    If `comments` is given, the texts of the comments the tokenizer skipped are added to it."""
+    lexer = _Lexer(command)
     try:
-        return _Lexer(command).script(0, sub=False)[0]
+        toks = lexer.script(0, sub=False)[0]
     except RecursionError:
         raise ValueError("the command is nested too deeply") from None
+    if comments is not None:
+        comments.extend(lexer.comments)
+    return toks
 
 
 def _simple_commands(toks: list[tuple]) -> tuple[list[list[tuple]], int]:
@@ -586,7 +619,72 @@ def _classify_send(tool_input: dict) -> Call:
 
 
 def _triggered(text: str) -> bool:
-    return bool(GH_WORD.search(text) and CLOSE_WORD.search(text)) or "qa-codex" in text
+    """The old word rule: the words gh and close, or the text qa-codex."""
+    return bool(GH_WORD.search(text) and CLOSE_WORD.search(text)) or LAUNCHER_NAME in text
+
+
+def _check_simple_command(cmd: list[tuple], found: set[str]) -> None:
+    """Add "run" to `found` for a close run or a launcher run, "runner" for a runner or a
+    command word that holds an expansion."""
+    words, target = [], False
+    for tok in cmd:
+        if tok[0] == "redir":
+            target = True  # the next word is the target of the redirection
+        elif tok[0] == "w":
+            if not target:
+                words.append(tok)
+            target = False
+    k = 0
+    while k < len(words) and (words[k][1] in _RESERVED_WORDS or _ASSIGNMENT.match(words[k][1])):
+        k += 1
+    if k == len(words):
+        return
+    _, word, subs = words[k]
+    name = word.rsplit("/", 1)[-1]
+    rest = [tok[1] for tok in words[k + 1:]]
+    if subs or "$" in word or "`" in word or name in RUNNER_COMMANDS:
+        found.add("runner")
+    if name == LAUNCHER_NAME or (name == CLI_NAME and "issue" in rest and "close" in rest[rest.index("issue") + 1:]):
+        found.add("run")
+
+
+def _scan(text: str, found: set[str], depth: int = 0) -> None:
+    """Look at every simple command of `text`, also inside substitutions (recursively), and add to
+    `found` what they do: "run" and "runner" (see _check_simple_command), and "doubt" for a comment
+    or an array assignment `a=(…)`, where the tokenizer may read the text otherwise than bash.
+    Raises ValueError when the text cannot be read."""
+    if depth > _MAX_NESTING:
+        raise ValueError("the command is nested too deeply")
+    comments: list[str] = []
+    toks = _lex(text, comments)
+    if comments:
+        found.add("doubt")
+    cmd: list[tuple] = []
+    arith = False  # the simple command after `((` is an arithmetic command, not a command word
+    for tok in (*toks, ("op", "")):
+        if tok[0] in ("w", "body"):
+            for sub in tok[2]:
+                _scan(sub, found, depth + 1)
+        if tok[0] != "op":
+            cmd.append(tok)
+            continue
+        if tok[1] == "(" and cmd and cmd[-1][0] == "w" and _ASSIGNMENT.fullmatch(cmd[-1][1]):
+            found.add("doubt")
+        if not arith:
+            _check_simple_command(cmd, found)
+        arith = tok[1] == "(("
+        cmd = []
+
+
+def _runs_guarded(command: str) -> bool:
+    """True when the command runs a close run or the launcher, or may run one (spec 5.1)."""
+    triggered = _triggered(command) or _triggered(command.replace("\\\n", ""))
+    found: set[str] = set()
+    try:
+        _scan(command, found)
+    except (ValueError, RecursionError):
+        return triggered  # a command the tokenizer cannot read
+    return "run" in found or (triggered and bool(found & {"runner", "doubt"}))
 
 
 def g8(command: str) -> str | None:
@@ -621,7 +719,7 @@ def _classify_bash(tool_input: dict) -> Call | None:
     reason = g8(command)  # G8 first, without any gh call
     if reason:
         raise Deny(reason)
-    if not (_triggered(command) or _triggered(command.replace("\\\n", ""))):
+    if not _runs_guarded(command):
         return None
     if m := CLOSE_FORM.fullmatch(command):  # always the original text, never the copy
         return Call(role="close", agent="", issue=int(m.group(1)))

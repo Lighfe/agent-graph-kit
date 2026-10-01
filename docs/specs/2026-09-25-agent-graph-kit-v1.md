@@ -92,37 +92,43 @@ A hook runs before each tool call of the orchestrator and of its subagents. It g
 | Bash call of `qa-codex` | qa |
 | Bash call of `gh issue close <number>` | close |
 | Bash command that writes to `.claude/settings*.json` | – (always denied, G8) |
-| Any other Bash command that contains the trigger (below) | – (always denied, G1) |
+| Any other Bash command that runs `gh issue close` or `qa-codex`, or may run it (rule below) | – (always denied, G1) |
 
-All other calls pass. Examples: other subagent types, the Codex review skill, Bash commands without the trigger.
+All other calls pass. Examples: other subagent types, the Codex review skill, Bash commands that run neither, also when their text mentions the words.
 
-**Bash trigger rule.** The hook does not parse Bash commands to find a guarded call. It uses a fail-closed rule instead:
+**Bash rule of G1.** The hook reads each Bash command with the shell tokenizer that G8 uses (`_lex` in `guard.py`, [#107](https://github.com/Lighfe/agent-graph-kit/issues/107)) and decides by the commands that really run. It fails closed where the reading is in doubt:
 
-- **Trigger.** A text is triggered if it contains both words `gh` and `close` (Python regexes `\bgh\b` and `\bclose\b` with the flag `re.ASCII`, case-sensitive), or the text `qa-codex`. A Bash command is triggered if its original text is triggered, or a copy of it with every backslash-newline (`\` followed by LF) removed is triggered. So `gh issue clo\` + LF + `se 5` is triggered.
-- **Allowed forms.** A triggered command is a guarded call only if its original, unchanged text (never the copy) matches one of these patterns with Python `re.fullmatch`:
+- **Simple commands.** The hook looks at every simple command: the top-level ones and, recursively, the ones inside `$(…)`, backticks, `<(…)`, `>(…)` and the substitutions inside an unquoted here-document body. The body text of a here-document is not a command.
+- **Command word.** In each simple command, the command word is the first word after skipping assignment words (`NAME=value`), redirections with their target word (`>/dev/null`, `{fd}>file`, `2>&1`) and the reserved words `{`, `}`, `!`, `if`, `then`, `else`, `elif`, `do`, `while`, `until`. Words are compared after quote removal, so `cl''ose`, `c\lose` and `$'close'` are `close`.
+- **Close run.** The command word is `gh` or a path whose last part is `gh`, and among the later words there is a word `issue` and, after it, a word `close`.
+- **Launcher run.** The command word is `qa-codex` or a path whose last part is `qa-codex`.
+- **Old word rule.** A text triggers it if it contains both words `gh` and `close` (Python regexes `\bgh\b` and `\bclose\b` with the flag `re.ASCII`, case-sensitive), or the text `qa-codex`. A Bash command triggers it if its original text or a copy with every backslash-newline (`\` followed by LF) removed does.
+- **Runner rule (fail-closed).** The constant `RUNNER_COMMANDS` lists commands that can run another command from their arguments, from stdin or from a here-document (`command`, `builtin`, `exec`, `env`, `time`, `coproc`, `nohup`, `sudo`, `xargs`, `find`, `eval`, `source`, `function`, `bash`, `sh`, `python3`, `uv`, `make`, `ssh` and more). When a simple command has a command word (or last path part) in this list, and the command triggers the old word rule, the command counts as a run. The same holds, for the same reason, when a command word holds an expansion (`"$x"gh`, `$(true)gh`), or when the command has a comment or an array assignment `a=(…)`, where the tokenizer may read the text otherwise than bash.
+- **Allowed forms.** A command with a close run, a launcher run or a runner-rule match is a guarded call only if its original, unchanged text matches one of these patterns with Python `re.fullmatch`:
   - close: `gh issue close ([1-9][0-9]*)(?:(?: --reason | --reason=| -r )(?:completed|'not planned'|"not planned"))?[ \t]*\n?`
   - qa: `scripts/qa-codex ROLE=qa ISSUE=([1-9][0-9]*)[ \t]*\n?`
 
   A match is not an allow on its own. The call then goes through the checks (5.4), the lock and the deadline (5.6, 5.7) and the launch comment (5.3), as every guarded call does. `qa-codex` runs with the Bash tool's background option (`run_in_background`), not with `&`.
-- **Deny.** Every other triggered command is denied with `G1:`, before any `gh` or `git` call. The deny reason names the two forms and the ways around: `git commit -F <file>` for a commit message, `gh … --body-file <file>` for a comment body, the Read or Grep tool instead of Bash, a path without the trigger word (`git add scripts/`), and `run_in_background` instead of `&`.
-- **No trigger.** A Bash command that is not triggered is not a guarded call. G8 (5.9) still applies to it, and G8 runs first for every Bash command.
+- **Deny.** Every other command with a run is denied with `G1:`, before any `gh` or `git` call. The deny reason names the two forms, says that the run must be the whole command (no operators, redirections, wrappers or substitutions), names `run_in_background` instead of `&`, and says that text which only mentions the words passes, for example a body written to a file with a quoted here-document `<<'EOF'`.
+- **Unreadable command.** When the tokenizer cannot read the command (also when it is nested too deeply), the command is denied with `G1:` if it triggers the old word rule, and passes otherwise.
+- **No run.** A Bash command without a run is not a guarded call. G8 (5.9) still applies to it, and G8 runs first for every Bash command.
 
-**Bash comment commands (no check).** The guard does not check comment commands. The check G9 ([#72](https://github.com/Lighfe/agent-graph-kit/issues/72), [#78](https://github.com/Lighfe/agent-graph-kit/issues/78)) that kept every comment call in one exact form was removed in [#90](https://github.com/Lighfe/agent-graph-kit/issues/90): after the content check was dropped in #78, the form protected nothing, and it denied many commands that only wrote a file. A comment command goes through G8 and the G1 trigger rule like any Bash command (a command or path with `close` or `qa-codex` in it is still denied by G1). The agents post with `gh issue comment <n> --body-file <literal absolute path>`, with the body in a file; this is a rule of `docs/process.md`, not a check.
+**Examples that pass** (they only mention the words): `cat scripts/qa-codex`, `wc -l scripts/qa-codex`, `git add scripts/qa-codex`, `git commit -m "Fix gh close handling"`, a heredoc commit message that names `qa-codex` (`git commit -m "$(cat <<'EOF'` … `EOF` … `)"`), `echo gh issue close 5`, `grep "gh issue close 5" AGENTS.md`, `gh issue view 5 | grep close`, `gh pr close 5`, `gh issue create --title "…close…" --body-file /tmp/x.md`, and an issue body written with `cat > /tmp/x/body.md <<'EOF'` whose lines name the close command and the `qa-codex` form. With an unquoted `<<EOF`, the body passes too when it holds the command as plain text; in backticks or `$(…)` bash runs it, so it is denied.
+
+**Bash comment commands (no check).** The guard does not check comment commands. The check G9 ([#72](https://github.com/Lighfe/agent-graph-kit/issues/72), [#78](https://github.com/Lighfe/agent-graph-kit/issues/78)) that kept every comment call in one exact form was removed in [#90](https://github.com/Lighfe/agent-graph-kit/issues/90): after the content check was dropped in #78, the form protected nothing, and it denied many commands that only wrote a file. A comment command goes through G8 and the Bash rule of G1 like any Bash command; it runs no close and no launcher, so G1 does not deny it. The agents post with `gh issue comment <n> --body-file <literal absolute path>`, with the body in a file; this is a rule of `docs/process.md`, not a check.
 
 - **Not started.** A comment command is not a launch, so the `PermissionDenied` hook (5.7) posts nothing for it.
 - **Owner's marker.** The agents and hooks post with the owner's `gh` login (5.3), so `authorAssociation` cannot tell an agent from the owner. That agents never post the owner's marker is a rule of `docs/process.md`, not a check. The owner posts `## Owner: RESUME` on the GitHub web page, in a terminal, or from a Claude Code session.
 - **Other routes.** Other posting routes stay unchecked ([#76](https://github.com/Lighfe/agent-graph-kit/issues/76)): `gh api`, Codex inside the QA launcher, and MCP tools with GitHub write access.
 
-**Accepted false denies.** The rule denies some commands that run no guarded call. This is accepted, because the agent can always use one of the ways around. Examples:
+**Accepted false denies.** The runner rule denies some commands that run no guarded call. This is accepted: the text can be written without a runner, for example with the Write or Edit tool or a quoted here-document into `cat`. Examples:
 
-- `cat scripts/qa-codex`
-- a heredoc commit message that mentions `qa-codex` (`git commit -m "$(cat <<'EOF'` … `EOF` … `)"`)
-- `git commit -m "Fix gh close handling"`
-- `gh issue view 5 | grep close`
-- `gh pr close 5`
-- `/usr/bin/gh issue close 5`, `command gh issue close 5`, `gh  issue close 5` (not the exact form)
+- a Python here-document that edits a file and mentions both words (`python3 - <<'EOF'` … `replace('gh issue close', …)` … `EOF`)
+- `bash -c 'echo gh issue close 5'`, `echo gh close | xargs echo`
+- a command with a comment that mentions both words (`ls # gh close later`)
+- `/usr/bin/gh issue close 5`, `command gh issue close 5`, `gh  issue close 5` are real runs, but not in the exact form, so they are denied too
 
-**Known limit (P1).** A text that does not literally contain the trigger is not recognized, for example variables (`$GH issue close 5`), `$'…'` escapes, brace expansion (`gh issue {close,} 5`), globs, quotes or backslashes inside a word (`gh issue cl''ose 5`, `gh issue c\lose 5`), and other letter case (`GH issue close 5`, which runs `gh` on a case-insensitive macOS file system). Calls outside the prescribed ones (`gh api`, `gh issue edit --state closed`) stay unchecked.
+**Known limit (P1).** Quotes and backslashes inside a word and `$'…'` escapes are no longer a limit: words are compared after quote removal. These stay limits: variables (`$GH issue close 5`), brace expansion (`gh issue {close,} 5`), globs, other letter case (`GH issue close 5`, which runs `gh` on a case-insensitive macOS file system), runners that are not in the list, a script file that holds a close run, and calls outside the prescribed ones (`gh api`, `gh issue edit --state closed`).
 
 ### 5.2 Launch line
 

@@ -266,6 +266,16 @@ def test_runner_rule_denies(cmd):
     assert denied(bash(cmd)).startswith("G1:")
 
 
+@pytest.mark.parametrize("cmd", [
+    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('docs/x.md')\n"
+    "p.write_text(p.read_text().replace('gh issue close', 'the close'))\nEOF",
+    "bash -c 'echo gh issue close 5'", "echo gh close | xargs echo", "ls # gh close later",
+    '"$x"gh issue close 5', "x=(a)#; gh issue close 5",
+])
+def test_accepted_false_denies_of_the_runner_rule(cmd):
+    assert denied(bash(cmd)).startswith("G1:")
+
+
 def test_runner_list_holds_the_required_commands():
     required = {"command", "builtin", "exec", "env", "time", "coproc", "nohup", "sudo", "doas", "nice", "timeout",
                 "xargs", "setsid", "stdbuf", "watch", "find", "parallel", "flock", "eval", "source", ".", "function",

@@ -94,7 +94,7 @@ What to do with a deny:
 - `G1` pending: escalate the issue
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner. Claude Code is denying the calls; the issue itself is fine
 - `G1` working tree not clean: stop the loop and ask the owner
-- `G1` command not in one of the two exact forms: rewrite the call in the exact form, or use the way around that the deny message names (a comment body from a file with `--body-file`, a commit message with `git commit -F`). This is not a return
+- `G1` command not in one of the two exact forms: rewrite the call in the exact form as the whole command (no operators, redirections, wrappers or substitutions; `run_in_background` instead of `&`), or use the way around that the deny message names (text that only mentions the words passes, for example a body written with a quoted here-document `<<'EOF'`). This is not a return
 - `G6` verified SHA is not `HEAD`: run `qa-codex` again. This is not a return
 - `G7`: escalate the issue
 - Any other deny, including `G8` and `guard error`: escalate the issue with the deny message
