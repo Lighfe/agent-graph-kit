@@ -229,6 +229,18 @@ From `docs/specs/2026-09-25-agent-graph-kit-v1.md`, section "2. Principles":
 - **P3, state lives on the issue.** The goal, members, order and result of a stage live on the stage issue; the blockers live as native links; the source of a follow-up lives in its body. Everything is read with `gh`. Nothing depends on what the orchestrator remembers, and no roadmap file exists.
 - **P4, few files.** The proposal adds no agent-facing file. The changes go into the existing `docs/process.md`, role files and hooks. An adopting repo gets one more label (`stage`) and no file.
 
+## Sources
+
+Besides the research report and the spike report:
+
+- Kit spec v1, `docs/specs/2026-09-25-agent-graph-kit-v1.md`, dated 2026-09-25, read at commit `0f5e8f4` on 2026-10-01: [link](2026-09-25-agent-graph-kit-v1.md)
+- Process, `docs/process.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../process.md)
+- Orchestrator role, `docs/team/orchestrator.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../team/orchestrator.md)
+- PM role, `docs/team/pm.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../team/pm.md)
+- Issue #64 "Waiting on a blocker in another repo, or on several blockers", read 2026-10-01: https://github.com/Lighfe/agent-graph-kit/issues/64
+- Issue #85 "Proposal: sort the open backlog", read 2026-10-01: https://github.com/Lighfe/agent-graph-kit/issues/85
+- `gh` 2.98.0 (2026-08-20) help output of `gh issue create`, `gh issue edit` and `gh issue view` (flags `--parent`, `--add-sub-issue`, `--add-blocked-by`, `--milestone`; JSON fields `parent`, `subIssues`, `subIssuesSummary`), read 2026-10-01: https://github.com/cli/cli/releases/tag/v2.98.0
+
 ## Follow-up work
 
 If the owner accepts the proposal, it needs this work. These are items in this file, not issues.
@@ -244,15 +256,3 @@ If the owner accepts the proposal, it needs this work. These are items in this f
 - **Labels:** create `stage`; retire `waiting` after the hook change.
 - **Issues:** #64 (several or cross-repo blockers) becomes obsolete or is rewritten as the hook change above; #85 sorts the backlog in the form above; #14 and #15 take the set-up checks of question 6; #18 (parallel mode) may later allow several active stages.
 - **Later option:** when no stage is left, the loop launches the PM to write a proposal for the next stage from the parked issues, which the owner accepts or not.
-
-## Sources
-
-Besides the research report and the spike report:
-
-- Kit spec v1, `docs/specs/2026-09-25-agent-graph-kit-v1.md`, dated 2026-09-25, read at commit `0f5e8f4` on 2026-10-01: [link](2026-09-25-agent-graph-kit-v1.md)
-- Process, `docs/process.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../process.md)
-- Orchestrator role, `docs/team/orchestrator.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../team/orchestrator.md)
-- PM role, `docs/team/pm.md`, read at commit `0f5e8f4` on 2026-10-01: [link](../team/pm.md)
-- Issue #64 "Waiting on a blocker in another repo, or on several blockers", read 2026-10-01: https://github.com/Lighfe/agent-graph-kit/issues/64
-- Issue #85 "Proposal: sort the open backlog", read 2026-10-01: https://github.com/Lighfe/agent-graph-kit/issues/85
-- `gh` 2.98.0 (2026-08-20) help output of `gh issue create`, `gh issue edit` and `gh issue view` (flags `--parent`, `--add-sub-issue`, `--add-blocked-by`, `--milestone`; JSON fields `parent`, `subIssues`, `subIssuesSummary`), read 2026-10-01: https://github.com/cli/cli/releases/tag/v2.98.0
