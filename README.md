@@ -119,6 +119,8 @@ Without entry 2, the classifier may deny the PM's edit ("Instruction Poisoning")
 
 The limit: entry 2 holds for every repo of the user, and the classifier cannot check `authorAssociation`. The PM's own check (`docs/team/pm.md`, "After `## Owner: RESUME`") is what keeps a stranger's RESUME from editing an issue.
 
+An entry for a task's `Permissions:` line (see `docs/task-template.md`) is temporary: make it as narrow as the task allows, and remove it after the task is closed. The stage review lists these entries for removal.
+
 ### Frontend lane (optional)
 
 Frontend lane only. No MCP tool can make the GitHub connection of a Lovable project, so you do these steps by hand (spec 9.1):

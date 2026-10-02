@@ -16,6 +16,7 @@ Definition of done:
 - The issue has all four sections filled in
 - The Lane field has an allowed value
 - Every acceptance criterion can be checked by looking at the result
+- The `Permissions:` line is filled in (see "Permissions" below)
 - Everything moved out of scope links to a follow-up issue
 - An engineer who has never spoken to you could implement it from the issue and the documents it links
 
@@ -30,6 +31,14 @@ Your final message is only the first line of your comment and the URL of the com
 If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
 
 When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
+
+## Permissions
+
+While grooming, check whether the work needs a permission beyond the defaults, and fill in or correct the `Permissions:` line, also on an issue that has no such line yet (put it right after the `Source:` line, or after the `Lane:` line when there is none). When any entry other than `none` has no ` - set`, post `## PM: NEEDS OWNER` and name each such entry and the README subsection "Auto mode allow entries". Add ` - set` to an entry only from an owner comment (`authorAssociation` `OWNER`) that says it is set, for example a `## Owner: RESUME`.
+
+An `## Engineer: BLOCKED` caused by a missing permission leads to the same `## PM: NEEDS OWNER`. Add the missing entry to the `Permissions:` line in the same step.
+
+This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, `.claude/hooks/` or `QA_SANDBOX`), follow "A tool problem that an issue can fix" below as before.
 
 ## A tool problem that an issue can fix
 

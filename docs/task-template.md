@@ -2,6 +2,8 @@ Lane: default
 <!-- default, or frontend (only in a repo with a Lovable submodule in frontend/) -->
 Source: <URL>
 <!-- optional, only for follow-ups: the URL of the issue, comment or review the follow-up came from -->
+Permissions: none
+<!-- list each permission beyond the defaults that the engineer or QA needs (for example GitHub writes other than issue comments: create, link, reorder or close issues; writes to other external systems; settings changes), separated by `;`. Each entry ends with ` - set` once the owner has set it. `none` when there is none -->
 
 ## Goal
 

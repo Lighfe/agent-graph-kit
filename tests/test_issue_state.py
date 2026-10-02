@@ -604,6 +604,22 @@ def test_g3_allows_lane_outside_fence_with_other_lane_in_fence():
     assert check(ENG, facts(iss)) is None
 
 
+def test_g3_allows_lane_with_permissions_line():
+    body = (
+        "Lane: default\n"
+        "<!-- default, or frontend -->\n"
+        "Source: https://example.com/issue/1\n"
+        "Permissions: create issues - set; close issues\n"
+        "<!-- list each permission beyond the defaults -->\n\n"
+        "## Goal\n"
+    )
+    iss = issue(launch("pm"), "## PM: GROOMED", body=body)
+    assert lane(iss) == "default"
+    assert check(ENG, facts(iss)) is None
+    iss = issue(launch("pm"), "## PM: GROOMED", body=body.replace("default\n", "frontend\n", 1))
+    assert check(FE_ENG, facts(iss)) is None
+
+
 def test_g3_denies_unknown_lane():
     iss = issue(launch("pm"), "## PM: GROOMED", body="Lane: backend\n")
     assert check(ENG, facts(iss)).startswith("G3:")

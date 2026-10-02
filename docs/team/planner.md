@@ -49,6 +49,7 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 3. Write the plan (superpowers skill writing-plans) to `docs/plans/`
 4. Write one stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. Never add `ready` to it
 5. File each plan task as one issue in `docs/task-template.md` format, with the label `later`
+   - Fill in the `Permissions:` line of each issue. Name every entry that is not `none` to the owner before the owner confirms the stage. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Add the issues to the stage as sub-issues, in execution order: `gh issue edit <stage> --add-sub-issue <n>`
 7. Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
 8. Ask the owner to confirm the stage and to validate its purpose
@@ -73,6 +74,7 @@ Steps, in this order:
 3. The owner chooses an option and validates its purpose. If the owner asks for something else, that is intake: go to "Intake"
 4. Write the stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. It is blocked by no open stage issue except the finished one (`gh issue edit <new stage> --add-blocked-by <finished stage>`)
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
+   - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner before the owner chooses. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Set the order: the add order, or `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
 7. Only after the owner has chosen: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`)
 
@@ -102,7 +104,7 @@ Input:
 Post exactly one comment on the stage issue. Write the body to a file with a literal absolute path first, for example `/tmp/planner-review-93.md`, then run `gh issue comment <stage> --body-file /tmp/planner-review-93.md` as the whole command. The first line is exactly `## Planner: STAGE REVIEW`. Then six parts, in this order:
 
 1. **Purpose check**: was the `## Purpose` of the stage met? Give evidence: closed issues, commits, reports
-2. **Run notes**: the orchestrator's run notes, and what you conclude from them. Or "No run notes were given"
+2. **Run notes**: the orchestrator's run notes, and what you conclude from them. Or "No run notes were given". Also list every entry with ` - set` in the `Permissions:` line of a closed sub-issue of the stage, as a permission the owner may remove now
 3. **Doc drift**: findings from the fact tests in the test command and from the instruction audit (`/doctor prompt-audit`, where it can run). Where a check cannot run, say which checks ran and which could not
 4. **Follow-ups**: every open parked issue whose `Source:` line points into this stage (the stage issue, a sub-issue, or a comment or review on one), and every older parked issue you see as relevant. Give each one a proposed placement: next stage, a later stage, stay parked, or close
 5. **Next-stage options**: one to three. Each has a purpose, sub-issues (existing, or to be filed), order and blockers. Then your recommendation

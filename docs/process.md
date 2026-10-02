@@ -31,6 +31,7 @@ A groomed issue uses the template in `docs/task-template.md`.
 - A plan becomes one stage issue (the form "Stage issue" in `docs/task-template.md`), with the plan tasks as its sub-issues.
 - Each plan task becomes one issue in `docs/task-template.md` format.
 - The owner adds the label `ready` to the issues that the loop may work on.
+- A task that needs a permission beyond the defaults names it in its `Permissions:` line at planning or grooming, and the owner sets it before the engineer launch.
 - Issues with the label `later` are out of scope for the current implementation. Do not work on them. A parked blocker of the active stage is promoted instead (see "Stages" below).
 
 ## Lifecycle
