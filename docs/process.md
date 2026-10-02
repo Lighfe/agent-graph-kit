@@ -43,26 +43,39 @@ A groomed issue uses the template in `docs/task-template.md`.
 6. On FAIL, back to step 3 with the QA comment as input
 7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
 8. On PASS, close the issue
-9. Repeat until every open issue with the label `ready` has an open blocker, or none is left, or the active stage has ended
+9. Repeat until every open issue with the label `ready` has an open blocker, or none is left, or the active stage has ended, or the active stage has open sub-issues, none of them eligible
 10. When the active stage has ended, the orchestrator launches the planner for the stage review on the stage issue, and then stops (see "Stage end" below)
 
-Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below) and the loop stopped after the stage review (or after the stage issue was escalated).
+Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below) and the loop stopped after the stage review (or after the stage issue was escalated), or the active stage has open sub-issues, none of them eligible, and the loop stopped.
 
 ## Stages
 
 A stage issue is an issue with the label `stage`. Its sub-issues (native GitHub sub-issues) are the work of the stage. A stage issue has the label `stage` and never the label `ready`, and it never goes through PM, engineer and QA. Its form is "Stage issue" in `docs/task-template.md`.
 
-The active stage is the open stage issue whose sub-issues have the label `ready`.
+The orchestrator finds the active stage once, at the start of a `/goal` run, and keeps it for the whole run, also after its last `ready` sub-issue is closed or escalated. The active stage is the one qualifying stage issue: an open issue with the label `stage` that has at least one sub-issue, open or closed, with the label `ready` (closing an issue does not remove its labels). The commands are in "Pick inside a stage" in `docs/team/orchestrator.md`.
+
+- When no open stage issue qualifies at the start of the run, no stage is active for the whole run: the loop picks as before (any `ready` issue without an open blocker). The orchestrator does not look for a stage again during the run.
+- When two or more open stage issues qualify at the start of the run, the loop stops and asks the owner.
+
+An eligible sub-issue is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker.
+
+### Next step while a stage is active
+
+Before each pick (also after each close, each escalation, each `## PM: WAITING` with an open blocker, and each `G1` open-blocker deny of a sub-issue), the orchestrator checks in this order:
+
+1. The stage's sub-issue list is not empty and every entry is closed: "Stage end" (see below).
+2. Otherwise: promote the parked blockers of its sub-issues (see "Promotion of a parked blocker"), then pick the first eligible sub-issue in list order.
+3. Otherwise (open sub-issues left, none eligible): the loop stops. The final report names the stage issue, its open sub-issues with the reason each one is not eligible, and the `ready` issues outside the stage.
 
 ### Pick order inside the active stage
 
 Read the stage's sub-issues:
 
 ```
-gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state}'
+gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state, labels: [.labels[].name]}'
 ```
 
-Take the first entry in that list order that is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker. Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
+Take the first eligible entry in that list order. Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
 
 - The list order is the stored position on GitHub: the add order, then every reorder. New sub-issues go to the end of the list.
 - A closed sub-issue keeps its position, so the next pick is the first open, unblocked entry of the list.
@@ -71,9 +84,8 @@ Take the first entry in that list order that is open, has `ready`, has neither `
 
 ### `ready` issues outside the active stage
 
-- When no open `ready` issue has a parent with the label `stage`, no stage is active: the loop picks as before (any `ready` issue without an open blocker).
-- When the open `ready` issues have parents in two or more different stage issues, the loop stops and asks the owner.
-- A `ready` issue without a stage parent while a stage is active is not picked. The final report lists it.
+- When no stage is active for the run, the loop picks as before (any `ready` issue without an open blocker).
+- While a stage is active, a `ready` issue that is not a sub-issue of the active stage is never picked, also when the stage has no eligible sub-issue left. The final report lists it.
 
 ### Follow-ups and parked issues
 

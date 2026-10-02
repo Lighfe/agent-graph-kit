@@ -25,19 +25,32 @@ Then pick: the pick skips every `ready` issue that has an open blocker, also whe
 
 ### Pick inside a stage
 
-A stage issue has the label `stage`; its sub-issues are the work of the stage. The active stage is the open stage issue whose sub-issues have `ready` (see "Stages" in `docs/process.md`).
+A stage issue has the label `stage`; its sub-issues are the work of the stage.
 
-- When no open `ready` issue has a parent with the label `stage`, no stage is active: pick as above (any `ready` issue without an open blocker).
-- When the open `ready` issues have parents in two or more different stage issues, stop the loop and ask the owner.
-- While a stage is active, a `ready` issue without a stage parent is not picked. List it in the final report.
-
-Pick order inside the active stage. Read the stage's sub-issues:
+Find the active stage once, at the start of a `/goal` run, and keep it for the whole run. A qualifying stage issue is an open issue with the label `stage` that has at least one sub-issue, open or closed, with the label `ready` (closing an issue does not remove its labels). List the open stage issues, then read the sub-issues of each one with their state and labels:
 
 ```
-gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state}'
+gh issue list --state open --label stage --json number --jq '.[].number'
+gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state, labels: [.labels[].name]}'
 ```
 
-Take the first entry in that list order that is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker. Read the entries one by one; never count them with `--jq 'length'` on a paginated call. The list order is the stored position on GitHub (the add order, then every reorder). A closed sub-issue keeps its position. The issue number is not used as a tie-break. Changing the order (`gh api -X PATCH …/sub_issues/priority`) is not a step of the loop.
+Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
+
+- One qualifying stage issue: it is the active stage for the whole run, also after its last `ready` sub-issue is closed or escalated.
+- No qualifying stage issue: no stage is active for the whole run. Pick as above (any `ready` issue without an open blocker). Do not look for a stage again during the run.
+- Two or more qualifying stage issues: stop the loop and ask the owner.
+
+While a stage is active, a `ready` issue that is not a sub-issue of the active stage is never picked, also when the stage has no eligible sub-issue left. List it in the final report.
+
+An eligible sub-issue is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker.
+
+Next step while a stage is active. Before each pick (so also after each close, each escalation, each `## PM: WAITING` with an open blocker, and each `G1` open-blocker deny of a sub-issue), read the stage's sub-issues with the command above and check in this order:
+
+1. The sub-issue list is not empty and every entry is closed: the stage has ended. Go to "Stage end".
+2. Otherwise promote the parked blockers of its sub-issues (see "Promotion of a parked blocker"), then pick the first eligible sub-issue in list order.
+3. Otherwise (open sub-issues left, none of them eligible): stop the loop. Your final report names the active stage issue, each of its open sub-issues with the reason it is not eligible (`needs-owner`, `later`, no `ready`, or its open blockers by number), and the `ready` issues not picked because they are not sub-issues of the active stage.
+
+Pick order inside the active stage: take the first eligible entry in the list order of the sub-issue read. The list order is the stored position on GitHub (the add order, then every reorder). A closed sub-issue keeps its position. The issue number is not used as a tie-break. Changing the order (`gh api -X PATCH …/sub_issues/priority`) is not a step of the loop.
 
 ### Promotion of a parked blocker
 
@@ -226,7 +239,7 @@ For an escalated issue:
 
 For the whole loop:
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the loop stopped because `git status --porcelain` was not empty
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the active stage has open sub-issues, none of them eligible, and the loop stopped, or the loop stopped because `git status --porcelain` was not empty
 - Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, and the reason if the loop stopped early
 - When the stage review was posted (in this run or earlier), your final message has "Stage #<N> is finished", the URL of the stage review comment, and this exact sentence: "Start the next session with `/stage-start`."
 - When the stage issue was escalated instead, your final message names the stage issue and the reason

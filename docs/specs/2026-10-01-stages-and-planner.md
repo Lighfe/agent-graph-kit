@@ -18,7 +18,7 @@ The kit sees beyond one issue. Work is grouped in stages with a purpose. A team 
 - **The work of a stage is its sub-issues.** Normal task issues in `docs/task-template.md` format. The PM reads the stage issue as context when it grooms a sub-issue.
 - **Order.** Stages are ordered by native "blocked by" links between stage issues. Inside a stage: native "blocked by" links first, then the position in the sub-issue list (fallback: issue number, if `gh` cannot read the list order).
 - **Native "blocked by" links replace** the `Waiting on: #<N>` line of `## PM: WAITING` and the label `waiting`. The hooks read blockers with the REST form that gives repo, number and state (`gh api .../dependencies/blocked_by`), with paging. The PM adds a link instead of writing the line.
-- **The active stage** is the stage whose sub-issues have `ready`. The loop works on `ready` issues as today.
+- **The active stage** is found once, at the start of a `/goal` run, and kept for the whole run: the one open stage issue with at least one sub-issue (open or closed) with `ready`. It stays active after its last `ready` sub-issue is closed or escalated; the loop then goes to the stage end or stops, and does not pick `ready` issues outside the stage. With no such stage, no stage is active for the run, and the loop works on `ready` issues as today.
 - **Follow-ups are parked.** Whoever files one (PM, orchestrator, owner after a review) gives it the label `later`, no parent, and a line `Source: <URL>` (the comment, review or issue it came from). Two ways out of parked:
   - during a stage: if a parked issue blocks an issue of the active stage, the orchestrator adds it to the stage (sub-issue, `ready`)
   - all others: at the stage review (section 4)
