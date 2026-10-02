@@ -17,7 +17,7 @@ Now, it is in bootstrap. Hooks in `.claude/hooks/` check the handoff calls (see 
 - `gh issue view <number> --comments` - read an issue and its comments
 - `gh issue comment <number> --body-file <file>` - add a comment to an issue
 - `gh issue edit <number> --add-label <label>` / `--remove-label <label>` - change labels
-- `gh issue close <number>` - close an issue (orchestrator only, see `docs/team/orchestrator.md`)
+- `gh issue close <number>` - close an issue: the orchestrator closes a task issue after `## QA: PASS` (see `docs/team/orchestrator.md`), and the planner closes a finished stage issue (all its sub-issues closed) at stage set-up (see `docs/team/planner.md`)
 
 Test command: uv run --with pytest pytest. Never report tests as passed if no test ran.
 
