@@ -48,7 +48,7 @@ Next step while a stage is active. Before each pick (so also after each close, e
 
 1. The sub-issue list is not empty and every entry is closed: the stage has ended. Go to "Stage end".
 2. Otherwise promote the parked blockers of its sub-issues (see "Promotion of a parked blocker"), then pick the first eligible sub-issue in list order.
-3. Otherwise (open sub-issues left, none of them eligible): stop the loop. Your final report names the active stage issue, each of its open sub-issues with the reason it is not eligible (`needs-owner`, `later`, no `ready`, or its open blockers by number), and the `ready` issues not picked because they are not sub-issues of the active stage.
+3. Otherwise (open sub-issues left, none of them eligible): stop the loop. Your final report names the active stage issue, each of its open sub-issues with the reason it is not eligible (`needs-owner`, `later`, no `ready`, or its open blockers by number), and the `ready` issues not picked because they are not sub-issues of the active stage. Mark each open blocker that has the label `needs-owner` (for example `#<number> (needs-owner)`): it is a fix issue that waits for the owner.
 
 Pick order inside the active stage: take the first eligible entry in the list order of the sub-issue read. The list order is the stored position on GitHub (the add order, then every reorder). A closed sub-issue keeps its position. The issue number is not used as a tie-break. Changing the order (`gh api -X PATCH …/sub_issues/priority`) is not a step of the loop.
 
@@ -240,6 +240,6 @@ For an escalated issue:
 For the whole loop:
 
 - `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the active stage has open sub-issues, none of them eligible, and the loop stopped, or the loop stopped because `git status --porcelain` was not empty
-- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, and the reason if the loop stopped early
+- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers (mark each open blocker that has the label `needs-owner`, for example `#<number> (needs-owner)`, so the owner sees a fix issue that waits for them), the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, and the reason if the loop stopped early
 - When the stage review was posted (in this run or earlier), your final message has "Stage #<N> is finished", the URL of the stage review comment, and this exact sentence: "Start the next session with `/stage-start`."
 - When the stage issue was escalated instead, your final message names the stage issue and the reason

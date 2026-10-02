@@ -91,7 +91,9 @@ Take the first eligible entry in that list order. Read the entries one by one; n
 
 Follow-ups (filed by the PM, the orchestrator or the owner) get the label `later`, no parent issue, and a line `Source: <URL>` in the body: the URL of the issue, comment or review the follow-up came from.
 
-A parked issue is an open issue of this repo with the label `later` and no parent issue.
+A parked issue is an open issue of this repo with the label `later`, no parent issue and no `needs-owner`. A fix issue that the PM filed with `later` and `needs-owner` (rule "A tool problem that an issue can fix" in `docs/team/pm.md`) is not parked: it waits for the owner.
+
+When no stage is active, or the blocked issue is not a sub-issue of the active stage, a parked fix issue is not promoted and not picked (it has `later`). The blocked issue waits; the orchestrator's final report lists it with its open blockers. The planner's stage review places the parked fix issue like any other follow-up.
 
 ### Promotion of a parked blocker
 
@@ -119,10 +121,10 @@ The details are in "Stage end" in `docs/team/orchestrator.md`.
 - A return is a QA FAIL, a QA UNVERIFIABLE or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue: the team could not settle it inside the current intent and scope, so the owner decides whether to change them. The count starts after the newest `## Owner: RESUME` comment
 - A launch that Claude Code denied before it ran (the hook posts `## Launch not started: …`) or that an auto mode outage stopped (the hook posts `## Launch stopped by outage: …`) is not pending and not a return
 - If the PM posts `## PM: NEEDS OWNER`, escalate the issue
-- `## QA: UNVERIFIABLE` means QA could not check a criterion because of a tool or sandbox limit of the checker. The PM makes the criterion checkable with the same intent. The PM escalates (`## PM: NEEDS OWNER`) when making a criterion checkable changes its intent or scope, or needs an edit of the project settings files (`.claude/settings*.json`), `.claude/hooks/` or the QA sandbox
+- `## QA: UNVERIFIABLE` means QA could not check a criterion because of a tool or sandbox limit of the checker. The PM makes the criterion checkable with the same intent. When the only way needs a change that a filed issue can fix (also an edit of the project settings files (`.claude/settings*.json`), `.claude/hooks/` or the QA sandbox), the PM links that fix issue as a blocker and posts `## PM: WAITING`; a fix issue that edits hooks, settings or the QA sandbox gets `needs-owner`. The PM escalates (`## PM: NEEDS OWNER`) when making a criterion checkable changes its intent or scope, and in the other cases of the rule "A tool problem that an issue can fix" in `docs/team/pm.md`
 - `## QA: INVALID` has other causes (for example no usable commit range, or retries used up) and is escalated
 - Denied action (PM, engineer, QA fallback `qa-engineer`): when a tool call you need gets a deny with a verdict (an auto mode classifier judgment such as "Instruction Poisoning", or `Permission denied`) and you do not retry it, do not end without a result. Post your result marker and quote the deny message (redact secrets):
-  - PM: `## PM: NEEDS OWNER` when only the owner can resolve the deny (settings or permissions); name what the owner must decide
+  - PM: when a filed issue can fix the cause (a change in this repo, or an open issue in any repo), link that fix issue as a native blocker and post `## PM: WAITING` (rule "A tool problem that an issue can fix" in `docs/team/pm.md`). The PM files the fix issue itself when none exists, as a follow-up with `later`; it also gets `needs-owner` when the fix edits `.claude/hooks/`, the project settings files in `.claude/` or `QA_SANDBOX` in `scripts/qa-codex`. `## PM: NEEDS OWNER` only when the owner alone can resolve the cause outside this repo (for example a missing user-level Auto mode allow entry), no filed issue can fix it, it needs a change of intent, scope or money, the call that files the fix issue or adds the blocker link is denied too, or the fix issue was closed without a fix; name what the owner must decide
   - Engineer: `## Engineer: BLOCKED`
   - QA fallback: `## QA: UNVERIFIABLE`, and mark each affected criterion `- [ ] … - INVALID` with the deny message
 
@@ -136,6 +138,11 @@ The details are in "Stage end" in `docs/team/orchestrator.md`.
 ## Escalation
 
 - The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue. An issue that must wait for other open issues is not an owner decision either: the PM adds them as native "blocked by" links (also issues in other repos) and posts `## PM: WAITING`. The issue keeps `ready`, the pick skips it while it has an open blocker, and it goes back to the PM when all its blockers are closed. Nor is a role agent stopped by an auto mode outage: a hook marks the launch, and the orchestrator launches the same step again.
+- A tool problem with a fix issue is not an owner decision on the blocked issue either. When a deny with a verdict or a QA limit can be fixed by a filed issue, the PM links the fix issue as a blocker and posts `## PM: WAITING` (rule "A tool problem that an issue can fix" in `docs/team/pm.md`). The blocked issue keeps `ready` and goes back to the PM when the fix issue is closed, with no `## Owner: RESUME`. This applies only to a deny with a verdict and to QA limits; an outage deny is unchanged (the agent posts no result and ends, and the hook posts `## Launch stopped by outage: …`).
+- A fix issue that edits `.claude/hooks/`, the project settings files in `.claude/` or `QA_SANDBOX` in `scripts/qa-codex` has the label `needs-owner`. The owner decides on the fix issue, not on the blocked issue, in one of three ways:
+  - remove `needs-owner` to approve it: it is then a parked issue, and the orchestrator promotes it when it blocks a sub-issue of the active stage
+  - make the change and close the fix issue
+  - close the fix issue as not planned: the blocked issue then goes back to the PM, which posts `## PM: NEEDS OWNER` and names the closed fix issue
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
 - The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
 - A stage issue never has `ready`. When a stage issue is escalated, the orchestrator only adds `needs-owner`. The owner answers with `## Owner: RESUME`, removes `needs-owner`, and does not add `ready`.

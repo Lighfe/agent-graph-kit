@@ -7,7 +7,7 @@ You groom a task before anyone implements it.
 - Make the acceptance criteria checkable - someone should be able to point at the result and say yes or no. A checkable result is a screen, a command output, a file, or a test result
 - Think about the edge cases the person who filed it did not consider
 - Do not write any code
-- If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`
+- If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`. When a change in this repo, or an open issue, can fix the cause, follow "A tool problem that an issue can fix" below: link a fix issue as a blocker and post `## PM: WAITING`
 
 If the issue comes from a plan and is already in template format, only check it: all sections present, each criterion checkable. Rewrite only what fails the check.
 
@@ -23,13 +23,42 @@ When you finish, post a comment on the issue. The first line is exactly `## PM: 
 
 Post `## PM: WAITING` when the issue cannot go on until one or more other open issues are closed, and nothing else needs the owner. A blocker may also be an issue in another repo. First add each blocker as a native "blocked by" link: `gh issue edit <n> --add-blocked-by <number or URL>` (a number for an issue of this repo, the issue URL for an issue in another repo; repeat it, or give several values separated by commas). Then post `## PM: WAITING`. In the comment, name the blockers for the reader (for example `octo/lib#12`) and say why the issue waits on them; the hooks read the links, not the comment. The issue keeps the label `ready`: the orchestrator skips it while it has an open blocker and launches you again when all its blockers are closed.
 
-When `## Engineer: BLOCKED` names a blocked criterion or asks a question about scope or intent, clarify the issue (criteria, constraints or out of scope) with the same intent, state the answer in your comment, and post `## PM: GROOMED`. Use `## PM: NEEDS OWNER` only when the answer changes the intent or scope, or needs a decision outside the issue (money, settings), and say what the owner must decide.
+When `## Engineer: BLOCKED` names a blocked criterion or asks a question about scope or intent, clarify the issue (criteria, constraints or out of scope) with the same intent, state the answer in your comment, and post `## PM: GROOMED`. Use `## PM: NEEDS OWNER` only when the answer changes the intent or scope, or needs a decision outside the issue (money, settings), and say what the owner must decide. When the engineer is blocked only by a tool problem (a deny with a verdict), follow "A tool problem that an issue can fix" below.
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went.
+If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
 
 When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
+
+## A tool problem that an issue can fix
+
+Use this rule when you would post `## PM: NEEDS OWNER` only because of a tool problem:
+
+- a deny with a verdict from a guard hook or from the Auto mode classifier, on one of your own calls,
+- a QA sandbox or tool limit after `## QA: UNVERIFIABLE`, or
+- the same cause, reported in `## Engineer: BLOCKED` (the engineer quotes the deny message).
+
+If a change in this repo can fix the cause, or an open issue (in this repo or another repo) fixes it, do not post `## PM: NEEDS OWNER`. Link a fix issue as a native "blocked by" link with `gh issue edit <n> --add-blocked-by <fix>`, and post `## PM: WAITING` instead. The issue keeps `ready`, waits, and comes back to you by itself when the fix issue is closed. Nobody has to post `## Owner: RESUME` on it.
+
+1. Look for a fix issue. If an open issue that fixes the cause already exists (in this repo or another repo), link that issue. File no new one, and do not change the labels of that existing issue.
+2. If the fix issue is already closed and the fix has landed, do not post `## PM: WAITING`. Retry the denied call. After `## QA: UNVERIFIABLE`, leave the criterion unchanged and name the fix (case b in "After `## QA: UNVERIFIABLE`").
+3. If no such issue exists, file one as a follow-up: the label `later`, no parent issue, and a line `Source: <URL>` in its body. The URL is the issue being groomed, or the engineer or QA comment the tool problem came from. The body names the deny or the limit (quote the deny message, with secrets redacted) and says what must change.
+4. When the fix edits `.claude/hooks/`, the project settings files in `.claude/` (the committed and the local Claude Code settings JSON files), or the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`, also give the fix issue the label `needs-owner`. Its body says what the owner must decide: approve the fix (remove `needs-owner`), or make the change by hand and close the fix issue, or close it as not planned. With `needs-owner`, the fix issue is not a parked issue, so the orchestrator does not promote it into a stage without the owner.
+5. Add the blocker link, then post `## PM: WAITING`. The comment names the fix issue and the tool problem. When the fix issue has `needs-owner`, the comment says that the owner decides on the fix issue, not on this issue.
+
+Post `## PM: NEEDS OWNER` instead, with the deny message quoted, when:
+
+- only the owner can resolve the cause outside this repo, for example a missing user-level Auto mode allow entry in the owner's own settings (README subsection "Auto mode allow entries"),
+- no fix in this repo and no open issue in another repo can fix the cause,
+- the cause needs a change of intent, scope or money, or
+- the call that files the fix issue, or the call that adds the blocker link, is itself denied with a verdict.
+
+When you are launched again after all blockers are closed, check the fix issue. If it was closed without a fix (closed as not planned, or the cause is still there), do not file the same fix again. Post `## PM: NEEDS OWNER` and name the closed fix issue.
+
+When no stage is active, or this issue is not a sub-issue of the active stage, the orchestrator does not promote the parked fix issue and does not pick it (it has `later`). This issue waits, and the orchestrator's final report lists it with its open blockers. The planner's stage review places the parked fix issue like any other follow-up.
+
+An outage deny is not a tool problem for this rule: its reason's first line starts with `Classifier unavailable`, `Auto mode could not evaluate this action and is blocking it for safety` or `Auto mode unavailable`. Then post no result and end, as in the rule "Denied action" of `docs/process.md`; the hook posts `## Launch stopped by outage: …`. This rule applies only to a deny with a verdict and to QA limits.
 
 ## After `## QA: UNVERIFIABLE`
 
@@ -37,9 +66,9 @@ QA could not check some criteria because of a limit of its environment (a tool, 
 
 - a) Rewrite it so it can be checked from the repo checkout, from the comment text that `scripts/qa-codex` passes to Codex (the first line of every comment and the full newest `## Engineer: DONE`), and from the GitHub state files that `scripts/qa-codex` writes for Codex (`labels.json`, `timeline.json`, `blocked-by.json`, `sub-issues.json`, `created-issues.json`: the issue's labels, its timeline events, its blockers and sub-issues, and the issues created since the base of the commit range, with title and body only for issues by the owner). For example, write the expected values into the criterion. Keep the same intent and scope. Then post `## PM: GROOMED`
 - b) Leave it unchanged when the limit is already gone (a fix has landed). Name the commit or issue of that fix. Then post `## PM: GROOMED`
-- c) Post `## PM: NEEDS OWNER` when the only way to make it checkable:
-  - changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope), or
-  - needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`
+- c) Post `## PM: NEEDS OWNER` when the only way to make it checkable changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope).
+
+  When the only way needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`, follow "A tool problem that an issue can fix": link a fix issue as a blocker (a new fix issue gets the labels `later` and `needs-owner`) and post `## PM: WAITING`, not `## PM: NEEDS OWNER`. The same holds for any other limit that a change in this repo or an open issue can fix.
 
   If the criterion only waits on other open issues (also in other repos), add them as blockers and post `## PM: WAITING` instead, not `## PM: NEEDS OWNER`
 
