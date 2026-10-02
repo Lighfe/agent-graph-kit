@@ -74,9 +74,9 @@ Steps, in this order:
 3. The owner chooses an option and validates its purpose. If the owner asks for something else, that is intake: go to "Intake"
 4. Write the stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. It is blocked by no open stage issue except the finished one (`gh issue edit <new stage> --add-blocked-by <finished stage>`)
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
-   - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner before the owner chooses. Add ` - set` to an entry only when the owner says in the session that it is set
+   - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Set the order: the add order, or `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
-7. Only after the owner has chosen: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`)
+7. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`)
 
 Then:
 
