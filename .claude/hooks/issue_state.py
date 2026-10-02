@@ -1,5 +1,8 @@
 """Issue state and checks G1-G7 (spec 5.3-5.5).
 
+Roles: pm, engineer, qa, planner (the stage review, issue #99) and close. A planner launch
+on a stage issue has its own path of G1 (`g1_planner`); G2 to G7 do not apply to it.
+
 Pure functions over the facts of one issue. No I/O: the guard (Task 5)
 reads the facts with `gh` and `git` and passes them in. Stdlib only.
 
@@ -18,6 +21,7 @@ MARKERS: dict[str, tuple[str, ...]] = {
     "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER", "## PM: WAITING"),
     "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
     "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID", "## QA: UNVERIFIABLE"),
+    "planner": ("## Planner: STAGE REVIEW",),  # issue #99: one comment, then the planner ends
 }
 RESUME = "## Owner: RESUME"
 # The only authorAssociation whose comments count (issue #70). Organization-owned repos are not supported yet.
@@ -27,23 +31,25 @@ AGENT_LANE = {"default": "software-engineer", "frontend": "frontend-engineer"}
 GROOMED, NEEDS_OWNER, WAITING = MARKERS["pm"]
 DONE, BLOCKED = MARKERS["engineer"]
 PASS, FAIL, UNAVAILABLE, INVALID, UNVERIFIABLE = MARKERS["qa"]
+(STAGE_REVIEW,) = MARKERS["planner"]
 # A return sends the issue back (spec 5.4 G7): FAIL and BLOCKED, and UNVERIFIABLE (a limit of the
 # checker's environment, back to the PM, spec 7). INVALID is not a return: it escalates.
 RETURNS = (FAIL, UNVERIFIABLE, BLOCKED)
 STOP_RESULTS = (NEEDS_OWNER, INVALID)
 MAX_RETURNS = 3
 
-LAUNCH = re.compile(r"^## Launch: (pm|engineer|qa) \((?:attempt|continued, round) (\d+)\)$")
+ROLES = "pm|engineer|qa|planner"  # the roles of a launch receipt (the planner: issue #99)
+LAUNCH = re.compile(rf"^## Launch: ({ROLES}) \((?:attempt|continued, round) (\d+)\)$")
 # A receipt that Claude Code denied before the launch ran (PermissionDenied hook, spec 5.3)
-NOT_STARTED = re.compile(r"^## Launch not started: ((?:pm|engineer|qa) \((?:attempt|continued, round) \d+\))$")
+NOT_STARTED = re.compile(rf"^## Launch not started: ((?:{ROLES}) \((?:attempt|continued, round) \d+\))$")
 # A receipt whose agent started, was stopped by an auto mode outage and ended without a result
 # (SubagentStop hook, spec 5.3). It voids its receipt exactly like a not-started comment.
-STOPPED = re.compile(r"^## Launch stopped by outage: ((?:pm|engineer|qa) \((?:attempt|continued, round) \d+\))$")
+STOPPED = re.compile(rf"^## Launch stopped by outage: ((?:{ROLES}) \((?:attempt|continued, round) \d+\))$")
 # First-line prefixes of a denial without a classifier verdict (Claude Code 2.1.284, spec 5.3)
 NO_VERDICT_REASONS = ("Classifier unavailable",
                       "Auto mode could not evaluate this action and is blocking it for safety",
                       "Auto mode unavailable")
-_RECEIPT_KEY = re.compile(r"^## Launch: ((?:pm|engineer|qa) \((?:attempt|continued, round) \d+\))$")
+_RECEIPT_KEY = re.compile(rf"^## Launch: ((?:{ROLES}) \((?:attempt|continued, round) \d+\))$")
 _CALL = re.compile(r"^Call: (\S+)$")
 CALL_HASH_LEN = 12
 REASON_MAX = 200
@@ -92,7 +98,7 @@ class Facts:
     head: str  # full SHA of HEAD
     clean: bool  # git status --porcelain is empty
     # The two blocker reads (issue #64), None when not read. The guard reads them for every role
-    # launch, never for close: the blocker list (all pages, a set) and the open-blocker count.
+    # launch except the planner, never for close: the blocker list (all pages, a set) and the open-blocker count.
     blockers: tuple[Blocker, ...] | None = None
     open_blockers: int | None = None
     # The two sub-issue reads (issue #97), None when not read. The guard reads them only for the
@@ -103,7 +109,7 @@ class Facts:
 
 @dataclass(frozen=True)
 class Call:
-    role: str  # "pm" | "engineer" | "qa" | "close"
+    role: str  # "pm" | "engineer" | "qa" | "planner" | "close"
     agent: str  # subagent type, "qa-codex", "" for close; the SendMessage target for a continuation
     issue: int
     continued: bool = False  # a SendMessage continuation (spec 5.3)
@@ -495,6 +501,26 @@ def g1(call: Call, facts: Facts) -> str | None:
                 f"(the orchestrator picks the issue when its blockers are closed)")
     if "ready" not in iss.labels:
         return f"G1: issue #{iss.number} has no label ready, expected the label ready"
+    return _g1_rest(call, facts)
+
+
+def g1_planner(call: Call, facts: Facts) -> str | None:
+    """G1 on the planner path (issue #99): the issue is open and has the label `stage` (the label
+    ready is neither required nor denied), no label later or needs-owner, a clean tree, not voided
+    twice, not pending. No blocker read: the blocked-by links between stage issues order the start
+    of stages, and a stage review reviews a stage that has run."""
+    iss = facts.issue
+    if problem := g1_open(call, facts):
+        return problem
+    if not is_stage(iss):
+        return f"G1: issue #{iss.number} has no label {STAGE}, expected the label {STAGE} for a planner launch"
+    return _g1_rest(call, facts)
+
+
+def _g1_rest(call: Call, facts: Facts) -> str | None:
+    """The part of G1 after the label check: the labels later and needs-owner, the clean tree,
+    two voided launches (not for close) and the pending check."""
+    iss = facts.issue
     for label in ("later", "needs-owner"):
         if label in iss.labels:
             return f"G1: issue #{iss.number} has the label {label}, expected no label later or needs-owner"
@@ -624,7 +650,20 @@ def _role_checks(call: Call):
         return f"G1: qa call with agent {call.agent or 'none'}, expected qa-codex or qa-engineer"
     if call.role == "close":
         return (g6,)
-    return f"G1: unknown role {call.role or 'none'}, expected pm, engineer, qa or close"
+    return f"G1: unknown role {call.role or 'none'}, expected pm, engineer, qa, planner or close"
+
+
+PLANNER = "planner"  # the role and the agent of the stage review (issue #99)
+
+
+def _planner_check(call: Call, facts: Facts) -> str | None:
+    """The planner path (issue #99): only a new launch of the agent planner, then G1 of the planner
+    path. G2 to G7 do not apply: no current-result check, no return count."""
+    if call.continued:
+        return "G1: a planner cannot be continued, expected a new launch of the agent planner"
+    if call.agent != PLANNER:
+        return f"G1: planner call with agent {call.agent or 'none'}, expected agent planner"
+    return g1_planner(call, facts)
 
 
 def is_stage_close(call: Call, issue: Issue) -> bool:
@@ -638,9 +677,14 @@ def check(call: Call, facts: Facts) -> str | None:
     The stage path (a close of an issue with the label `stage`, issue #97) checks only that the
     issue is open and that every sub-issue is closed. The label ready, the labels later and
     needs-owner, the clean tree, the pending check and the QA PASS with verified SHA (G6) do not
-    apply: a stage issue never gets ready and never goes through PM, engineer and QA."""
+    apply: a stage issue never gets ready and never goes through PM, engineer and QA.
+
+    The planner path (a launch of the agent planner, issue #99) checks G1 of the planner path only
+    (see `g1_planner`)."""
     if is_stage_close(call, facts.issue):
         return g1_open(call, facts) or g6_stage(call, facts)
+    if call.role == PLANNER:
+        return _planner_check(call, facts)
     checks = _role_checks(call)
     if isinstance(checks, str):
         return checks

@@ -10,8 +10,9 @@ denies without a classifier verdict. The guard has already posted the launch
 receipt in PreToolUse, so without this hook the issue would stay pending.
 
 Reads one PermissionDenied event on stdin. The call is classified with the
-guard's rules (`guard.classify`). For a guarded launch of pm, engineer or qa
-(also the Codex QA launcher and a SendMessage continuation) the hook reads the
+guard's rules (`guard.classify`). For a guarded launch of pm, engineer, qa or
+planner (also the Codex QA launcher and a SendMessage continuation; a planner is
+never continued) the hook reads the
 issue and posts `## Launch not started: <role> (…)` when the newest receipt
 carries the call hash of this event's tool_use_id (`issue_state.not_started_comment`).
 It holds the guard's lock from reading the issue until the comment is posted,

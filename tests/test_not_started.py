@@ -444,3 +444,34 @@ def test_main_writes_evidence_into_the_git_dir(env):
     assert (code, out) == (0, "")
     assert (Path(env["FAKE_GIT_DIR"]) / "agent-graph-kit-outage" / "synthetic1").read_text() == "Classifier unavailable"
     assert lines(env["FAKE_GH_CALLS"]) == []
+
+
+# --- planner launch (issue #99) ---------------------------------------------------------------
+
+
+def planner_receipt(n=1, call=None):
+    return launch("planner", n, agent="planner", call=call)
+
+
+def test_planner_launch_posts_not_started_and_voids_the_receipt():
+    import issue_state
+    fake = Fake(make_issue(planner_receipt(1, call=H)))
+    fake.run(agent("planner", "Review the stage.\nROLE=planner ISSUE=7"))
+    body = f"## Launch not started: planner (attempt 1)\nCall: {H}\nReason: {NO_VERDICT}"
+    assert fake.posts == [(7, body)]
+    assert fake.events == ["lock", "read", "post", "unlock"]
+    after = make_issue(planner_receipt(1, call=H), body)
+    assert not issue_state.is_pending(after)
+    assert issue_state.attempt(after, "planner") == 2
+
+
+def test_planner_launch_with_a_result_after_the_receipt_posts_nothing():
+    fake = Fake(make_issue(planner_receipt(1, call=H), "## Planner: STAGE REVIEW"))
+    fake.run(agent("planner", "ROLE=planner ISSUE=7"))
+    assert fake.posts == []
+
+
+def test_planner_send_message_posts_nothing():
+    fake = Fake(make_issue(planner_receipt(1, call=H)))
+    fake.run(send("planner-1", "ROLE=planner ISSUE=7"))
+    assert fake.reads == [] and fake.posts == []

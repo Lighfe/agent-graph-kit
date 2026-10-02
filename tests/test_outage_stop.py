@@ -425,3 +425,30 @@ def test_script_has_pep723_header_and_imports_the_guard():
     assert text.startswith("#!/usr/bin/env -S uv run --script\n")
     assert "# /// script" in text and "# dependencies = []" in text
     assert "import guard" in text and "import issue_state" in text
+
+
+# --- planner launch (issue #99) ---------------------------------------------------------------
+
+
+def planner_receipt(n=1, call=None):
+    return launch("planner", n, agent="planner", call=call)
+
+
+def test_planner_posts_stop_comment_that_voids_the_receipt(tmp_path):
+    import issue_state
+    env = Env(tmp_path, make_issue(planner_receipt(1, call=X))).evidence().launch_line(
+        "ROLE=planner ISSUE=39\nYou are the planner.")
+    env.run(env.event("planner"))
+    body = f"## Launch stopped by outage: planner (attempt 1)\nCall: {X}\nReason: {REASON}"
+    assert env.posts == [(39, body)]
+    assert env.evidence_gone()
+    after = make_issue(planner_receipt(1, call=X), body)
+    assert not issue_state.is_pending(after)
+    assert issue_state.attempt(after, "planner") == 2
+
+
+@pytest.mark.parametrize("agent_type, line", [("planner", "ROLE=pm ISSUE=39"), ("pm", "ROLE=planner ISSUE=39")])
+def test_planner_agent_type_and_launch_line_role_differ(tmp_path, agent_type, line):
+    env = Env(tmp_path, make_issue(planner_receipt(1, call=X))).evidence().launch_line(line)
+    env.run(env.event(agent_type))
+    assert env.reads == [] and env.posts == []

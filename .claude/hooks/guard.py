@@ -5,9 +5,12 @@
 # ///
 """PreToolUse guard hook (spec 5.1-5.7, 5.9).
 
-Reads one hook event on stdin. A guarded call (a role launch, a SendMessage
-continuation, `qa-codex`, `gh issue close`) is checked against the issue state
-with `issue_state`. An allowed launch gets its launch comment before the guard
+Reads one hook event on stdin. A guarded call (a role launch of pm, engineer,
+qa or planner, a SendMessage continuation, `qa-codex`, `gh issue close`) is
+checked against the issue state with `issue_state`. The planner (issue #99) is
+launched only as a new subagent launch on an open issue with the label `stage`:
+a SendMessage with ROLE=planner is denied, and the guard reads no blockers for
+a planner launch. An allowed launch gets its launch comment before the guard
 exits. A deny is printed as the PreToolUse deny JSON with exit code 0. An
 allowed call prints nothing, so the normal permission check stays on.
 
@@ -58,9 +61,12 @@ import issue_state
 from issue_state import Call
 
 SUBAGENT_TOOLS = {"Agent", "Task"}  # S1 Q1: the tool is "Agent"; "Task" is the old name
-AGENT_ROLE = {"pm": "pm", "software-engineer": "engineer", "frontend-engineer": "engineer", "qa-engineer": "qa"}
-LAUNCH_LINE = re.compile(r"ROLE=(pm|engineer|qa) ISSUE=([0-9]+)")
-LAUNCH_HINT = "exactly one line ROLE=<pm|engineer|qa> ISSUE=<number>"
+AGENT_ROLE = {"pm": "pm", "software-engineer": "engineer", "frontend-engineer": "engineer", "qa-engineer": "qa",
+              "planner": "planner"}  # the planner: issue #99
+LAUNCH_LINE = re.compile(r"ROLE=(pm|engineer|qa|planner) ISSUE=([0-9]+)")
+LAUNCH_HINT = "exactly one line ROLE=<pm|engineer|qa|planner> ISSUE=<number>"
+PLANNER_CONTINUED = ("G1: SendMessage with ROLE=planner: a planner cannot be continued (it posts one comment "
+                     "and ends), expected a new launch of the agent planner")
 
 DEFAULT_DEADLINE_S = 60  # spec 5.6
 CALL_TIMEOUT_S = 20  # per gh/git call
@@ -661,6 +667,8 @@ def _classify_send(tool_input: dict) -> Call:
         raise Deny("G1: SendMessage input has no string to or no string message, "
                    f"expected both, with {LAUNCH_HINT} in the message")
     role, number = _launch(message, "SendMessage")
+    if role == issue_state.PLANNER:
+        raise Deny(PLANNER_CONTINUED)
     return Call(role=role, agent=to, issue=number, continued=True)
 
 
@@ -807,7 +815,8 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
     """Deny reason, or None to let the call through. `lock()` is held from reading
     the facts until the launch comment is posted (spec 5.7). The launch comment has a
     `Call:` line when the event has a string tool_use_id (spec 5.3). For every role launch
-    (not for close), `read_blockers(n)` gives (blocker list, open-blocker count) inside the lock.
+    (not for close and not for the planner, issue #99), `read_blockers(n)` gives (blocker list,
+    open-blocker count) inside the lock.
     Only for the close of a stage issue (issue #97), `read_sub_issues(n)` gives
     (sub-issue list, sub_issues_summary.total) inside the lock."""
     try:
@@ -818,7 +827,7 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
         return None
     with lock():
         facts = read_facts(call.issue)
-        if call.role != "close":
+        if call.role not in ("close", issue_state.PLANNER):
             blockers, count = read_blockers(call.issue)
             facts = dataclasses.replace(facts, blockers=blockers, open_blockers=count)
         elif issue_state.is_stage_close(call, facts.issue):

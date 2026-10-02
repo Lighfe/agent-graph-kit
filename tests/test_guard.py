@@ -1430,3 +1430,162 @@ def test_guard_non_stage_close_is_unchanged_and_reads_no_sub_issues(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}", labels=())
     assert deny_reason(run_guard(CLOSE_7, env)[1]).startswith("G1:")
     assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
+
+
+# --- planner launch on a stage issue (issue #99) -----------------------------------------------
+
+PLANNER_7 = agent("planner", "Review the stage.\nROLE=planner ISSUE=7")
+STAGE_REVIEW = "## Planner: STAGE REVIEW"
+
+
+def planner_receipt(n=1, call=None):
+    return launch("planner", n, agent="planner", call=call)
+
+
+@pytest.mark.parametrize("tool", ["Agent", "Task"])
+def test_planner_launch_is_a_guarded_call_with_role_planner(tool):
+    assert classify(agent("planner", "Review it.\nROLE=planner ISSUE=42", tool=tool)) == Call(
+        role="planner", agent="planner", issue=42)
+
+
+@pytest.mark.parametrize("prompt", ["no launch line", "ROLE=planner ISSUE=7\nROLE=planner ISSUE=7",
+                                    "ROLE=planner ISSUE=7\nROLE=pm ISSUE=7"])
+def test_planner_launch_without_one_launch_line_is_denied(prompt):
+    reason = denied(agent("planner", prompt))
+    assert reason.startswith("G1:") and "ROLE=<pm|engineer|qa|planner> ISSUE=<number>" in reason
+
+
+@pytest.mark.parametrize("role", ["pm", "engineer", "qa"])
+def test_planner_agent_with_another_role_is_denied(role):
+    assert denied(agent("planner", f"ROLE={role} ISSUE=7")) == (
+        f"G1: launch line role is {role}, expected planner for agent planner")
+
+
+@pytest.mark.parametrize("agent_type, role", [("pm", "pm"), ("software-engineer", "engineer"),
+                                              ("frontend-engineer", "engineer"), ("qa-engineer", "qa")])
+def test_role_agent_with_role_planner_is_denied(agent_type, role):
+    assert denied(agent(agent_type, "ROLE=planner ISSUE=7")) == (
+        f"G1: launch line role is planner, expected {role} for agent {agent_type}")
+
+
+def test_launch_hint_names_the_planner():
+    assert guard.LAUNCH_HINT == "exactly one line ROLE=<pm|engineer|qa|planner> ISSUE=<number>"
+    assert "ROLE=<pm|engineer|qa|planner> ISSUE=<number>" in denied(agent("pm", "no line"))
+    assert "ROLE=<pm|engineer|qa|planner> ISSUE=<number>" in denied(send("worker", "no line"))
+
+
+def test_send_message_with_role_planner_is_denied():
+    reason = denied(send("planner-1", "Go on.\nROLE=planner ISSUE=7"))
+    assert reason.startswith("G1:") and "cannot be continued" in reason
+    assert "new launch of the agent planner" in reason
+
+
+def test_decide_planner_send_message_reads_nothing():
+    fio = FakeIO(issue(labels=("stage",)))
+    assert fio.decide(send("planner-1", "ROLE=planner ISSUE=7")).startswith("G1:")
+    assert fio.reads == [] and fio.posts == [] and fio.blocker_reads == []
+
+
+def test_decide_planner_launch_posts_its_receipt_and_reads_no_blockers():
+    fio = FakeIO(issue(labels=("stage",)))
+    event = {**PLANNER_7, "tool_use_id": "toolu_synthetic_1"}
+    assert fio.decide(event) is None
+    h = issue_state.call_hash("toolu_synthetic_1")
+    assert fio.posts == [(7, f"## Launch: planner (attempt 1)\nAgent: planner\nCall: {h}")]
+    assert fio.blocker_reads == []
+
+
+def test_decide_planner_launch_with_a_raising_blocker_reader_is_allowed():
+    fio = FakeIO(issue(labels=("stage",)))
+
+    def boom(n):
+        raise Deny("guard error: synthetic blocker read failure")
+
+    assert decide(PLANNER_7, fio.read_facts, fio.post_comment, read_blockers=boom) is None
+    assert decide(PLANNER_7, FakeIO(issue(labels=("stage",))).read_facts, lambda n, b: None) is None
+    assert fio.posts == [(7, "## Launch: planner (attempt 1)\nAgent: planner")]
+
+
+def test_decide_planner_launch_runs_no_sub_issue_read():
+    fio = FakeIO(issue(labels=("stage",)))
+    reads = []
+    assert decide(PLANNER_7, fio.read_facts, fio.post_comment,
+                  read_sub_issues=lambda n: reads.append(n) or ((), 0)) is None
+    assert reads == []
+
+
+def test_guard_planner_launch_on_a_stage_issue_is_allowed_and_posts_the_receipt(env):
+    write_stage(env)
+    code, out = run_guard({**PLANNER_7, "tool_use_id": "toolu_synthetic_1"}, env)
+    assert (code, out) == (0, "")
+    h = issue_state.call_hash("toolu_synthetic_1")
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": f"## Launch: planner (attempt 1)\nAgent: planner\nCall: {h}"}]
+    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))  # no blocker and no sub-issue read
+
+
+def test_guard_planner_launch_on_a_stage_issue_with_ready_is_allowed(env):
+    write_stage(env, labels=("stage", "ready"))
+    assert run_guard(PLANNER_7, env) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 1)\nAgent: planner"}]
+
+
+@pytest.mark.parametrize("labels", [(), ("ready",)])
+def test_guard_planner_launch_without_the_label_stage_is_denied(env, labels):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), labels=labels)
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason == "G1: issue #7 has no label stage, expected the label stage for a planner launch"
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_planner_launch_on_a_closed_stage_issue_is_denied(env):
+    write_stage(env, state="CLOSED")
+    assert deny_reason(run_guard(PLANNER_7, env)[1]) == "G1: issue #7 is closed, expected an open issue"
+
+
+@pytest.mark.parametrize("label", ["later", "needs-owner"])
+def test_guard_planner_launch_with_later_or_needs_owner_is_denied(env, label):
+    write_stage(env, labels=("stage", label))
+    assert deny_reason(run_guard(PLANNER_7, env)[1]) == (
+        f"G1: issue #7 has the label {label}, expected no label later or needs-owner")
+
+
+def test_guard_planner_launch_on_a_dirty_tree_is_denied(env):
+    write_stage(env)
+    assert deny_reason(run_guard(PLANNER_7, env, FAKE_GIT_DIRTY="1")[1]) == (
+        "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)")
+
+
+def test_guard_second_planner_launch_while_pending_is_denied(env):
+    write_stage(env, planner_receipt())
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason == ("G1: issue #7 is pending: ## Launch: planner (attempt 1) has no result, "
+                      "expected a result of planner or ## Owner: RESUME")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+@pytest.mark.parametrize("after", [STAGE_REVIEW, "## Owner: RESUME"])
+def test_guard_planner_launch_after_a_result_or_resume_gets_attempt_2(env, after):
+    write_stage(env, planner_receipt(), after)
+    assert run_guard(PLANNER_7, env) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
+
+
+def test_guard_planner_launch_after_two_voided_receipts_is_denied(env):
+    from helpers import not_started, stopped
+    x, y = "0123456789ab", "ba9876543210"
+    write_stage(env, planner_receipt(1, x), not_started("planner", 1, x), planner_receipt(2, y),
+                stopped("planner", 2, y))
+    assert deny_reason(run_guard(PLANNER_7, env)[1]).startswith("G1: issue #7: the last 2 launches")
+
+
+@pytest.mark.parametrize("key", ["blocked_by", "issue"])
+def test_guard_planner_launch_ignores_a_failing_blocker_read(env, key):
+    write_stage(env)
+    assert run_guard(PLANNER_7, env, FAKE_GH_API_FAIL=key) == (0, "")
+    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
+
+
+def test_guard_pm_launch_on_a_stage_issue_is_unchanged(env):
+    write_stage(env, planner_receipt(), STAGE_REVIEW)
+    reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
+    assert reason == "G1: issue #7 has no label ready, expected the label ready"

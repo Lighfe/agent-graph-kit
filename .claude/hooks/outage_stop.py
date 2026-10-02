@@ -12,7 +12,8 @@ Without such a file the hook ends at once: no transcript read, no `gh` call.
 
 With evidence, the hook reads and deletes the file, reads the launch line
 `ROLE=<role> ISSUE=<n>` from the first user message of the agent's transcript
-(the guard's launch line rule) and checks that `agent_type` has that role. It
+(the guard's launch line rule, roles pm, engineer, qa and planner) and checks
+that `agent_type` has that role. It
 holds the guard's lock from reading the issue until the comment is posted,
 within the guard's overall deadline, and posts `## Launch stopped by outage: <role> (…)`
 when the newest receipt of that role is still pending (`issue_state.outage_stop_comment`).

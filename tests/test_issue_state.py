@@ -71,6 +71,7 @@ def test_constants_match_spec():
         "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
         "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID",
                "## QA: UNVERIFIABLE"),
+        "planner": ("## Planner: STAGE REVIEW",),
     }
     assert RESUME == "## Owner: RESUME"
     assert AGENT_LANE == {"default": "software-engineer", "frontend": "frontend-engineer"}
@@ -1672,3 +1673,151 @@ def test_role_launches_on_a_stage_issue_are_not_on_the_stage_path(call):
     # a stage issue never gets ready: every role launch is denied by G1 as today
     msg = check(call, facts(stage()))
     assert msg.startswith("G1:") and "ready" in msg, msg
+
+
+# --- planner launch on a stage issue (issue #99) -------------------------------------------
+
+PLANNER = Call(role="planner", agent="planner", issue=7)
+STAGE_REVIEW = "## Planner: STAGE REVIEW"
+LATER_LABEL_MSG = "G1: issue #7 has the label {}, expected no label later or needs-owner"
+
+
+def planner_receipt(n=1, call=None):
+    return launch("planner", n, agent="planner", call=call)
+
+
+def planner_facts(iss=None, **kw):
+    """Facts of a planner launch: the guard runs no blocker read for it (issue #99)."""
+    return facts(iss if iss is not None else stage(), blockers=None, open_blockers=None, **kw)
+
+
+def test_planner_marker_is_a_result_marker_of_the_role_planner():
+    assert MARKERS["planner"] == (STAGE_REVIEW,)
+
+
+def test_planner_allowed_on_an_open_stage_issue_without_ready():
+    assert check(PLANNER, planner_facts()) is None
+
+
+def test_planner_allowed_on_a_stage_issue_with_ready():
+    assert check(PLANNER, planner_facts(stage(labels=("stage", "ready")))) is None
+
+
+@pytest.mark.parametrize("labels", [(), ("ready",), ("ready", "later")])
+def test_planner_denied_on_an_issue_without_the_label_stage(labels):
+    msg = check(PLANNER, planner_facts(issue(labels=labels)))
+    assert msg == "G1: issue #7 has no label stage, expected the label stage for a planner launch", msg
+
+
+def test_planner_denied_on_a_closed_stage_issue():
+    assert check(PLANNER, planner_facts(stage(open=False))) == "G1: issue #7 is closed, expected an open issue"
+
+
+@pytest.mark.parametrize("label", ["later", "needs-owner"])
+def test_planner_denied_on_a_stage_issue_with_later_or_needs_owner(label):
+    assert check(PLANNER, planner_facts(stage(labels=("stage", label)))) == LATER_LABEL_MSG.format(label)
+
+
+def test_planner_denied_on_a_dirty_tree():
+    msg = check(PLANNER, planner_facts(clean=False))
+    assert msg == "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+
+
+def test_planner_denied_while_pending():
+    msg = check(PLANNER, planner_facts(stage(planner_receipt())))
+    assert msg == ("G1: issue #7 is pending: ## Launch: planner (attempt 1) has no result, "
+                   "expected a result of planner or ## Owner: RESUME"), msg
+
+
+@pytest.mark.parametrize("after", [STAGE_REVIEW, STAGE_REVIEW + "\nsynthetic review", RESUME])
+def test_planner_allowed_after_a_valid_stage_review_or_resume(after):
+    iss = stage(planner_receipt(), after)
+    assert not is_pending(iss)
+    assert check(PLANNER, planner_facts(iss)) is None
+    assert launch_comment(PLANNER, attempt(iss, "planner")) == "## Launch: planner (attempt 2)\nAgent: planner"
+
+
+@pytest.mark.parametrize("first, second", [(not_started, not_started), (stopped, stopped),
+                                           (not_started, stopped), (stopped, not_started)])
+def test_planner_denied_after_two_voided_planner_launches(first, second):
+    iss = stage(planner_receipt(1, X), first("planner", 1, X), planner_receipt(2, Y), second("planner", 2, Y))
+    assert check(PLANNER, planner_facts(iss)).startswith("G1: issue #7: the last 2 launches")
+
+
+def test_planner_allowed_after_two_voided_launches_and_a_resume():
+    iss = stage(planner_receipt(1, X), not_started("planner", 1, X), planner_receipt(2, Y),
+                stopped("planner", 2, Y), RESUME)
+    assert check(PLANNER, planner_facts(iss)) is None
+
+
+def test_planner_allowed_after_one_voided_launch():
+    iss = stage(planner_receipt(1, X), not_started("planner", 1, X))
+    assert not is_pending(iss)
+    assert check(PLANNER, planner_facts(iss)) is None
+
+
+@pytest.mark.parametrize("blockers, count", [(None, None), ((b(3, "open"),), 1), ((), 2)])
+def test_planner_path_does_not_look_at_blockers(blockers, count):
+    assert check(PLANNER, facts(stage(), blockers=blockers, open_blockers=count)) is None
+
+
+def test_planner_path_runs_no_g2_to_g7():
+    # three returns (G7), a current result that G2-G6 would deny, and a Lane-less body (G3)
+    iss = issue(*three_fails(), labels=("stage",), body="Stage issue\n")
+    assert returns_since_resume(iss) == 3
+    assert check(PLANNER, planner_facts(iss)) is None
+    assert check(PLANNER, planner_facts(stage(launch("pm"), "## PM: GROOMED"))) is None
+    assert check(PLANNER, planner_facts(stage(launch("qa"), f"## QA: PASS\nVerified: {HEAD}"))) is None
+
+
+@pytest.mark.parametrize("call", [Call(role="planner", agent="pm", issue=7),
+                                  Call(role="planner", agent="", issue=7),
+                                  Call(role="planner", agent="planner", issue=7, continued=True)])
+def test_planner_role_with_another_agent_or_as_continuation_is_denied(call):
+    msg = check(call, planner_facts())
+    assert msg.startswith("G1:") and "planner" in msg, msg
+
+
+def test_planner_denies_facts_of_another_issue():
+    assert check(Call(role="planner", agent="planner", issue=8), planner_facts()).startswith("G1:")
+
+
+def test_stage_review_after_the_planner_receipt_is_the_current_result():
+    iss = stage(planner_receipt(), STAGE_REVIEW)
+    assert current_result(iss) == (1, STAGE_REVIEW)
+
+
+def test_stage_review_before_any_planner_receipt_is_not_valid():
+    assert current_result(stage(STAGE_REVIEW)) is None
+    iss = stage(STAGE_REVIEW, planner_receipt())
+    assert is_pending(iss)
+    assert current_result(iss) is None
+
+
+def test_stage_review_after_another_role_receipt_is_not_valid():
+    iss = stage(launch("pm"), STAGE_REVIEW)
+    assert is_pending(iss) and current_result(iss) is None
+
+
+def test_stage_review_is_not_a_return():
+    iss = stage(planner_receipt(1), STAGE_REVIEW, planner_receipt(2), STAGE_REVIEW,
+                planner_receipt(3), STAGE_REVIEW)
+    assert returns_since_resume(iss) == 0
+
+
+def test_planner_receipts_are_voided_by_not_started_and_stop_comments():
+    assert not_started_comment(stage(planner_receipt(1, X)), X, "Classifier unavailable", role="planner") == (
+        f"## Launch not started: planner (attempt 1)\nCall: {X}\nReason: Classifier unavailable")
+    assert outage_stop_comment(stage(planner_receipt(1, X)), "planner", "Classifier unavailable") == (
+        f"## Launch stopped by outage: planner (attempt 1)\nCall: {X}\nReason: Classifier unavailable")
+    for void in (not_started, stopped):
+        iss = stage(planner_receipt(1, X), void("planner", 1, X))
+        assert not is_pending(iss) and attempt(iss, "planner") == 2
+
+
+def test_role_launches_and_stage_close_are_unchanged_by_a_planner_result():
+    iss = stage(planner_receipt(), STAGE_REVIEW)
+    for call in (PM, ENG, QA, QA_FALLBACK):
+        msg = check(call, facts(iss))
+        assert msg.startswith("G1:") and "ready" in msg, msg
+    assert check(CLOSE, stage_facts(iss, subs=(s(3),))) is None
