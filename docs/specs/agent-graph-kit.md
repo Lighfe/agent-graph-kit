@@ -1,7 +1,7 @@
 # agent-graph-kit behavior spec
 
 - Status: living. This file says how the kit behaves now.
-- It holds what the code implements and no other file states: the principles, the roles and lanes, the launch contract with the guarantees G1 to G8, the result markers, the `qa-codex` contract and the stage model.
+- It holds what the code implements and no other file states: the principles, the roles and lanes, the launch contract with the guarantees G1 to G8, the result markers, the `qa-codex` contract, the stage model and the doc lifecycles.
 - The code wins. Where this file and the code differ, the code holds, and this file is fixed in the same commit as the change that made it false.
 - The process prose stays in [docs/process.md](../process.md), the role files in [docs/team/](../team/), the agent files in [.claude/agents/](../../.claude/agents/) and the skills in [.agents/skills/](../../.agents/skills/). This file links them and does not repeat them.
 - History: the v1 spec ([docs/archive/2026-09-25-agent-graph-kit-v1-spec.md](../archive/2026-09-25-agent-graph-kit-v1-spec.md)) and the stages spec ([docs/archive/2026-10-01-stages-and-planner-spec.md](../archive/2026-10-01-stages-and-planner-spec.md)) are archived unchanged. Scope, spikes, the file list and the demo of v1 stay there.
@@ -400,3 +400,18 @@ What the hooks do for a stage issue:
 - A PM, engineer or QA launch on a stage issue is denied by G1 while it has no `ready`, which a stage issue never gets.
 - The close of a stage issue is allowed only when it is open and every sub-issue is closed: the stage path of [G1](#g1-launch-preconditions) and [G6](#g6-close).
 - `qa-codex` gives Codex the sub-issues of the checked issue in `sub-issues.json` (see "What Codex gets").
+
+## Doc lifecycles
+
+Each kind of doc has a folder and a lifecycle. The reading rules for these folders are prose in "Work rules" of [docs/process.md](../process.md#work-rules); no hook checks them.
+
+| Kind of doc | Folder | Lifecycle |
+|---|---|---|
+| Living spec | `docs/specs/` (this file) | Kept up to date: fixed in the same commit as the change that makes it false. |
+| Dated design specs and proposals | `docs/specs/`, `docs/research/` | Archived to `docs/archive/` once their stage is set up. Until then they stay where they are (for example a deferred spec in `docs/specs/`). |
+| Plans | `docs/plans/` | Written at intake; archived to `docs/archive/` once every stage issue made from the plan is set up. |
+| Research and spike reports | `docs/research/` | Written once and kept. Later research may build on them and cite them. |
+| Reviews | `docs/reviews/` | Kept as a record once each finding is an issue or decided. Deleted only on clear evidence that agents read old reviews. |
+| Archive | `docs/archive/` | Kept unchanged. |
+| Owner checklists | `docs/checks/` | Kept up to date with the hooks and settings they check. |
+| Instruction files | `AGENTS.md`, `CLAUDE.md`, `docs/process.md`, `docs/task-template.md`, `docs/team/`, `.claude/agents/`, `.agents/skills/` | Kept up to date: fixed in the same commit as the change that makes them false. |

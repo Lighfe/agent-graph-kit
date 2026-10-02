@@ -9,7 +9,11 @@ Status: hooks in `.claude/hooks/` check each launch of a role and each `gh issue
 - Tasks are GitHub issues, one at a time
 - Read the acceptance criteria before starting and before closing
 - Commit regularly
-- Do not read old reviews in `docs/reviews/` unless the owner points to one.
+- Reading rules for the doc folders (prose only, no hook checks them; the lifecycles are in "Doc lifecycles" of `docs/specs/agent-graph-kit.md`):
+  - `docs/archive/`: read a file there only when the owner or the issue points to it
+  - `docs/research/`: readable; you may build on earlier research and cite it
+  - `docs/plans/`: reach a plan through the issue that came from it
+  - `docs/reviews/`: a review matters in the session that asked for it; read an older review only when the owner or the issue points to one
 
 ## Roles
 

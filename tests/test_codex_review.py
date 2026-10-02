@@ -390,9 +390,3 @@ def test_agents_md_line():
     text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     section = text.split("## Skills and subagents")[1].split("\n## ")[0]
     assert "When the owner asks for a Codex review, use the `codex-review` skill." in section
-
-
-def test_process_md_rule():
-    text = (ROOT / "docs" / "process.md").read_text(encoding="utf-8")
-    section = text.split("## Work rules")[1].split("\n## ")[0]
-    assert "Do not read old reviews in `docs/reviews/` unless the owner points to one." in section
