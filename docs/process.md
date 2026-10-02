@@ -27,10 +27,12 @@ A groomed issue uses the template in `docs/task-template.md`.
 
 ## Intake
 
+The planner (the main session, started with `/stage-start`) does intake and stage set-up, in dialogue with the owner. The steps and commands are in "Intake" and "Stage set-up" in `docs/team/planner.md`.
+
 - A superpowers plan in `docs/plans/` is turned into GitHub issues.
-- A plan becomes one stage issue (the form "Stage issue" in `docs/task-template.md`), with the plan tasks as its sub-issues.
-- Each plan task becomes one issue in `docs/task-template.md` format.
-- The owner adds the label `ready` to the issues that the loop may work on.
+- A plan becomes one stage issue with the label `stage` (the form "Stage issue" in `docs/task-template.md`), with the plan tasks as its sub-issues.
+- Each plan task becomes one issue in `docs/task-template.md` format. The sub-issues carry the label `later` until the owner confirms the stage.
+- Only after the owner has confirmed the stage does the planner remove `later` and add `ready` on each sub-issue: at intake, when the owner confirms the stage in the session; at stage set-up, after the owner has chosen an option of the stage review, validated its purpose and, when permissions were named, confirmed the stage with them. A denied relabel follows the rule "Denied relabel" in `docs/team/planner.md`.
 - A task that needs a permission beyond the defaults names it in its `Permissions:` line at planning or grooming, and the owner sets it before the engineer launch.
 - Issues with the label `later` are out of scope for the current implementation. Do not work on them. A parked blocker of the active stage is promoted instead (see "Stages" below).
 
