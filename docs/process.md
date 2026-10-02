@@ -39,8 +39,9 @@ A groomed issue uses the template in `docs/task-template.md`.
 7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
 8. On PASS, close the issue
 9. Repeat until every open issue with the label `ready` has an open blocker, or none is left, or the active stage has ended
+10. When the active stage has ended, the orchestrator launches the planner for the stage review on the stage issue, and then stops (see "Stage end" below)
 
-Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below).
+Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below) and the loop stopped after the stage review (or after the stage issue was escalated).
 
 ## Stages
 
@@ -83,7 +84,14 @@ An open blocker that is not a parked issue (another repo, a parent already set, 
 
 ### Stage end
 
-When the active stage's sub-issue list is not empty and every entry is closed, the loop stops. A sub-issue with `needs-owner` is open, so the stage has not ended. The orchestrator does not close the stage issue and launches no stage review (both come in stage 2).
+When the active stage's sub-issue list is not empty and every entry is closed, the stage has ended. The orchestrator checks that the working tree is clean, then launches the planner subagent (`.claude/agents/planner.md`, agent `planner`, role `docs/team/planner.md`) on the stage issue with the launch line `ROLE=planner ISSUE=<stage issue>`. The prompt has a section "Run notes": the orchestrator's notes on the current run (escalations, guard and classifier denies, outages, collisions, anything unusual), or one line saying nothing unusual happened. The planner posts one comment on the stage issue with the first line `## Planner: STAGE REVIEW`. Then the loop stops, and the final report names the stage review.
+
+- When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop stops or continues as before.
+- When the stage issue already has a stage review from an earlier run (an owner comment with the first line `## Planner: STAGE REVIEW`), the orchestrator does not launch the planner again. The final report names that review.
+- When the planner step gives no stage review, the orchestrator escalates the stage issue and stops. A planner launch is not a return.
+- The orchestrator does not close the stage issue. The planner closes it at stage set-up.
+
+The details are in "Stage end" in `docs/team/orchestrator.md`.
 
 ## Rules
 
@@ -113,4 +121,5 @@ When the active stage's sub-issue list is not empty and every entry is closed, t
 - The owner is asked only for decisions that are really the owner's: money, settings, or a change of intent or scope. Everything else is resolved inside the team: the engineer asks the PM with `## Engineer: BLOCKED`, and the PM clarifies the issue. An issue that must wait for other open issues is not an owner decision either: the PM adds them as native "blocked by" links (also issues in other repos) and posts `## PM: WAITING`. The issue keeps `ready`, the pick skips it while it has an open blocker, and it goes back to the PM when all its blockers are closed. Nor is a role agent stopped by an auto mode outage: a hook marks the launch, and the orchestrator launches the same step again.
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
 - The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
+- A stage issue never has `ready`. When a stage issue is escalated, the orchestrator only adds `needs-owner`. The owner answers with `## Owner: RESUME`, removes `needs-owner`, and does not add `ready`.
 - After `## Owner: RESUME`, the issue goes back to the PM. The PM applies the edits of the issue that this owner comment asks for (see `docs/team/pm.md`).

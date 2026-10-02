@@ -2,7 +2,7 @@
 
 You are the main session. You coordinate the work on the issues. You follow the lifecycle and the rules in `docs/process.md`.
 
-- Launch the PM, the engineer and QA as subagents, one step at a time
+- Launch the PM, the engineer and QA as subagents, one step at a time. At stage end, launch the planner as a subagent for the stage review
 - Do not groom, implement or test yourself
 - Do not edit issue bodies, acceptance criteria, or code
 - Read the result of each step from the issue, not from memory
@@ -52,11 +52,50 @@ These label and sub-issue edits are allowed, although you do not edit issue bodi
 
 ### Stage end
 
-When the active stage's sub-issue list is not empty and every entry is closed, the loop stops, and your final message says "Stage #<N> is finished". A sub-issue with `needs-owner` is open, so the stage has not ended. Do not close the stage issue and launch no stage review (both come in stage 2).
+When the active stage's sub-issue list is not empty and every entry is closed, the stage has ended. Then:
+
+1. Run `git status --porcelain`. If the output is not empty, stop the loop and ask the owner, as in "Before each issue".
+2. Look for an earlier stage review on the stage issue: a comment whose first line is exactly `## Planner: STAGE REVIEW` and whose `authorAssociation` is `OWNER`. If one exists (from an earlier run), do not launch the planner again. Stop the loop. Your final report names the URL of the newest such comment and the line below (see "Definition of done").
+3. Otherwise launch the agent `planner` on the stage issue, with the run notes (see "Launch a subagent").
+4. Read its result (see "Read the result") and stop the loop.
+
+The read for step 2 returns the newest stage review by the owner's login, or `null`:
+
+```
+gh issue view <stage> --json comments --jq '[.comments[] | select(.authorAssociation == "OWNER") | {line: (.body | split("\n")[0] | rtrimstr("\r")), url} | select(.line == "## Planner: STAGE REVIEW")] | last'
+```
+
+When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop stops or continues as today.
+
+Do not close the stage issue. The planner closes it at stage set-up (see "Stage set-up" in `docs/team/planner.md`).
+
+#### Run notes
+
+The planner prompt always has a section `Run notes`. It covers the current session's run only. It lists, each entry with its issue number:
+
+- escalations, with the reason
+- guard denies, with the check ID (for example `G1`)
+- auto mode classifier denies
+- outages: `## Launch not started: …` and `## Launch stopped by outage: …` receipts
+- collisions
+- anything else unusual in the run
+
+When nothing happened, the section says so in one line, for example "Nothing unusual in this run."
+
+#### When the planner step gives no stage review
+
+A planner launch is not a return.
+
+- The result is missing, or its first line is not exactly `## Planner: STAGE REVIEW`: escalate the stage issue and stop the loop
+- `G1` pending (the last planner launch ended without a result): escalate the stage issue and stop the loop
+- `G1` working tree not clean: stop the loop and ask the owner, as today
+- `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner, as for the other roles
+- Any other deny of the planner launch: escalate the stage issue with the deny message and stop the loop
+- A `## Launch not started: …` or `## Launch stopped by outage: …` receipt on the stage issue: launch the planner again, as for the other roles
 
 ## Launch a subagent
 
-Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call.
+Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call. Never continue a planner with `SendMessage`.
 
 | Step | Agent | Input |
 |---|---|---|
@@ -64,16 +103,27 @@ Launch a new subagent for each step. Each subagent starts with a fresh context. 
 | Implement | `software-engineer` for `Lane: default`, `frontend-engineer` for `Lane: frontend` | The issue number. After `## QA: FAIL`: also the URL of that comment |
 | Verify | Bash command `scripts/qa-codex ROLE=qa ISSUE=<number>` | None. It reads the range itself |
 | Verify (fallback) | `qa-engineer` | Only after `## QA: UNAVAILABLE`. The issue number and the commit range `<base>..<head>` from the newest `## Engineer: DONE` comment. Do not give QA the engineer summary |
+| Stage review | `planner` | The stage issue number and the section "Run notes" (see "Stage end") |
 
 Run `scripts/qa-codex ROLE=qa ISSUE=<number>` as the whole Bash command, with the Bash tool's `run_in_background` option. No `&`, no `cd … &&`, no redirection, nothing in front of `scripts/`. Wait until it ends.
 
-Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer` and for `frontend-engineer`, `qa` for `qa-engineer`. The guard accepts only `pm`, `engineer` and `qa`, so the launch line of `frontend-engineer` is `ROLE=engineer`:
+Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer` and for `frontend-engineer`, `qa` for `qa-engineer`, `planner` for `planner`. The guard accepts only `pm`, `engineer`, `qa` and `planner`, so the launch line of `frontend-engineer` is `ROLE=engineer`, and the launch line of `planner` is `ROLE=planner`:
 
 ```
 ROLE=<pm|engineer|qa> ISSUE=<number>
 Your role is defined in docs/team/<role>.md.
 Work on issue #<number>. Follow the process in docs/process.md.
 <input from the table, if any>
+```
+
+Prompt for the planner, in this order: the launch line, the role line, and the section `Run notes`:
+
+```
+ROLE=planner ISSUE=<stage issue>
+Your role is defined in docs/team/planner.md.
+
+## Run notes
+<the run notes, or "Nothing unusual in this run.">
 ```
 
 ## Read the result
@@ -85,6 +135,7 @@ Each role posts a comment with a fixed first line:
 | PM | `## PM: GROOMED`, `## PM: NEEDS OWNER` or `## PM: WAITING` |
 | Engineer | `## Engineer: DONE` or `## Engineer: BLOCKED` |
 | QA | `## QA: PASS`, `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## QA: UNAVAILABLE` or `## QA: INVALID` |
+| Planner | `## Planner: STAGE REVIEW` |
 
 `## Launch: …` comments are hook receipts, not results.
 
@@ -94,7 +145,7 @@ Read only the newest comment with the marker of the role. This returns its first
 gh issue view <number> --json comments --jq '[.comments[] | {line: (.body | split("\n")[0] | rtrimstr("\r")), url} | select(.line | startswith("## QA: "))] | last'
 ```
 
-Use `## PM: `, `## Engineer: ` or `## QA: ` as the prefix. The line must be exactly one of the values in the table.
+Use `## PM: `, `## Engineer: ` or `## QA: ` as the prefix. For the planner, use the same command with the prefix `## Planner: ` on the stage issue. The line must be exactly one of the values in the table.
 
 Read the full comment only for `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## Engineer: BLOCKED` and `## Engineer: DONE` (for the commit range). Replace `last` in the command with `last | .body`.
 
@@ -116,6 +167,7 @@ If the result is missing or not in this format, do not guess. Escalate the issue
 | QA | `## QA: UNVERIFIABLE` | Send back: launch the PM with the QA comment (the hook denies at 3 returns) |
 | QA | `## QA: UNAVAILABLE` | Launch the `qa-engineer` fallback |
 | QA | `## QA: INVALID` | Escalate the issue |
+| Planner | `## Planner: STAGE REVIEW` | Stop the loop and write the final report |
 
 ## Hooks
 
@@ -148,7 +200,9 @@ Do not work around a deny in any other way.
 2. Remove the label `ready` and add the label `needs-owner`.
 3. Continue with the next issue (see "Before each issue").
 
-The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
+Escalate a stage issue (label `stage`) the same way, with two differences: add the label `needs-owner`, but do not add or remove `ready` (a stage issue never has `ready`), and stop the loop instead of continuing with the next issue.
+
+The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. On a stage issue, the owner removes `needs-owner` and does not add `ready`. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
 
 Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command.
 
@@ -167,9 +221,12 @@ For an escalated issue:
 
 - The issue has a comment for the owner with the reason
 - The issue has the label `needs-owner` and not the label `ready`
+- An escalated stage issue has the label `needs-owner`; you did not add or remove `ready`
 - Each step that ran, ran as a subagent. You did not launch steps after the escalation
 
 For the whole loop:
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed), or the loop stopped because `git status --porcelain` was not empty
-- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, "Stage #<N> is finished" when the active stage has ended, and the reason if the loop stopped early
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the loop stopped because `git status --porcelain` was not empty
+- Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers, the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, and the reason if the loop stopped early
+- When the stage review was posted (in this run or earlier), your final message has "Stage #<N> is finished", the URL of the stage review comment, and this exact sentence: "Start the next session with `/stage-start`."
+- When the stage issue was escalated instead, your final message names the stage issue and the reason
