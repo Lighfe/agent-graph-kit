@@ -117,7 +117,7 @@ Post exactly one comment on the stage issue. Write the body to a file with a lit
 
 1. **Purpose check**: was the `## Purpose` of the stage met? Give evidence: closed issues, commits, reports
 2. **Run notes**: the orchestrator's run notes, and what you conclude from them. Or "No run notes were given". Also list every entry with ` - set` in the `Permissions:` line of a closed sub-issue of the stage, as a permission the owner may remove now
-3. **Doc drift**: findings from the fact tests in the test command and from the instruction audit (`/doctor prompt-audit`, where it can run). Where a check cannot run, say which checks ran and which could not
+3. **Doc drift**: findings from the fact tests and from the prompt audit. Say which checks ran and which could not. See "Doc drift checks" below the example
 4. **Follow-ups**: every open parked issue whose `Source:` line points into this stage (the stage issue, a sub-issue, or a comment or review on one), and every older parked issue you see as relevant. Give each one a proposed placement: next stage, a later stage, stay parked, or close
 5. **Next-stage options**: one to three. Each has a purpose, sub-issues (existing, or to be filed), order and blockers. Then your recommendation
 6. Last line, exactly: `/stage-start`
@@ -144,6 +144,27 @@ Example:
 
 /stage-start
 ```
+
+Doc drift checks: they give part 3 "Doc drift". Run them from the repo root.
+
+Fact tests:
+
+1. Run the test command `uv run --with pytest pytest` (Bash timeout 600000 ms)
+2. The fact tests are the tests in `tests/test_doc_paths.py` and `tests/test_spec_citations.py`
+3. Report each failing fact test: its test name and the failure message lines that name the file and the path, anchor or ID. When none fails, write "the fact tests passed"
+4. On a separate line, give the count of failures in other test files. They are not doc drift, but do not hide them
+5. When the test command cannot run (an error before any test runs, or "no tests ran"), write that the fact tests could not run and quote the error. Never report them as passed
+
+Prompt audit:
+
+1. Run `claude -p "/doctor prompt-audit"` and then `claude -p "/doctor prompt-audit docs/"` (Bash timeout 600000 ms each)
+2. List their findings: file, line, and what the audit says
+3. Apply none of the edits that the audit proposes
+4. Run `git status --porcelain` after the two runs. When the output is not empty, name the changed files in the review. Do not clean them up
+5. When a run fails or times out, report it under "Doc drift" as "could not run" and quote the message, with secrets redacted
+6. When a run is denied with a verdict, follow "Denied calls" below: quote the deny message under "Run notes", and report the run under "Doc drift" as "could not run". Still post the review
+7. After a run that could not run, write that the owner's `/stage-start` session runs the prompt audit at set-up
+8. When a run gets an outage deny, follow "Denied calls" below: post nothing and end
 
 Denied calls: follow the rule "Denied action" in `## Rules` of `docs/process.md`. Here it means:
 
