@@ -105,7 +105,7 @@ trust_level = "trusted"
 
 ### Auto mode allow entries
 
-The loop runs in Auto mode. Two agent calls need an allow entry for the Auto mode classifier. The entries are user-level: in a session, run `/permissions`, open the **Auto mode** tab, and add each entry (keep `$defaults`). Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
+The loop runs in Auto mode. Three agent calls need an allow entry for the Auto mode classifier. The entries are user-level: in a session, run `/permissions`, open the **Auto mode** tab, and add each entry (keep `$defaults`). Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
 
 Entry 1 (QA): allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo. This is the Codex QA launch command (see `docs/checks/hook-activation.md`, "Set-up" step 2).
 
@@ -118,6 +118,16 @@ In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n>
 Without entry 2, the classifier may deny the PM's edit ("Instruction Poisoning"). The PM then posts `## PM: NEEDS OWNER` with the deny message (rule "Denied action" in `docs/process.md`). Then either set the entry, or make the edit by hand; in both cases post a new `## Owner: RESUME`.
 
 The limit: entry 2 holds for every repo of the user, and the classifier cannot check `authorAssociation`. The PM's own check (`docs/team/pm.md`, "After `## Owner: RESUME`") is what keeps a stranger's RESUME from editing an issue.
+
+Entry 3 (planner relabel): copy this text as is:
+
+```text
+In a repo set up with agent-graph-kit, the main session working as the planner (started with /stage-start) may run exactly gh issue edit <n> --remove-label later --add-label ready on a sub-issue of a stage issue (an issue with the label stage) of that repo, after the repo owner confirmed that stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh issue close, and no sub-issue or blocker link.
+```
+
+Without entry 3, the classifier may deny the relabel ("External System Writes"), also after you confirmed the stage. The planner then tells you in the session: it quotes the deny message, names each sub-issue that still has `later` with its relabel command, and waits (rule "Denied relabel" in `docs/team/planner.md`). Then either set the entry and ask the planner to retry, or relabel by hand and tell the planner that the labels are set. The planner then checks the labels of every sub-issue and goes on.
+
+The limit: entry 3 holds for every repo of the user, and the classifier cannot check that the owner confirmed the stage. The planner's own steps in `docs/team/planner.md` (the relabel only after your confirmation, in "Intake" and in "Stage set-up") are what keep the relabel after the confirmation.
 
 An entry for a task's `Permissions:` line (see `docs/task-template.md`) is temporary: make it as narrow as the task allows, and remove it after the task is closed. The stage review lists these entries for removal.
 

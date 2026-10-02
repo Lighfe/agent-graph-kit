@@ -56,7 +56,7 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 
 The sub-issues carry `later` until the owner confirms the stage.
 
-- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then end with the last line of "Stage set-up" below
+- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then end with the last line of "Stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
 - Without confirmation: the sub-issues stay `later`. Say so, and end
 
 Do not use the skills subagent-driven-development and executing-plans (as in `AGENTS.md`). If a skill offers one of them as the next step, do not accept. Turn the plan into issues as above.
@@ -76,7 +76,7 @@ Steps, in this order:
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
    - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Set the order: the add order, or `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
-7. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`)
+7. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). If a relabel is denied, follow the rule "Denied relabel" below
 
 Then:
 
@@ -89,6 +89,18 @@ Set-up ends with exactly this line:
 Stage #N is ready. Run `/goal …` here or in a new session.
 
 N is the number of the new stage issue. A session switches from planner to orchestrator at most once, never back.
+
+### Denied relabel
+
+This rule applies to the relabel from `later` to `ready` in "Intake" and in "Stage set-up" step 7. It follows the rule "Denied action" in `## Rules` of `docs/process.md`, adapted to the main session: post no issue comment for it, and tell the owner in the session.
+
+- A deny with a verdict (for example the Auto mode classifier judgment "External System Writes", or `Permission denied`): quote the deny message, with secrets redacted. Name each sub-issue that still has `later`, with its exact relabel command `gh issue edit <n> --remove-label later --add-label ready`. Point to entry 3 in the README subsection "Auto mode allow entries". Then wait for the owner. Do not retry in a loop, and do not try another command form
+- When only some relabels were denied, name only the sub-issues that still have `later`
+- When the owner says the labels are set by hand: check the labels of every sub-issue of the stage (`gh issue view <n> --json labels`)
+- When the owner has set entry 3 and asks for a retry: run the relabel again once on each sub-issue that still has `later`, then check the labels of every sub-issue of the stage as above
+- If any sub-issue still has `later` or lacks `ready` after the check, name those sub-issues again and wait for the owner
+- When every sub-issue has `ready`, go on where the step left off: in "Stage set-up" with the steps under "Then" and the last line; in "Intake" with the last line of "Stage set-up"
+- An outage deny (the reason's first line starts with `Classifier unavailable`, `Auto mode could not evaluate this action and is blocking it for safety` or `Auto mode unavailable`): say that it is an Auto mode outage, do not point to the allow entry, and retry the relabel only when the owner asks
 
 ## Stage review
 
