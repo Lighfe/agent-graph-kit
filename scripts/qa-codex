@@ -3,13 +3,14 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Codex QA launcher (spec 6): `scripts/qa-codex ROLE=qa ISSUE=<n>`.
+"""Codex QA launcher (docs/specs/agent-graph-kit.md#qa-codex-contract): `scripts/qa-codex ROLE=qa ISSUE=<n>`.
 
 Reads the issue with `gh` and the range `<base>..<done head>` of the newest valid
 `## Engineer: DONE`. The DONE head must be `HEAD` or an ancestor of `HEAD` (a re-check after
 `HEAD` moved, G4). Runs `codex exec` in a temporary git worktree at `HEAD` on `<base>..HEAD`,
 validates the JSON and posts one QA comment that names both heads. The prompt carries the first line
-of every issue comment and the full newest DONE, redacted, as a data block (#51). Failure rules: spec 6.2.
+of every issue comment and the full newest DONE, redacted, as a data block (#51). Failure rules:
+docs/specs/agent-graph-kit.md#failure-rules.
 
 GitHub state files (#89): the Codex sandbox has no network, so after the range checks and before
 Codex starts, the launcher reads the GitHub state of the issue with the user's `gh` login, outside
@@ -47,10 +48,10 @@ SCHEMA = ROOT / "scripts" / "qa-result.schema.json"
 ROLE_FILE = ROOT / "docs" / "team" / "qa-engineer.md"
 
 # The default model of the installed Codex CLI (0.153.4), written out, because
-# --ignore-user-config also drops the user's model and effort (spec 6.1).
+# --ignore-user-config also drops the user's model and effort (docs/specs/agent-graph-kit.md#codex-run).
 QA_MODEL = "gpt-6-astra"
 QA_EFFORT = "medium"
-# Localhost-only sandbox profile (S2 Q4; experimental feature network_proxy, spec 6.1).
+# Localhost-only sandbox profile (S2 Q4; experimental feature network_proxy, docs/specs/agent-graph-kit.md#codex-run).
 QA_SANDBOX = [
     "--enable", "network_proxy",
     "-c", 'permissions.qa={extends=":workspace",network={enabled=true,allow_local_binding=true,'
@@ -117,7 +118,7 @@ def parse_criteria(body: str) -> list[str]:
     return ["\n".join(item).strip("\n") for item in items]
 
 
-# The prompt rule for the per-criterion verdict `invalid` (#55, spec 7): it maps to `## QA: UNVERIFIABLE`.
+# The prompt rule for the per-criterion verdict `invalid` (#55, docs/team/qa-engineer.md): it maps to `## QA: UNVERIFIABLE`.
 INVALID_RULE = ("Use `invalid` only when a tool, sandbox, network or permission limit of your environment "
                 "stops the check, and `fail` when the code or document does not meet the criterion.")
 
@@ -378,7 +379,8 @@ PLAYWRIGHT_FIELDS = ("dependencies", "devDependencies")
 
 def install_command(frontend: Path) -> tuple[list[str] | None, list[str] | None, str]:
     """The install command and the browser step for the checked-out `frontend/`: (install, browser, "")
-    or (None, None, the reason for `## QA: UNAVAILABLE`). A fixed rule, no LLM decision (spec 6.1)."""
+    or (None, None, the reason for `## QA: UNAVAILABLE`). A fixed rule, no LLM decision
+    (docs/specs/agent-graph-kit.md#worktree-and-pre-step)."""
     if any((frontend / name).is_file() for name in NPM_LOCKFILES):
         return NPM_INSTALL, NPX_BROWSER, ""
     if any((frontend / name).is_file() for name in BUN_LOCKFILES):
@@ -410,7 +412,7 @@ def playwright_dependency(frontend: Path) -> str | None:
 
 
 def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> str | None:
-    """Spec 6.1 step 3, outside the sandbox. None on success (or nothing to do), else the reason.
+    """The pre-step (docs/specs/agent-graph-kit.md#worktree-and-pre-step), outside the sandbox. None on success (or nothing to do), else the reason.
     With a frontend: the submodule, then the install command that the lockfile in `frontend/`
     names (`npm ci` or `bun install --frozen-lockfile`), after a check that `frontend/package.json`
     has a Playwright dependency, then the browser with that dependency's CLI through the same
@@ -759,7 +761,8 @@ def _env_int(name: str, default: int) -> int:
 
 def main(argv: list[str], sleep=time.sleep) -> int:
     """Run one QA launch. On SIGINT, SIGTERM or SIGHUP: kill the running child, remove the worktree,
-    post nothing and return 128 + the signal number (the issue stays pending, spec 5.3). A signal
+    post nothing and return 128 + the signal number (the issue stays pending,
+    docs/specs/agent-graph-kit.md#valid-result-pending-and-current-result). A signal
     during the cleanup lets the cleanup finish first."""
     global _posted
     _posted = False
@@ -884,7 +887,7 @@ def _main(argv: list[str], sleep) -> int:
                 _remove_worktree(repo, worktree)
             shutil.rmtree(tmp, ignore_errors=True)
 
-    # The overall marker (spec 6.2): any `fail` gives FAIL, else any `invalid` (a limit of the
+    # The overall marker (docs/specs/agent-graph-kit.md#overall-marker): any `fail` gives FAIL, else any `invalid` (a limit of the
     # checker's environment) gives UNVERIFIABLE, else PASS.
     entries = run.output["criteria"]
     if any(c["verdict"] == "fail" for c in entries):

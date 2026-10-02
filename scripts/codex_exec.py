@@ -47,7 +47,7 @@ FAILURE_PATTERNS: list[tuple[str, re.Pattern]] = [(status, re.compile(rx, re.MUL
     ("transient", r"^(?:ERROR: )?(?:Connection failed: |stream disconnected before completion: )"),
 ]]
 
-# Spec 6.2 lists a crashed process as transient. The S2 table has no crash row, so a crash is
+# docs/specs/agent-graph-kit.md#failure-rules lists a crashed process as transient. The S2 table has no crash row, so a crash is
 # checked after the table: a death by signal (the npm wrapper `codex.js` re-raises the signal of
 # the native binary, so Popen sees a negative code; a shell reports 128 + n), or a Rust panic line.
 PANIC_PATTERN = re.compile(r"^thread '[^'\n]*' panicked at.*$", re.MULTILINE)
@@ -147,7 +147,7 @@ def _crash(returncode: int, text: str) -> str | None:
 
 def classify_failure(returncode: int, text: str) -> str:
     """"transient" | "unavailable" | "unknown": the S2 error table first (first match wins), then a
-    crashed process (spec 6.2: transient), else unknown."""
+    crashed process (transient, docs/specs/agent-graph-kit.md#failure-rules), else unknown."""
     status = _table_status(text)
     if status is not None:
         return status

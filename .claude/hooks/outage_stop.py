@@ -3,7 +3,8 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""SubagentStop hook: mark a launch receipt as "stopped by outage" (spec 5.3, 5.7).
+"""SubagentStop hook: mark a launch receipt as "stopped by outage"
+(docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage, docs/specs/agent-graph-kit.md#failure-behavior).
 
 Claude Code runs this hook when a subagent ends. When auto mode denied a call
 of that subagent without a classifier verdict, `not_started.py` (the

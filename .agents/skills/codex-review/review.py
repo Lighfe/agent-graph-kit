@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Codex review (spec 8): `uv run --script .agents/skills/codex-review/review.py --target <path-or-range> --topic <slug>`.
+"""Codex review (.agents/skills/codex-review/SKILL.md): `uv run --script .agents/skills/codex-review/review.py --target <path-or-range> --topic <slug>`.
 
 Runs `codex exec` read-only on one file, folder or commit range, with a normal (not adversarial)
 review prompt and review.schema.json. On success it writes

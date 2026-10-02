@@ -790,7 +790,7 @@ def test_g7_ignores_return_markers_with_suffix():
     assert returns_since_resume(done(launch("qa"), "## QA: FAIL (flaky)")) == 0
 
 
-# --- continuation (spec 5.3) -------------------------------------------------
+# --- continuation (docs/specs/agent-graph-kit.md#continuation) ---------------------
 
 
 def test_continued_comment_makes_issue_pending():
@@ -853,7 +853,7 @@ def test_continued_calls_run_g7():
     assert check(Call(role="engineer", agent="eng-1", issue=7, continued=True), facts(iss)).startswith("G7:")
 
 
-# --- stop results (spec 5.5) -------------------------------------------------
+# --- stop results (docs/specs/agent-graph-kit.md#result-markers) -----------------
 
 
 STOP_CALLS = (

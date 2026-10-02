@@ -288,7 +288,7 @@ def test_command_without_a_run_passes(cmd):
     assert classify(bash(cmd)) is None
 
 
-# Known limit (spec 5.1): a command word built with an expansion is not the CLI name. bash runs these
+# Known limit (docs/specs/agent-graph-kit.md#bash-rule-of-g1): a command word built with an expansion is not the CLI name. bash runs these
 # (see test_bash_runs_the_known_limit), and G1 lets them pass, like `$GH issue close 5`.
 KNOWN_LIMIT_PASS = ["$(true)gh issue close 5", '"$x"gh issue close 5', "$GH issue close 5"]
 
@@ -450,7 +450,7 @@ def test_g8_runs_before_the_trigger_rule():
     assert denied(bash("cp scripts/qa-codex .claude/settings.json")).startswith("G8:")
 
 
-# --- comment commands (G9 removed in issue #90) -------------------------------------------
+# --- comment commands (the comment-form check removed in issue #90) -------------------------------------------
 # A comment command is not checked for its form any more. It is not a guarded call,
 # so it passes unless G8 or the G1 trigger rule denies it. Nothing is read or posted.
 
@@ -512,7 +512,7 @@ def test_comment_command_does_not_read_or_resolve_the_body_file(tmp_path):
         assert decide_nothing_read(event) is None
 
 
-# The 21 commands that G9 denied for their form before issue #90.
+# The 21 commands that the comment-form check denied for their form before issue #90.
 FORMER_G9_DENIES = [
     'gh issue comment 5 --body "x"', "gh issue comment 5 -b x", "gh issue comment 5 -F /tmp/b.md",
     "gh issue comment 5 --body-file=/tmp/b.md", "echo x | gh issue comment 5 --body-file -",

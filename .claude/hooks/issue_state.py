@@ -1,4 +1,5 @@
-"""Issue state and checks G1-G7 (spec 5.3-5.5).
+"""Issue state and checks G1-G7 (docs/specs/agent-graph-kit.md#launch-comments, docs/specs/agent-graph-kit.md#checks,
+docs/specs/agent-graph-kit.md#result-markers).
 
 Roles: pm, engineer, qa, planner (the stage review, issue #99) and close. A planner launch
 on a stage issue has its own path of G1 (`g1_planner`); G2 to G7 do not apply to it.
@@ -16,7 +17,7 @@ import json
 import re
 from dataclasses import dataclass
 
-# role -> result markers (spec 5.5)
+# role -> result markers (docs/specs/agent-graph-kit.md#result-markers)
 MARKERS: dict[str, tuple[str, ...]] = {
     "pm": ("## PM: GROOMED", "## PM: NEEDS OWNER", "## PM: WAITING"),
     "engineer": ("## Engineer: DONE", "## Engineer: BLOCKED"),
@@ -32,20 +33,22 @@ GROOMED, NEEDS_OWNER, WAITING = MARKERS["pm"]
 DONE, BLOCKED = MARKERS["engineer"]
 PASS, FAIL, UNAVAILABLE, INVALID, UNVERIFIABLE = MARKERS["qa"]
 (STAGE_REVIEW,) = MARKERS["planner"]
-# A return sends the issue back (spec 5.4 G7): FAIL and BLOCKED, and UNVERIFIABLE (a limit of the
-# checker's environment, back to the PM, spec 7). INVALID is not a return: it escalates.
+# A return sends the issue back (G7): FAIL and BLOCKED, and UNVERIFIABLE (a limit of the
+# checker's environment, back to the PM, docs/team/qa-engineer.md). INVALID is not a return: it escalates.
 RETURNS = (FAIL, UNVERIFIABLE, BLOCKED)
 STOP_RESULTS = (NEEDS_OWNER, INVALID)
 MAX_RETURNS = 3
 
 ROLES = "pm|engineer|qa|planner"  # the roles of a launch receipt (the planner: issue #99)
 LAUNCH = re.compile(rf"^## Launch: ({ROLES}) \((?:attempt|continued, round) (\d+)\)$")
-# A receipt that Claude Code denied before the launch ran (PermissionDenied hook, spec 5.3)
+# A receipt that Claude Code denied before the launch ran (PermissionDenied hook,
+# docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage)
 NOT_STARTED = re.compile(rf"^## Launch not started: ((?:{ROLES}) \((?:attempt|continued, round) \d+\))$")
 # A receipt whose agent started, was stopped by an auto mode outage and ended without a result
-# (SubagentStop hook, spec 5.3). It voids its receipt exactly like a not-started comment.
+# (SubagentStop hook, docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage). It voids its receipt exactly like a not-started comment.
 STOPPED = re.compile(rf"^## Launch stopped by outage: ((?:{ROLES}) \((?:attempt|continued, round) \d+\))$")
-# First-line prefixes of a denial without a classifier verdict (Claude Code 2.1.284, spec 5.3)
+# First-line prefixes of a denial without a classifier verdict (Claude Code 2.1.284,
+# docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage)
 NO_VERDICT_REASONS = ("Classifier unavailable",
                       "Auto mode could not evaluate this action and is blocking it for safety",
                       "Auto mode unavailable")
@@ -89,7 +92,7 @@ class SubIssue:
         return f"{self.repo}#{self.number}"
 
 
-STAGE = "stage"  # the label of a stage issue (stages spec, section 2)
+STAGE = "stage"  # the label of a stage issue (docs/specs/agent-graph-kit.md#stage-model)
 
 
 @dataclass(frozen=True)
@@ -112,7 +115,7 @@ class Call:
     role: str  # "pm" | "engineer" | "qa" | "planner" | "close"
     agent: str  # subagent type, "qa-codex", "" for close; the SendMessage target for a continuation
     issue: int
-    continued: bool = False  # a SendMessage continuation (spec 5.3)
+    continued: bool = False  # a SendMessage continuation (docs/specs/agent-graph-kit.md#continuation)
 
 
 # --- parsing -------------------------------------------------------------------
@@ -306,7 +309,7 @@ def open_blocker_problem(facts: Facts) -> str | None:
     return "; ".join(parts) or None
 
 
-# --- validity, pending, current result (spec 5.3) --------------------------------
+# --- validity, pending, current result (docs/specs/agent-graph-kit.md#valid-result-pending-and-current-result) ---
 
 
 def call_hash(tool_use_id: str) -> str:
@@ -470,7 +473,7 @@ def _two_not_started(issue: Issue) -> bool:
     return not any(line == RESUME or _result_role(line) for line in raw[receipts[-2] + 1:])
 
 
-# --- checks (spec 5.4) -----------------------------------------------------------
+# --- checks (docs/specs/agent-graph-kit.md#checks) ---------------------------------------
 
 
 def _current(issue: Issue) -> tuple[int | None, str | None, str]:
@@ -558,7 +561,7 @@ def g3(call: Call, facts: Facts) -> str | None:
     if marker not in (GROOMED, FAIL):
         return f"G3: current result is {found}, expected {GROOMED} or {FAIL}"
     if call.continued:
-        return None  # the SendMessage target is a name, not a type (spec 5.3)
+        return None  # the SendMessage target is a name, not a type (docs/specs/agent-graph-kit.md#continuation)
     value = lane(facts.issue)
     if value is None:
         return f"G3: issue body has no Lane line, expected Lane: {' or Lane: '.join(AGENT_LANE)}"
@@ -644,7 +647,7 @@ def _role_checks(call: Call):
         return (g3, g7)
     if call.role == "qa":
         if call.continued or call.agent == "qa-engineer":
-            return (g5,)  # only the qa-engineer subagent can be continued (spec 5.1, 5.3)
+            return (g5,)  # only the qa-engineer subagent can be continued (docs/specs/agent-graph-kit.md#guarded-calls, docs/specs/agent-graph-kit.md#continuation)
         if call.agent == "qa-codex":
             return (g4,)
         return f"G1: qa call with agent {call.agent or 'none'}, expected qa-codex or qa-engineer"

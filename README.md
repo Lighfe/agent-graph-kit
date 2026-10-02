@@ -43,7 +43,7 @@ The clone has no commit yet. The first commit and push are in "Start".
 
 The repo must be owned by your GitHub user account, and `gh` must be logged in as that user. The hooks and `scripts/qa-codex` count only issue comments whose `authorAssociation` is `OWNER`; other comments are ignored, so in a public repo a stranger's comment cannot resume, pass, block or close an issue. A comment without author data is an error: the guard denies the call. The agents and hooks post with your `gh` login, so their comments count. Organization-owned repos are not supported yet: there, the owner's comments are not `OWNER` ([#75](https://github.com/Lighfe/agent-graph-kit/issues/75)).
 
-The agents post comments with `gh issue comment <n> --body-file <literal path>`, with the body written to a file first. This is a rule of `docs/process.md`, not a check: the guard does not check comment commands (G9 was removed in [#90](https://github.com/Lighfe/agent-graph-kit/issues/90)). Because the agents use your login, the rule that agents never post your marker is not enforced by a check either.
+The agents post comments with `gh issue comment <n> --body-file <literal path>`, with the body written to a file first. This is a rule of `docs/process.md`, not a check: the guard does not check comment commands (the comment-form check was removed in [#90](https://github.com/Lighfe/agent-graph-kit/issues/90)). Because the agents use your login, the rule that agents never post your marker is not enforced by a check either.
 
 You post `## Owner: RESUME` on the GitHub web page, in a terminal, or from a Claude Code session, for example with `gh issue comment <n> --body-file <literal path>`.
 
@@ -96,7 +96,7 @@ __pycache__/
 
 ### Codex trust entry
 
-Add the trust entry for the project to `$HOME/.codex/config.toml` (spec 6.2). Otherwise Codex writes it there during the loop. The path is the git root of the project (`git rev-parse --show-toplevel`), as an absolute path:
+Add the trust entry for the project to `$HOME/.codex/config.toml`. Otherwise Codex writes it there during the loop. The path is the git root of the project (`git rev-parse --show-toplevel`), as an absolute path:
 
 ```toml
 [projects."/home/you/projects/example-app"]
@@ -133,7 +133,7 @@ An entry for a task's `Permissions:` line (see `docs/task-template.md`) is tempo
 
 ### Frontend lane (optional)
 
-Frontend lane only. No MCP tool can make the GitHub connection of a Lovable project, so you do these steps by hand (spec 9.1):
+Frontend lane only. No MCP tool can make the GitHub connection of a Lovable project, so you do these steps by hand:
 
 1. Create the Lovable project.
 2. Connect the Lovable workspace to GitHub (one time per workspace).
@@ -166,7 +166,7 @@ The QA pre-step installs the frontend dependencies with the install command that
 
 The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (as a dev dependency: step 6 above) in `dependencies` or `devDependencies` of `frontend/package.json`, and in its lockfile. Without it, the result is `## QA: UNAVAILABLE`, and nothing is installed. After the install, the pre-step installs the browser with the Playwright CLI of that dependency, through the package manager of the lockfile: `npx --no playwright install chromium` (npm lockfile) or `bun x --no-install playwright install chromium` (bun lockfile). `--no` and `--no-install` stop a registry fetch, so the browser version follows the frontend's lockfile and nothing is fetched from the registry for it. A bun frontend does not need `npx`.
 
-Accepted risk (spec 6.1): the QA pre-step runs code from the repository outside the Codex sandbox, with your environment and access. This happens on three paths: the lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) of `frontend/package.json` and of every dependency with `npm ci`, or of the dependencies bun trusts (`trustedDependencies` and bun's default trusted list) with `bun install`; the package manager config `frontend/.npmrc` or `frontend/bunfig.toml`; and the Playwright CLI from `frontend/node_modules`, which the lockfile decides. This is accepted because the frontend code comes from your own Lovable project and from the loop's engineer (issue #50). The remaining risk includes packages that agents add: a new dependency or version that Lovable or another agent of the loop puts into `package.json` or the lockfile runs with your access at the next QA run, before QA or you have looked at it. Nothing in the loop checks it first. Treat changes to `frontend/package.json`, the lockfile, `.npmrc`, `bunfig.toml` or `trustedDependencies` as review items.
+Accepted risk ("Worktree and pre-step" in [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md#worktree-and-pre-step)): the QA pre-step runs code from the repository outside the Codex sandbox, with your environment and access. This happens on three paths: the lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) of `frontend/package.json` and of every dependency with `npm ci`, or of the dependencies bun trusts (`trustedDependencies` and bun's default trusted list) with `bun install`; the package manager config `frontend/.npmrc` or `frontend/bunfig.toml`; and the Playwright CLI from `frontend/node_modules`, which the lockfile decides. This is accepted because the frontend code comes from your own Lovable project and from the loop's engineer (issue #50). The remaining risk includes packages that agents add: a new dependency or version that Lovable or another agent of the loop puts into `package.json` or the lockfile runs with your access at the next QA run, before QA or you have looked at it. Nothing in the loop checks it first. Treat changes to `frontend/package.json`, the lockfile, `.npmrc`, `bunfig.toml` or `trustedDependencies` as review items.
 
 ### Labels
 
@@ -182,7 +182,7 @@ gh label create stage --description "Stage issue: purpose and context for its su
 ### Start
 
 1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
-2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder (spec 5.9). The hooks apply from the next tool call after `.claude/settings.json` is in place.
+2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)). The hooks apply from the next tool call after `.claude/settings.json` is in place.
 3. Run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
 4. Final step: run `/stage-start` in the project to plan the first stage (intake). The main session is then the planner (`docs/team/planner.md`). The planner ends set-up with a `/goal …` line: run it in the same or a new session to start the loop.
 

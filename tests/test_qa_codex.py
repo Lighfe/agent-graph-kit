@@ -166,7 +166,7 @@ def qa_env(tmp_path, monkeypatch):
     return QaEnv(tmp_path, monkeypatch)
 
 
-# --- failure rules (spec 6.2) ----------------------------------------------------
+# --- failure rules (docs/specs/agent-graph-kit.md#failure-rules) ------------------------
 
 
 @pytest.mark.parametrize("modes,marker,sleeps", [
@@ -1688,7 +1688,8 @@ def test_failing_post_exits_non_zero(qa_env, monkeypatch):
 
 
 def test_failing_issue_view_exits_non_zero(qa_env, monkeypatch):
-    """Every gh call fails: the UNAVAILABLE comment cannot be posted either (spec 6.2)."""
+    """Every gh call fails: the UNAVAILABLE comment cannot be posted either
+    (docs/specs/agent-graph-kit.md#failure-rules)."""
     monkeypatch.setenv("FAKE_GH_FAIL", "1")
     comment, _ = qa_env.run(["ok"])
     assert comment is None
@@ -1946,10 +1947,10 @@ def test_base_flags():
     assert "unbounded_connection_retries" in codex_exec.BASE_FLAGS
 
 
-# --- docs/team/qa-engineer.md (spec 7) ---------------------------------------------------
+# --- docs/team/qa-engineer.md (QA behavior) -----------------------------------------------
 
 
-def test_qa_role_file_has_spec_7_behavior():
+def test_qa_role_file_has_qa_behavior():
     text = (ROOT / "docs" / "team" / "qa-engineer.md").read_text()
     for needle in [
         "exercise the behavior",
@@ -2342,7 +2343,7 @@ def test_multi_line_reason_is_still_cut_to_reason_max(multi_secret):
     assert not _leaks(multi_secret, reason)
 
 
-# --- overall marker with per-criterion `invalid` (issue #55, spec 6.2) ----------------------
+# --- overall marker with per-criterion `invalid` (issue #55, docs/specs/agent-graph-kit.md#overall-marker) ----------------------
 
 
 def test_prompt_limits_invalid_to_environment_limits(qa_env):

@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""PreToolUse guard hook (spec 5.1-5.7, 5.9).
+"""PreToolUse guard hook (docs/specs/agent-graph-kit.md#launch-contract, G1 to G8).
 
 Reads one hook event on stdin. A guarded call (a role launch of pm, engineer,
 qa or planner, a SendMessage continuation, `qa-codex`, `gh issue close`) is
@@ -17,7 +17,7 @@ allowed call prints nothing, so the normal permission check stays on.
 Any error denies: a failing `gh` or `git`, broken input, a crash, and the
 overall deadline (GUARD_DEADLINE seconds, default 60). Stdlib only.
 
-Bash commands (spec 5.1, issue #107): the guard reads the command with the
+Bash commands (docs/specs/agent-graph-kit.md#bash-rule-of-g1, issue #107): the guard reads the command with the
 shell tokenizer below (the one G8 uses) and looks at every simple command in
 it, also inside $(…), backticks, <(…), >(…) and the substitutions of an
 unquoted here-document body. The command word is the first word after
@@ -68,7 +68,7 @@ LAUNCH_HINT = "exactly one line ROLE=<pm|engineer|qa|planner> ISSUE=<number>"
 PLANNER_CONTINUED = ("G1: SendMessage with ROLE=planner: a planner cannot be continued (it posts one comment "
                      "and ends), expected a new launch of the agent planner")
 
-DEFAULT_DEADLINE_S = 60  # spec 5.6
+DEFAULT_DEADLINE_S = 60  # docs/specs/agent-graph-kit.md#failure-behavior
 CALL_TIMEOUT_S = 20  # per gh/git call
 STDERR_MAX = 200  # P5: first stderr line, cut to 200 characters
 LOCK_NAME = "agent-graph-kit-guard.lock"
@@ -80,7 +80,7 @@ OPEN_BLOCKERS_JQ = ".issue_dependencies_summary.blocked_by"
 SUB_ISSUES_JQ = ".[] | {repo: .repository.full_name, number, state}"
 SUB_ISSUE_TOTAL_JQ = ".sub_issues_summary.total"
 
-# Bash rule of G1 (spec 5.1): what a real run is, the old word rule, and the only two forms a run may have.
+# Bash rule of G1 (docs/specs/agent-graph-kit.md#bash-rule-of-g1): what a real run is, the old word rule, and the only two forms a run may have.
 CLI_NAME = "gh"
 LAUNCHER_NAME = "qa-codex"
 GH_WORD = re.compile(r"\bgh\b", re.ASCII)
@@ -109,7 +109,7 @@ TRIGGER_DENY = (
     "run_in_background option instead of &. Text that only mentions these words passes, for example a body "
     "written to a file with a quoted here-document (cat > /tmp/body.md <<'EOF' … EOF)")
 
-# G8 (spec 5.9)
+# G8 (docs/specs/agent-graph-kit.md#g8-settings-protection)
 SETTINGS_NAME = re.compile(r"settings[^/\s]*\.json", re.IGNORECASE)
 CLAUDE_GLOB = re.compile(r"\.claude/[^\s'\"]*[*?\[]")
 READ_ONLY = {"cat", "jq", "head", "tail", "grep", "wc", "ls"}
@@ -122,7 +122,7 @@ class Deny(Exception):
 
 # --- shell tokenizer ------------------------------------------------------------------
 #
-# A small bash-like tokenizer for G8 (spec 5.9) and for the Bash rule of G1 (spec 5.1), which
+# A small bash-like tokenizer for G8 and for the Bash rule of G1 (docs/specs/agent-graph-kit.md#bash-rule-of-g1), which
 # finds the simple commands that really run. It knows quotes ('…', "…", $'…', $"…"), backslashes,
 # line continuations, $name, ${…}, $(…), <(…), >(…), backticks, arithmetic ((…)),
 # $((…)), $[…] and subscripts a[…], operators, redirections (also with {fd}),
@@ -723,7 +723,8 @@ def _scan(text: str, found: set[str], case_anywhere: bool, depth: int = 0) -> No
 
 
 def _runs_guarded(command: str) -> bool:
-    """True when the command runs a close run or the launcher, or may run one (spec 5.1).
+    """True when the command runs a close run or the launcher, or may run one
+    (docs/specs/agent-graph-kit.md#bash-rule-of-g1).
     The tokenizer reads the command twice, with `case` as a reserved word anywhere and only where
     bash reads one, and a simple command found in either reading counts."""
     triggered = _triggered(command) or _triggered(command.replace("\\\n", ""))
@@ -737,7 +738,7 @@ def _runs_guarded(command: str) -> bool:
 
 
 def g8(command: str) -> str | None:
-    """Deny reason if the command may write to .claude/settings*.json (spec 5.9)."""
+    """Deny reason if the command may write to .claude/settings*.json (G8)."""
     reason = ("G8: the command may write to .claude/settings*.json, expected only one simple "
               f"{', '.join(sorted(READ_ONLY))} command without operators or redirections")
     try:
@@ -813,8 +814,8 @@ def _no_sub_issue_reader(number: int):
 def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
            read_blockers=_no_blocker_reader, read_sub_issues=_no_sub_issue_reader) -> str | None:
     """Deny reason, or None to let the call through. `lock()` is held from reading
-    the facts until the launch comment is posted (spec 5.7). The launch comment has a
-    `Call:` line when the event has a string tool_use_id (spec 5.3). For every role launch
+    the facts until the launch comment is posted (docs/specs/agent-graph-kit.md#failure-behavior). The launch comment has a
+    `Call:` line when the event has a string tool_use_id (docs/specs/agent-graph-kit.md#launch-comments). For every role launch
     (not for close and not for the planner, issue #99), `read_blockers(n)` gives (blocker list,
     open-blocker count) inside the lock.
     Only for the close of a stage issue (issue #97), `read_sub_issues(n)` gives

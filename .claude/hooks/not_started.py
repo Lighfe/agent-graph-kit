@@ -3,7 +3,8 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""PermissionDenied hook: mark a launch receipt as "not started" (spec 5.3, 5.7).
+"""PermissionDenied hook: mark a launch receipt as "not started"
+(docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage, docs/specs/agent-graph-kit.md#failure-behavior).
 
 Claude Code runs this hook when auto mode denies a tool call, also when it
 denies without a classifier verdict. The guard has already posted the launch
@@ -18,7 +19,8 @@ carries the call hash of this event's tool_use_id (`issue_state.not_started_comm
 It holds the guard's lock from reading the issue until the comment is posted,
 within the guard's overall deadline.
 
-It also records outage evidence (spec 5.3, issue #52): for a denial inside a
+It also records outage evidence (docs/specs/agent-graph-kit.md#not-started-and-stopped-by-an-outage,
+issue #52): for a denial inside a
 subagent (the event has an `agent_id`) whose reason has no classifier verdict
 (`issue_state.is_no_verdict`), it writes the first line of the reason to
 `<git dir>/agent-graph-kit-outage/<agent_id>`, for any tool call. The
