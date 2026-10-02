@@ -7,7 +7,8 @@ Now, it is in bootstrap. Hooks in `.claude/hooks/` check the handoff calls (see 
 
 - `docs/process.md` - how work is organized. Read it before you start a task.
 - `docs/task-template.md` - the template for a groomed issue
-- `docs/team/` - the role definitions (orchestrator, PM, software engineer, QA engineer)
+- `docs/team/` - the role definitions (orchestrator, planner, PM, software engineer, QA engineer)
+- `docs/team/planner.md` - the planner: intake and stage set-up in the main session started with `/stage-start`, and the stage review as a subagent
 - `docs/specs/` - the design of the kit
 
 ## Commands
@@ -37,7 +38,7 @@ Test command: uv run --with pytest pytest. Never report tests as passed if no te
 
 Use these skills:
 
-- brainstorming, writing-plans (upstream: idea → spec → plan → issues). Plan tasks become issues in `docs/task-template.md` format (see Intake in `docs/process.md`).
+- brainstorming, writing-plans (upstream: idea → spec → plan → issues). The planner role (`docs/team/planner.md`) uses them, in the main session started with `/stage-start`. Plan tasks become issues in `docs/task-template.md` format (see Intake in `docs/process.md`).
 - test-driven-development (technique for the engineer role)
 - verification-before-completion (prose version of the "done" gate)
 - requesting-code-review, receiving-code-review (technique for the reviewer role; the reviewer role is not defined yet, do not invent it)

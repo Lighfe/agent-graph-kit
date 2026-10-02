@@ -4,7 +4,7 @@ A reusable set-up for AI-native development with several agents (Graph Engineeri
 
 Target architecture:
 
-- The Claude Code main session is the orchestrator.
+- The entry command sets the role of the Claude Code main session: `/goal …` makes it the orchestrator, `/stage-start` makes it the planner, and without a command it has no role (questions and reports, no loop, no planning).
 - Workers are Claude Code subagents, Codex CLI, and Lovable (MCP).
 - Jev (TypeSafe AI) makes fast, typed decisions at the handoffs between workers.
 
@@ -55,7 +55,7 @@ Copy these files and folders from this repo into the new project, with the same 
 - `docs/process.md`, `docs/team/`, `docs/task-template.md`, `docs/checks/`
 - `.claude/agents/`, `.claude/hooks/`, and from `.claude/settings.json` the `hooks` block and the `permissions` block (the `allow` and the `deny` rules)
 - `scripts/qa-codex` (the Codex QA launcher; it must stay executable), `scripts/codex_exec.py`, `scripts/qa-result.schema.json`
-- `.agents/skills/codex-review/`
+- `.agents/skills/codex-review/`, `.agents/skills/stage-start/`
 - the symlink `.claude/skills` -> `.agents/skills`
 
 Copy example, run in the root of the new project:
@@ -66,7 +66,7 @@ mkdir -p docs .claude .agents/skills scripts
 cp "$KIT/AGENTS.md" "$KIT/CLAUDE.md" .
 cp -r "$KIT/docs/process.md" "$KIT/docs/task-template.md" "$KIT/docs/team" "$KIT/docs/checks" docs/
 cp -r "$KIT/.claude/agents" "$KIT/.claude/hooks" .claude/
-cp -r "$KIT/.agents/skills/codex-review" .agents/skills/
+cp -r "$KIT/.agents/skills/codex-review" "$KIT/.agents/skills/stage-start" .agents/skills/
 cp -p "$KIT/scripts/qa-codex" "$KIT/scripts/codex_exec.py" "$KIT/scripts/qa-result.schema.json" scripts/
 cp "$KIT/.claude/settings.json" .claude/settings.json   # only if the project has no .claude/settings.json yet
 ln -s ../.agents/skills .claude/skills
@@ -171,7 +171,8 @@ gh label create stage --description "Stage issue: purpose and context for its su
 
 1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
 2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder (spec 5.9). The hooks apply from the next tool call after `.claude/settings.json` is in place.
-3. Final step: run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
+3. Run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
+4. Final step: run `/stage-start` in the project to plan the first stage (intake). The main session is then the planner (`docs/team/planner.md`). The planner ends set-up with a `/goal …` line: run it in the same or a new session to start the loop.
 
 ## Update the kit in a project
 

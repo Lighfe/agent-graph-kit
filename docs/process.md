@@ -13,10 +13,15 @@ Status: hooks in `.claude/hooks/` check each launch of a role and each `gh issue
 
 ## Roles
 
-- Orchestrator - the main session, follows `docs/team/orchestrator.md`
+The entry command sets the role of the main session.
+
+- Orchestrator - the main session while it runs `/goal …`, follows `docs/team/orchestrator.md`
+- Planner - the main session after `/stage-start` (intake and stage set-up), and a subagent for the stage review, follows `docs/team/planner.md`
 - PM - grooms a task before anyone implements it, follows `docs/team/pm.md`
 - Engineer - implements one groomed task, follows `docs/team/software-engineer.md`
 - QA - checks the result against the acceptance criteria, follows `docs/team/qa-engineer.md`
+- No command - the main session has no role: it answers questions and gives reports, runs no loop and does no planning
+- A session switches from planner to orchestrator at most once, and never back
 
 A groomed issue uses the template in `docs/task-template.md`.
 
