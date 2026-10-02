@@ -91,7 +91,7 @@ __pycache__/
 ### Adjust
 
 - `AGENTS.md`: the first line (`# <project name>`), the project description (replace the two kit sentences at the top: "This repo will become a Claude Code plugin ..." and "Now, it is in bootstrap."), and the test command (the line `Test command: ...`)
-- `AGENTS.md`: remove or reword the lines that are only true for this kit repo: `docs/specs/` - the design of the kit (under "Documents"), the key name `TYPESAFE_API_KEY` (under "Public repo"), and the line about `docs/references/local/` (under "Public repo")
+- `AGENTS.md`: remove or reword the lines that are only true for this kit repo: `docs/specs/agent-graph-kit.md` - the living behavior spec: how the kit behaves now (under "Documents"), the key name `TYPESAFE_API_KEY` (under "Public repo"), and the line about `docs/references/local/` (under "Public repo")
 - Frontend lane only: the `frontend/` submodule (see "Frontend lane" below) and the `frontend` lane. Add the line `Lovable project: <id>` to `AGENTS.md`; the `frontend-engineer` reads the Lovable project id from it. Without a Lovable project, the PM must not use `Lane: frontend`.
 
 ### Codex trust entry
@@ -215,6 +215,6 @@ The kit builds on the workflow from the DataTalksClub [AI Dev Tools Zoomcamp](ht
 
 ## Design
 
-- Accepted design: [docs/specs/](docs/specs/)
+- Accepted design: the living behavior spec [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md) (how the kit behaves now), and the other specs in [docs/specs/](docs/specs/)
 - Historical input: [docs/archive/](docs/archive/)
 - Development process of this repo: [docs/process.md](docs/process.md)

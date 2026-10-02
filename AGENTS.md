@@ -9,7 +9,7 @@ Now, it is in bootstrap. Hooks in `.claude/hooks/` check the handoff calls (see 
 - `docs/task-template.md` - the template for a groomed issue
 - `docs/team/` - the role definitions (orchestrator, planner, PM, software engineer, QA engineer)
 - `docs/team/planner.md` - the planner: intake and stage set-up in the main session started with `/stage-start`, and the stage review as a subagent
-- `docs/specs/` - the design of the kit
+- `docs/specs/agent-graph-kit.md` - the living behavior spec: how the kit behaves now
 
 ## Commands
 

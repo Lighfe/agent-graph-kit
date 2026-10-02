@@ -1,6 +1,6 @@
 # Hook activation check
 
-The owner runs this check once, after the hook wiring issue (#7) is closed. Spec: `docs/specs/2026-09-25-agent-graph-kit-v1.md`, section 5.9.
+The owner runs this check once, after the hook wiring issue (#7) is closed. Spec: `docs/specs/agent-graph-kit.md`, heading "G8 Settings protection".
 
 - **Who:** the owner. You type the prompts and check each result. Claude Code only makes the calls. An agent does not test its own gates.
 - **Where:** an interactive session in the Claude Code VS Code extension (the surface of the loop), in the repo root, in **Auto mode**. Auto mode is the mode the loop runs in. Manual mode is not an option for the loop. Check the mode before each step: the mode indicator of the session reads Auto.

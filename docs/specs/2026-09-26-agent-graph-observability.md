@@ -18,7 +18,7 @@ This spec covers the agent graph itself: the runtime (agents, tool calls, tokens
 
 ## 2. Principles
 
-The v1 principles (P1–P5 in `docs/specs/2026-09-25-agent-graph-kit-v1.md`) apply unchanged. In addition:
+The kit principles (P1–P5 under the heading "Principles" in `docs/specs/agent-graph-kit.md`) apply unchanged. In addition:
 
 | # | Principle |
 |---|---|
