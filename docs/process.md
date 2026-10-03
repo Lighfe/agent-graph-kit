@@ -123,7 +123,7 @@ The details are in "Stage end" in `docs/team/orchestrator.md`.
 
 - Do not skip step 2
 - The engineer does not close the issue
-- QA does not fix the code, only outputs PASS or FAIL
+- QA does not fix the code. It only posts a result marker: `## QA: PASS`, `## QA: FAIL`, `## QA: UNVERIFIABLE` or `## QA: INVALID` (`qa-codex` or the fallback `qa-engineer`, see `docs/team/qa-engineer.md`), or `## QA: UNAVAILABLE` (only `qa-codex`, see `docs/team/orchestrator.md`)
 - The orchestrator closes the issue only after QA outputs PASS, and only if the SHA that QA verified is the current `HEAD`
 - A return is a QA FAIL, a QA UNVERIFIABLE or an engineer BLOCKED. After 3 returns on the same issue, escalate the issue: the team could not settle it inside the current intent and scope, so the owner decides whether to change them. The count starts after the newest `## Owner: RESUME` comment
 - A launch that Claude Code denied before it ran (the hook posts `## Launch not started: …`) or that an auto mode outage stopped (the hook posts `## Launch stopped by outage: …`) is not pending and not a return

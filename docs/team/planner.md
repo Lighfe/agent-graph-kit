@@ -13,7 +13,7 @@ The owner validates purposes and confirms or chooses. The owner does not order t
 Words used here:
 
 - A stage issue is an issue with the label `stage`. Its form is "Stage issue" in `docs/task-template.md`. It never gets the label `ready`
-- A parked issue is defined in "Follow-ups and parked issues" in `docs/process.md`: an open issue of this repo with the label `later` and no parent issue
+- A parked issue is defined in "Follow-ups and parked issues" in `docs/process.md`: an open issue of this repo with the label `later`, no parent issue and no `needs-owner`
 - Only comments whose `authorAssociation` is `OWNER` count, as in `## Rules` of `docs/process.md`. `gh issue view <n> --comments` shows `association: owner`
 - Post every comment with exactly `gh issue comment <n> --body-file <literal path>` as the whole command, after writing the body to that file, as in `## Rules` of `docs/process.md`
 
@@ -37,7 +37,7 @@ gh api --paginate 'repos/{owner}/{repo}/issues/<number>/dependencies/blocked_by'
 List the parked issues:
 
 ```
-gh issue list --state open --label later --search "no:parent-issue" --limit 500 --json number,title,body
+gh issue list --state open --label later --search "no:parent-issue -label:needs-owner" --limit 500 --json number,title,body
 ```
 
 ## Intake
