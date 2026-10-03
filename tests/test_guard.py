@@ -679,7 +679,7 @@ def test_decide_close_posts_nothing():
 
 
 def test_decide_failed_check_posts_nothing():
-    fio = FakeIO(issue(launch("pm")))
+    fio = FakeIO(issue(launch("pm"), launch("pm", 2)))  # two misses in a row (issue #132)
     reason = fio.decide(agent("pm", "ROLE=pm ISSUE=7"))
     assert reason.startswith("G1:") and "pending" in reason
     assert fio.posts == []
@@ -872,6 +872,9 @@ def test_invalid_deadline_denies(env, value):
 
 
 def test_lock_serializes_two_launches_on_the_same_issue(env):
+    # One PM miss first: the first guard allows the one relaunch, the second guard then sees two
+    # misses in a row and denies (issue #132). Without the lock both would see one miss.
+    write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm"))
     full = {**os.environ, **env, "FAKE_GH_SLEEP": "1"}
     data = json.dumps(agent("pm", "ROLE=pm ISSUE=7"))
     procs = [subprocess.Popen([sys.executable, str(GUARD)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -884,7 +887,7 @@ def test_lock_serializes_two_launches_on_the_same_issue(env):
         p.wait(timeout=60)
         p.stdout.close()
     assert [p.returncode for p in procs] == [0, 0]
-    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 1)\nAgent: pm"}]
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 2)\nAgent: pm"}]
     assert sorted(outs, key=len)[0] == ""
     reason = deny_reason(sorted(outs, key=len)[1])
     assert reason.startswith("G1:") and "pending" in reason
@@ -1571,11 +1574,18 @@ def test_guard_planner_launch_on_a_dirty_tree_is_denied(env):
         "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)")
 
 
-def test_guard_second_planner_launch_while_pending_is_denied(env):
+def test_guard_planner_launch_after_one_planner_miss_gets_attempt_2(env):
     write_stage(env, planner_receipt())
+    assert run_guard(PLANNER_7, env) == (0, "")
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
+
+
+def test_guard_planner_launch_after_two_planner_misses_is_denied(env):
+    write_stage(env, planner_receipt(), planner_receipt(2))
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
-    assert reason == ("G1: issue #7 is pending: ## Launch: planner (attempt 1) has no result, "
-                      "expected a result of planner or ## Owner: RESUME")
+    assert reason == ("G1: issue #7 is pending: the last 2 launches of planner ended without a result "
+                      "(## Launch: planner (attempt 1), ## Launch: planner (attempt 2)), "
+                      "expected ## Owner: RESUME; escalate the issue")
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
@@ -1605,3 +1615,44 @@ def test_guard_pm_launch_on_a_stage_issue_is_unchanged(env):
     write_stage(env, planner_receipt(), STAGE_REVIEW)
     reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
     assert reason == "G1: issue #7 has no label ready, expected the label ready"
+
+
+# --- one miss, two misses in a row (issue #132) -----------------------------------------------
+
+GROOMED_ENG_MISS = (launch("pm"), "## PM: GROOMED", launch("engineer"))
+
+
+def test_decide_continuation_after_one_miss_posts_the_next_round():
+    fio = FakeIO(issue(*GROOMED_ENG_MISS))
+    assert fio.decide(send("a1b2c3", "ROLE=engineer ISSUE=7")) is None
+    assert fio.posts == [(7, "## Launch: engineer (continued, round 2)\nAgent: a1b2c3")]
+
+
+def test_decide_relaunch_after_one_miss_posts_the_next_attempt():
+    fio = FakeIO(issue(*GROOMED_ENG_MISS))
+    assert fio.decide(agent("software-engineer", "ROLE=engineer ISSUE=7")) is None
+    assert fio.posts == [(7, "## Launch: engineer (attempt 2)\nAgent: software-engineer")]
+
+
+def test_guard_relaunch_after_one_miss_is_allowed_then_a_third_is_denied(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
+    event = agent("software-engineer", "ROLE=engineer ISSUE=7")
+    assert run_guard(event, env) == (0, "")
+    reason = deny_reason(run_guard(event, env)[1])
+    assert reason.startswith("G1: issue #7 is pending: the last 2 launches of engineer ended without a result")
+    assert "## Owner: RESUME" in reason and "did not start" not in reason
+    assert [c["body"] for c in lines(env["FAKE_GH_LOG"])] == ["## Launch: engineer (attempt 2)\nAgent: software-engineer"]
+
+
+def test_guard_close_after_one_miss_is_denied(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
+    reason = deny_reason(run_guard(bash("gh issue " + "close 7"), env)[1])
+    assert reason.startswith("G1: issue #7 is pending:") and "only engineer may go on" in reason
+    assert "## Owner: RESUME" in reason
+
+
+def test_guard_other_role_after_one_miss_is_denied(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
+    reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
+    assert reason.startswith("G1: issue #7 is pending:") and "only engineer may go on" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []

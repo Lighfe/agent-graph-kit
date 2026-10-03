@@ -31,6 +31,7 @@ from issue_state import (
     parse_issue,
     parse_open_blocker_count,
     returns_since_resume,
+    two_misses,
     verified_sha,
 )
 
@@ -251,7 +252,7 @@ def test_stranger_not_started_does_not_void_owner_receipt():
     not_started = f"## Launch not started: pm (attempt 1)\nCall: {x}\nReason: Classifier unavailable"
     iss = parse_issue(gh_issue(launch("pm", call=x), stranger(not_started, "CONTRIBUTOR")))
     assert is_pending(iss)
-    assert check(PM, facts(iss)).startswith("G1:")
+    assert check(ENG, facts(iss)).startswith("G1:")  # one PM miss: only pm may go on (issue #132)
     assert not is_pending(parse_issue(gh_issue(launch("pm", call=x), not_started)))  # control
 
 
@@ -324,7 +325,7 @@ def test_late_result_of_earlier_attempt_is_ignored():
 def test_newest_launch_without_result_is_pending():
     iss = issue(launch("engineer"), DONE, launch("qa"), "## QA: FAIL", launch("engineer", 2))
     assert is_pending(iss)
-    assert check(ENG, facts(iss)).startswith("G1:")
+    assert check(QA, facts(iss)).startswith("G1:")  # another role than the miss (issue #132)
 
 
 def test_result_of_other_role_does_not_end_pending():
@@ -493,10 +494,11 @@ def test_g1_denies_labels(labels):
     assert check(PM, facts(issue(labels=labels))).startswith("G1:")
 
 
-def test_g1_denies_pending_issue_for_every_role():
+def test_g1_denies_pending_issue_for_every_other_role():
     iss = issue(launch("pm"))
-    for call in (PM, ENG, QA, QA_FALLBACK, CLOSE):
+    for call in (ENG, QA, QA_FALLBACK, CLOSE):
         assert check(call, facts(iss)).startswith("G1:")
+    assert check(PM, facts(iss)) is None  # one miss: the same role may go on (issue #132)
 
 
 def test_g1_denies_close_on_dirty_tree():
@@ -796,7 +798,8 @@ def test_g7_ignores_return_markers_with_suffix():
 def test_continued_comment_makes_issue_pending():
     iss = done(launch("qa"), "## QA: FAIL", cont("engineer", 2, "eng-1"))
     assert is_pending(iss)
-    assert check(ENG, facts(iss)).startswith("G1:")
+    assert check(QA, facts(iss)).startswith("G1:")
+    assert check(PM, facts(iss)).startswith("G1:")
 
 
 def test_result_after_continued_comment_is_valid():
@@ -953,7 +956,7 @@ def test_43_case_not_started_receipt_is_not_pending():
 def test_started_receipt_without_result_is_still_pending(comments):
     iss = issue(*comments)
     assert is_pending(iss)
-    assert check(PM, facts(iss)).startswith("G1: issue #7 is pending")
+    assert check(ENG, facts(iss)).startswith("G1: issue #7 is pending")
 
 
 def test_not_started_pm_after_blocked_keeps_blocked_as_current():
@@ -1739,10 +1742,18 @@ def test_planner_denied_on_a_dirty_tree():
     assert msg == "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
 
 
-def test_planner_denied_while_pending():
-    msg = check(PLANNER, planner_facts(stage(planner_receipt())))
-    assert msg == ("G1: issue #7 is pending: ## Launch: planner (attempt 1) has no result, "
-                   "expected a result of planner or ## Owner: RESUME"), msg
+def test_planner_allowed_after_one_planner_miss():
+    iss = stage(planner_receipt())
+    assert is_pending(iss)
+    assert check(PLANNER, planner_facts(iss)) is None
+    assert launch_comment(PLANNER, attempt(iss, "planner")) == "## Launch: planner (attempt 2)\nAgent: planner"
+
+
+def test_planner_denied_after_two_planner_misses_in_a_row():
+    msg = check(PLANNER, planner_facts(stage(planner_receipt(), planner_receipt(2))))
+    assert msg == ("G1: issue #7 is pending: the last 2 launches of planner ended without a result "
+                   "(## Launch: planner (attempt 1), ## Launch: planner (attempt 2)), "
+                   "expected ## Owner: RESUME; escalate the issue"), msg
 
 
 @pytest.mark.parametrize("after", [STAGE_REVIEW, STAGE_REVIEW + "\nsynthetic review", RESUME])
@@ -1926,3 +1937,172 @@ def test_other_markers_keep_their_exact_match():
     assert current_result(issue(launch("pm"), "## pm: groomed")) is None
     assert current_result(issue(launch("qa"), "##  QA:  PASS")) is None
     assert is_pending(issue("## launch: pm (attempt 1)\nAgent: pm")) is False
+
+
+# --- one miss, two misses in a row (issue #132) -----------------------------------------------
+
+ENG_CONT = Call(role="engineer", agent="eng-1", issue=7, continued=True)
+PM_CONT = Call(role="pm", agent="pm-1", issue=7, continued=True)
+TWO_MISSES = "the last 2 launches of {} ended without a result"
+
+
+def test_one_miss_then_continuation_is_allowed_and_gets_the_next_round():
+    iss = groomed(launch("engineer"))
+    assert is_pending(iss) and not two_misses(iss)
+    assert check(ENG_CONT, facts(iss)) is None
+    assert launch_comment(ENG_CONT, attempt(iss, "engineer")) == (
+        "## Launch: engineer (continued, round 2)\nAgent: eng-1")
+
+
+def test_one_miss_then_relaunch_is_allowed_and_gets_the_next_attempt():
+    iss = groomed(launch("engineer"))
+    assert check(ENG, facts(iss)) is None
+    assert launch_comment(ENG, attempt(iss, "engineer")) == "## Launch: engineer (attempt 2)\nAgent: software-engineer"
+
+
+def test_first_pm_launch_missed_then_pm_relaunch_or_continuation_passes_g2():
+    iss = issue(launch("pm"))
+    assert check(PM, facts(iss)) is None
+    assert check(PM_CONT, facts(iss)) is None
+    assert attempt(iss, "pm") == 2
+
+
+def test_g2_still_denies_after_groomed_when_a_later_pm_receipt_is_a_miss():
+    # The miss counts as "no receipt yet" only when it is the only receipt.
+    msg = check(PM, facts(groomed(launch("pm", 2))))
+    assert msg.startswith("G2:") and "## PM: GROOMED" in msg
+
+
+def test_one_qa_miss_then_qa_codex_relaunch_passes_g4():
+    iss = done(launch("qa"))
+    assert check(QA, facts(iss)) is None
+
+
+def test_one_qa_engineer_miss_then_continuation_passes_g5():
+    iss = done(launch("qa"), "## QA: UNAVAILABLE", launch("qa", 2, agent="qa-engineer"))
+    assert check(Call(role="qa", agent="qa-1", issue=7, continued=True), facts(iss)) is None
+
+
+@pytest.mark.parametrize("second", [launch("engineer", 2), cont("engineer", 2, "eng-1")])
+@pytest.mark.parametrize("call", [ENG, ENG_CONT])
+def test_two_misses_in_a_row_are_denied(second, call):
+    iss = groomed(launch("engineer"), second)
+    assert two_misses(iss)
+    msg = check(call, facts(iss))
+    assert msg.startswith("G1: issue #7 is pending:"), msg
+    assert TWO_MISSES.format("engineer") in msg and RESUME in msg
+    assert "the last 2 launches did not start" not in msg
+
+
+def test_two_pm_misses_in_a_row_are_denied_before_g2():
+    msg = check(PM, facts(issue(launch("pm"), launch("pm", 2))))
+    assert msg.startswith("G1: issue #7 is pending:") and TWO_MISSES.format("pm") in msg
+
+
+def test_two_misses_message_text():
+    msg = check(ENG, facts(groomed(launch("engineer"), cont("engineer", 2, "eng-1"))))
+    assert msg == ("G1: issue #7 is pending: the last 2 launches of engineer ended without a result "
+                   "(## Launch: engineer (attempt 1), ## Launch: engineer (continued, round 2)), "
+                   "expected ## Owner: RESUME; escalate the issue")
+
+
+@pytest.mark.parametrize("call", [PM, PM_CONT, QA, QA_FALLBACK, CLOSE])
+def test_one_miss_then_another_role_is_denied_and_names_the_role_of_the_miss(call):
+    msg = check(call, facts(groomed(launch("engineer"))))
+    assert msg == ("G1: issue #7 is pending: ## Launch: engineer (attempt 1) has no result, so only engineer "
+                   "may go on, expected one continuation or new launch of engineer, a result of engineer "
+                   "or ## Owner: RESUME"), msg
+
+
+def test_one_miss_then_close_is_denied_even_with_a_pass_before():
+    iss = done(launch("qa"), f"## QA: PASS\nVerified: {HEAD}", launch("qa", 2))
+    msg = check(CLOSE, facts(iss))
+    assert msg.startswith("G1: issue #7 is pending:") and "only qa may go on" in msg and RESUME in msg
+
+
+def test_miss_resume_miss_allows_the_next_call_of_that_role():
+    iss = issue(launch("pm"), RESUME, launch("pm", 2))
+    assert not two_misses(iss)
+    assert check(PM, facts(iss)) is None
+    eng = groomed(launch("engineer"), RESUME, launch("engineer", 2))
+    assert not two_misses(eng)
+    assert check(ENG, facts(eng)).startswith("G3:")  # G1 lets it pass; RESUME sends the issue to the PM
+
+
+def test_receipts_before_a_resume_never_count_even_after_a_result():
+    iss = groomed(launch("engineer"), RESUME, "## PM: GROOMED", launch("engineer", 2))
+    assert not two_misses(iss)
+
+
+@pytest.mark.parametrize("void", [not_started, stopped])
+def test_miss_then_voided_receipt_then_relaunch_is_allowed(void):
+    iss = groomed(launch("engineer"), launch("engineer", 2, call=X), void("engineer", 2, X))
+    assert not two_misses(iss)
+    assert check(ENG, facts(iss)) is None
+    assert attempt(iss, "engineer") == 3
+
+
+@pytest.mark.parametrize("void", [not_started, stopped])
+def test_miss_voided_receipt_and_second_miss_are_denied(void):
+    iss = groomed(launch("engineer"), launch("engineer", 2, call=X), void("engineer", 2, X), launch("engineer", 3))
+    assert two_misses(iss)
+    msg = check(ENG, facts(iss))
+    assert msg.startswith("G1: issue #7 is pending:") and TWO_MISSES.format("engineer") in msg
+
+
+def test_miss_then_two_voided_receipts_keeps_the_voided_twice_stop():
+    iss = groomed(launch("engineer"), launch("engineer", 2, call=X), not_started("engineer", 2, X),
+                  launch("engineer", 3, call=Y), stopped("engineer", 3, Y))
+    assert check(ENG, facts(iss)).startswith("G1: issue #7: the last 2 launches did not start")
+
+
+def test_misses_of_two_roles_are_not_two_misses_in_a_row():
+    iss = issue(launch("pm"), launch("engineer"))
+    assert not two_misses(iss)
+    assert check(ENG, facts(iss)).startswith("G3:")  # G1 lets the newest role go on
+
+
+def test_planner_continuation_after_one_planner_miss_is_still_denied():
+    msg = check(Call(role="planner", agent="planner-1", issue=7, continued=True),
+                planner_facts(stage(planner_receipt())))
+    assert msg.startswith("G1:") and "cannot be continued" in msg
+
+
+def test_other_role_after_one_planner_miss_on_a_stage_issue_is_denied():
+    iss = stage(planner_receipt(), labels=("stage", "ready"))
+    msg = check(PM, facts(iss))
+    assert msg.startswith("G1: issue #7 is pending:") and "only planner may go on" in msg
+
+
+@pytest.mark.parametrize("base", [
+    done(launch("qa"), "## QA: FAIL"),
+    done(launch("qa"), "## QA: FAIL", launch("engineer", 2), "## Engineer: BLOCKED"),
+])
+def test_a_miss_does_not_change_the_g7_count(base):
+    n = returns_since_resume(base)
+    assert returns_since_resume(issue(*base.comments, launch("engineer", 3))) == n
+    assert returns_since_resume(issue(*base.comments, launch("pm", 2))) == n
+
+
+def test_a_miss_in_the_middle_does_not_change_the_g7_count():
+    without = done(launch("qa"), "## QA: FAIL", launch("engineer", 2), "## Engineer: BLOCKED")
+    with_miss = done(launch("qa"), "## QA: FAIL", launch("engineer", 2), launch("engineer", 3),
+                     "## Engineer: BLOCKED")
+    assert returns_since_resume(with_miss) == returns_since_resume(without) == 2
+
+
+def test_pm_miss_after_waiting_keeps_waiting_as_the_current_result_for_g2():
+    closed = (Blocker(repo="o/r", number=3, state="closed"),)
+    iss = issue(launch("pm"), "## PM: WAITING", launch("pm", 2))
+    assert check(PM, facts(iss, blockers=closed)) is None
+    assert check(PM, facts(iss, blockers=())).startswith("G2:")  # WAITING without a blocker link
+
+
+def test_qa_codex_miss_after_pass_with_old_sha_keeps_the_recheck():
+    iss = done(launch("qa"), f"## QA: PASS\nVerified: {OLD}", launch("qa", 2))
+    assert check(QA, facts(iss)) is None
+
+
+def test_qa_codex_miss_after_pass_with_head_sha_is_still_denied_by_g4():
+    iss = done(launch("qa"), f"## QA: PASS\nVerified: {HEAD}", launch("qa", 2))
+    assert check(QA, facts(iss)).startswith("G4:")

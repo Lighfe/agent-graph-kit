@@ -475,3 +475,20 @@ def test_planner_send_message_posts_nothing():
     fake = Fake(make_issue(planner_receipt(1, call=H)))
     fake.run(send("planner-1", "ROLE=planner ISSUE=7"))
     assert fake.reads == [] and fake.posts == []
+
+
+# --- a receipt after a miss is a normal receipt (issue #132) ------------------------------
+
+
+def test_relaunch_after_a_miss_posts_not_started():
+    fake = Fake(make_issue(launch("pm"), launch("pm", 2, call=H)))  # attempt 1 ended without a result
+    fake.run(agent("pm", "ROLE=pm ISSUE=7"))
+    assert fake.posts == [(7, f"## Launch not started: pm (attempt 2)\nCall: {H}\nReason: {NO_VERDICT}")]
+
+
+def test_continuation_after_a_miss_posts_not_started():
+    fake = Fake(make_issue(launch("pm"), "## PM: GROOMED", launch("engineer"),
+                           cont("engineer", 2, "a1b2c3", call=H)))
+    fake.run(send("a1b2c3", "ROLE=engineer ISSUE=7"))
+    assert fake.posts == [(7, f"## Launch not started: engineer (continued, round 2)\nCall: {H}\n"
+                              f"Reason: {NO_VERDICT}")]

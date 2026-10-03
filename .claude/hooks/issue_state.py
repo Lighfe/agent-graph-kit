@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # role -> result markers (docs/specs/agent-graph-kit.md#result-markers)
 MARKERS: dict[str, tuple[str, ...]] = {
@@ -386,12 +386,40 @@ def _valid(lines: list[str], i: int) -> bool:
 
 
 def is_pending(issue: Issue) -> bool:
+    """The newest receipt (voided ones left out) has no result of its role and no RESUME after it:
+    it is a miss (issue #132)."""
     lines = _lines(issue)
     j = _newest_launch(lines)
     if j is None:
         return False
     role = _launch_role(lines[j])
     return not any(is_resume(line) or _result_role(line) == role for line in lines[j + 1:])
+
+
+def _receipts(lines: list[str]) -> list[int]:
+    """Indexes of the receipts that count (voided receipts are blank in `_lines`)."""
+    return [i for i, line in enumerate(lines) if _launch_role(line)]
+
+
+def _is_miss(lines: list[str], i: int) -> bool:
+    """A miss (issue #132): the receipt at `i` has no result of its role and no RESUME between it
+    and the next receipt (or the end of the comments). Voided receipts are left out."""
+    role = _launch_role(lines[i])
+    end = next((k for k in _receipts(lines) if k > i), len(lines))
+    return not any(is_resume(line) or _result_role(line) == role for line in lines[i + 1:end])
+
+
+def two_misses(issue: Issue) -> bool:
+    """Two misses in a row (issue #132): the two newest receipts (voided ones left out) are of the
+    same role and both are misses. A RESUME after the older one makes it no miss, so receipts before
+    the newest RESUME never count."""
+    lines = _lines(issue)
+    receipts = _receipts(lines)
+    if len(receipts) < 2:
+        return False
+    older, newer = receipts[-2:]
+    return (_launch_role(lines[older]) == _launch_role(lines[newer])
+            and _is_miss(lines, older) and _is_miss(lines, newer))
 
 
 def current_result(issue: Issue) -> tuple[int, str] | None:
@@ -520,7 +548,8 @@ def g1(call: Call, facts: Facts) -> str | None:
 def g1_planner(call: Call, facts: Facts) -> str | None:
     """G1 on the planner path (issue #99): the issue is open and has the label `stage` (the label
     ready is neither required nor denied), no label later or needs-owner, a clean tree, not voided
-    twice, not pending. No blocker read: the blocked-by links between stage issues order the start
+    twice, and the pending rule of issue #132 (one planner miss allows one new launch, two misses
+    in a row are denied). No blocker read: the blocked-by links between stage issues order the start
     of stages, and a stage review reviews a stage that has run."""
     iss = facts.issue
     if problem := g1_open(call, facts):
@@ -532,7 +561,9 @@ def g1_planner(call: Call, facts: Facts) -> str | None:
 
 def _g1_rest(call: Call, facts: Facts) -> str | None:
     """The part of G1 after the label check: the labels later and needs-owner, the clean tree,
-    two voided launches (not for close) and the pending check."""
+    two voided launches (not for close) and the pending check. Pending means the newest receipt is a
+    miss (issue #132): a call of the role of the miss may go on once; a call of another role, and
+    any call after two misses in a row, is denied."""
     iss = facts.issue
     for label in ("later", "needs-owner"):
         if label in iss.labels:
@@ -543,14 +574,23 @@ def _g1_rest(call: Call, facts: Facts) -> str | None:
         return (f"G1: issue #{iss.number}: the last 2 launches did not start or were stopped by an auto mode "
                 f"outage, expected a launch that runs; stop the loop, the owner posts {RESUME}")
     if is_pending(iss):
+        # The newest receipt is a miss (issue #132): one continuation or new launch of its role
+        # may go on without the owner; two misses in a row, or a call of another role, are denied.
         lines = _lines(iss)
         j = _newest_launch(lines)
-        return (f"G1: issue #{iss.number} is pending: {lines[j]} has no result, "
-                f"expected a result of {_launch_role(lines[j])} or {RESUME}")
+        role = _launch_role(lines[j])
+        if two_misses(iss):
+            return (f"G1: issue #{iss.number} is pending: the last 2 launches of {role} ended without a result "
+                    f"({lines[_receipts(lines)[-2]]}, {lines[j]}), expected {RESUME}; escalate the issue")
+        if call.role != role:
+            return (f"G1: issue #{iss.number} is pending: {lines[j]} has no result, so only {role} may go on, "
+                    f"expected one continuation or new launch of {role}, a result of {role} or {RESUME}")
     return None
 
 
 def g2(call: Call, facts: Facts) -> str | None:
+    # `check` passes the facts without the receipt of one miss (issue #132), so after a first PM
+    # launch that missed, the issue has no receipt yet here.
     lines = _lines(facts.issue)
     _, marker, found = _current(facts.issue)
     if _newest_launch(lines) is None or marker in (BLOCKED, UNVERIFIABLE, RESUME):
@@ -701,8 +741,24 @@ def check(call: Call, facts: Facts) -> str | None:
     checks = _role_checks(call)
     if isinstance(checks, str):
         return checks
-    for g in (g1, *checks):
-        reason = g(call, facts)
+    if (reason := g1(call, facts)) is not None:
+        return reason
+    role_facts = without_miss(facts)
+    for g in checks:
+        reason = g(call, role_facts)
         if reason is not None:
             return reason
     return None
+
+
+def without_miss(facts: Facts) -> Facts:
+    """The facts for the role checks G2 to G7 after G1 has passed (issue #132): when the newest
+    receipt is a miss (one miss, the call is of its role), that receipt is left out, so the miss
+    does not change the current result (a receipt makes the earlier results of its role invalid)
+    and a first PM launch that missed counts as no receipt yet for G2. Otherwise the facts as is."""
+    iss = facts.issue
+    if not is_pending(iss):
+        return facts
+    j = _newest_launch(_lines(iss))
+    comments = iss.comments[:j] + ("",) + iss.comments[j + 1:]
+    return replace(facts, issue=replace(iss, comments=comments))

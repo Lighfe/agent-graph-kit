@@ -452,3 +452,21 @@ def test_planner_agent_type_and_launch_line_role_differ(tmp_path, agent_type, li
     env = Env(tmp_path, make_issue(planner_receipt(1, call=X))).evidence().launch_line(line)
     env.run(env.event(agent_type))
     assert env.reads == [] and env.posts == []
+
+
+# --- a receipt after a miss is a normal receipt (issue #132) ------------------------------
+
+
+def test_relaunch_after_a_miss_posts_stop_comment(tmp_path):
+    env = Env(tmp_path, make_issue(launch("pm"), launch("pm", 2, call=X))).evidence().launch_line()
+    env.run(env.event())
+    assert env.posts == [(39, f"## Launch stopped by outage: pm (attempt 2)\nCall: {X}\nReason: {REASON}")]
+
+
+def test_continuation_after_a_miss_posts_stop_comment(tmp_path):
+    iss = make_issue(launch("pm"), "## PM: GROOMED", launch("engineer"), cont("engineer", 2, "eng-1", call=X),
+                     number=12)
+    env = Env(tmp_path, iss).evidence("Classifier unavailable").launch_line("ROLE=engineer ISSUE=12")
+    env.run(env.event("software-engineer"))
+    assert env.posts == [(12, f"## Launch stopped by outage: engineer (continued, round 2)\nCall: {X}\n"
+                              "Reason: Classifier unavailable")]
