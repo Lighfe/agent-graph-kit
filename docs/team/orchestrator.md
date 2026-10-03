@@ -99,8 +99,10 @@ When nothing happened, the section says so in one line, for example "Nothing unu
 
 A planner launch is not a return.
 
-- The result is missing, or its first line is not exactly `## Planner: STAGE REVIEW`: escalate the stage issue and stop the loop
-- `G1` pending (the last planner launch ended without a result): escalate the stage issue and stop the loop
+- The result is missing (the planner ended without a result, one miss, see "Hooks"): launch the agent `planner` again, once, without the owner. The prompt names the receipt of the miss and says that the earlier launch ended without a result, so the planner first checks what is already posted on the stage issue. A planner is never continued with `SendMessage`
+- The first line of the result is not exactly `## Planner: STAGE REVIEW`: escalate the stage issue and stop the loop
+- `G1 … is pending: the last 2 launches of planner ended without a result` (two misses in a row): escalate the stage issue and stop the loop
+- `G1 … is pending: … so only <role> may go on`: go on with that role once, as in "Hooks"
 - `G1` working tree not clean: stop the loop and ask the owner, as today
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner, as for the other roles
 - Any other deny of the planner launch: escalate the stage issue with the deny message and stop the loop
@@ -164,7 +166,7 @@ Read the full comment only for `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## Enginee
 
 After `## PM: GROOMED`, also check that the issue body has the Lane field with an allowed value and the four sections of `docs/task-template.md`.
 
-If the result is missing or not in this format, do not guess. Escalate the issue.
+If the result is missing, the role ended without a result (one miss): go on with that role once, as in "Hooks". If the result is not in this format, do not guess. Escalate the issue.
 
 ## Decisions at each edge
 
@@ -188,7 +190,11 @@ A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh i
 
 The hook comments are `## Launch: …`, `## Launch not started: …` and `## Launch stopped by outage: …`. They are not results.
 
-The issue is pending when the last launched role ended without a result. Escalate the issue, as before. This also holds when the role started and then could not act, unless a hook marked its receipt as stopped by an outage (see below).
+The issue is pending when the last launched role ended without a result: its receipt is a miss ([#132](https://github.com/Lighfe/agent-graph-kit/issues/132)). This also holds when the role started and then could not act, unless a hook marked its receipt as stopped by an outage (see below).
+
+- One miss: go on with the same role once, without the owner. Continue the agent with `SendMessage` (same `ROLE=… ISSUE=…` line first) or launch the same role again. `qa-codex` and the planner only get a new launch. The prompt or the message names the receipt of the miss (for example `## Launch: engineer (attempt 1)`) and says that the earlier launch ended without a result, so the agent first checks what is already committed or posted
+- Two misses in a row (the two newest receipts are misses of the same role, with no `## Owner: RESUME` after the older one): the hook denies, and you escalate the issue (a stage issue: escalate it and stop the loop), as before
+- A miss is not a return. Receipts voided by `## Launch not started: …` or `## Launch stopped by outage: …` are left out when misses are counted
 
 When auto mode denies a launch, the `qa-codex` call or a `SendMessage` continuation before it runs, a second hook posts `## Launch not started: <role> (…)` for that receipt. The launch never happened: launch the same step again. This is not a return.
 
@@ -196,7 +202,8 @@ When a role agent ended and a hook posted `## Launch stopped by outage: <role> (
 
 What to do with a deny:
 
-- `G1` pending: escalate the issue
+- `G1 … is pending: the last 2 launches of <role> ended without a result` (two misses in a row): escalate the issue (a stage issue: escalate it and stop the loop)
+- `G1 … is pending: … so only <role> may go on` (a call of another role after one miss): go on with the role of the miss, once, as in "Hooks", instead of escalating. This is not a return
 - `G1` open blocker: the pick should have skipped the issue. Continue with the next issue. This is not a return
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner. Claude Code is denying the calls; the issue itself is fine
 - `G1` working tree not clean: stop the loop and ask the owner
