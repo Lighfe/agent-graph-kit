@@ -513,6 +513,56 @@ def test_reserved_words_and_expanded_underscore_still_deny_g8(cmd):
     assert denied(bash(cmd)).startswith("G8:")
 
 
+# QA FAIL on #86, attempt 2: a redirection before the command word, a group in another part of the list,
+# and a parameter whose name only starts with an underscore.
+@pytest.mark.parametrize("cmd", [
+    f"cat {SETFILE}; > /tmp/unrelated echo x",
+    f"cat {SETFILE}; 2> /tmp/err echo x",
+    f"(true); cat {SETFILE} | head",
+    f"(cd /tmp; ls); cat {SETFILE} | wc -l",
+    f"{{ echo x; }} > /tmp/y; cat {SETFILE}",
+    f"cat {SETFILE}; (echo x) > /tmp/y",
+    f"if true; then echo x; fi > /tmp/y; cat {SETFILE} | head",
+    f"for f in a b; do echo $f; done | tee /tmp/y; ls {HOOKSGLOB} | wc -l",
+    f"case x in a|b) echo x;; esac; cat {SETFILE} | jq .",
+    f"case x in a|b) cat {SETFILE};; esac",
+    f"(( n = 1 )); cat {SETFILE} | head",
+    f'cat {SETFILE}; echo "${{_OTHER}}"',
+    f"cat {SETFILE}; echo ${{_OTHER}} $_OTHER $__x",
+    f"cat {SETFILE}; echo ${{_x:-y}}",
+])
+def test_lists_with_groups_and_other_parameters_pass_g8(cmd):
+    assert guard.g8(cmd) is None
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    # a pipe after a group that holds a mention, also nested and in loops and case branches
+    f"(ls {SETFILE}; (true)) | tee /tmp/x",
+    f"( (ls {SETFILE}); true ) | tee /tmp/x",
+    f"while true; do ls {SETFILE}; done | tee /tmp/x",
+    f"case x in a) ls {SETFILE};; esac | tee /tmp/x",
+    f"{{ ls {SETFILE}; '}}'; }} | tee /tmp/x",
+    f"{{ ls {SETFILE}; \\}}; }} | tee /tmp/x",
+    f"f() {{ ls {SETFILE}; }}; f | tee /tmp/x",
+    f"function f {{ ls {SETFILE}; }}; f | tee /tmp/x",
+    # a redirection after a group that holds a mention, also nested
+    f"{{ (cat {SETFILE}); }} > /tmp/x",
+    f"( {{ cat {SETFILE}; }} ) > /tmp/x",
+    f"{{ cat {SETFILE}; }} 2> /tmp/x",
+    f"case x in a) {{ cat {SETFILE}; }} > /tmp/x;; esac",
+    f"case x in a) cat {SETFILE};; esac > /tmp/x",
+    # $_ with an operator, its length, or indirect
+    f"ls {SETFILE}; cp x ${{_:-y}}",
+    f"ls {SETFILE}; cp x ${{#_}}",
+    f"ls {SETFILE}; cp x ${{!_}}",
+    f"ls {SETFILE}; cp x ${{_[0]}}",
+    f"ls {SETFILE}; cp x ${{y:-$_}}",
+])
+def test_groups_and_last_argument_still_deny_g8(cmd):
+    assert denied(bash(cmd)).startswith("G8:")
+
+
 @pytest.mark.parametrize("cmd", [
     f'ls {SETFILE}; cp x "$_"',
     f"ls {SETFILE}; cp x ${{_}}",

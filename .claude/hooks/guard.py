@@ -116,11 +116,11 @@ READ_ONLY = {"cat", "jq", "head", "tail", "grep", "wc", "ls"}
 _NO_BRACES = str.maketrans("", "", "{},")
 _PART_SEPARATORS = {";", "&&", "||", "&", "\n", ";;", ";&", ";;&"}
 _PIPES = {"|", "|&"}
-# First words of a group or a compound command: data can flow from a part before a separator into a pipe after it.
-_COMPOUND = {"{", "}", "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
-             "done", "function", "coproc"}
-# Words that end a group or a compound command. A redirection after them takes the output of the whole group.
-_CLOSERS = {"}", "fi", "done", "esac"}
+# The reserved words that open a group or a compound command, and the word that closes each.
+# A `(` opens a subshell that a `)` closes. Separators inside a group do not split a part of the list.
+_OPENERS = {"{": "}", "if": "fi", "while": "done", "until": "done", "for": "done", "select": "done", "case": "esac"}
+# Reserved words at the start of a command that are not part of the simple command after them (`then cat x`).
+_LEADING = {"!", "then", "else", "elif", "do"}
 G8_DENY = (
     "G8: the command may write to .claude/settings*.json. A command that names these files passes only when every "
     f"simple command that names them is one {', '.join(sorted(READ_ONLY))} command without redirections or "
@@ -160,6 +160,7 @@ _MAX_NESTING = 100  # deeper $…, <(…) and >(…) nesting cannot be parsed
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ARRAY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")  # NAME= or NAME+= before the `(` of an array
 _PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9!@#?$*-]")  # $name, $1, $!, $$ …
+_UNDERSCORE_BRACE = re.compile(r"\$\{[#!]?_(?![A-Za-z0-9_])")  # ${_}, ${_:-x}, ${#_}, ${!_}; not ${_x}
 _NAMED_FD = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")  # {fd}>file: bash puts the new fd number in $fd
 _ANSI = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
          "\\": "\\", "'": "'", '"': '"', "?": "?"}
@@ -178,6 +179,7 @@ class _Lexer:
         self.case_anywhere = case_anywhere
         self.arrays = arrays
         self.underscore = False  # bash expands $_, ${_} or ${_…} somewhere in the text it read
+        self.plain: set[int] = set()  # positions of the unquoted words without substitutions in the top-level tokens
 
     def join(self, i: int) -> None:
         """Remove the line continuations (backslash-newline) inside the token that starts at i.
@@ -220,6 +222,8 @@ class _Lexer:
                     heredocs.append((value, toks[-1][1] == "<<-", quoted))
                 toks.append(("w", value, tuple(subs)))
                 plain = not quoted and not subs
+                if plain and not sub:
+                    self.plain.add(len(toks) - 1)
                 state = cases[-1][0] if cases else None
                 if state == "word":  # case WORD
                     cases[-1][0] = "in"
@@ -392,7 +396,7 @@ class _Lexer:
         part: list[str] = []
         if t.startswith("${", i):
             j = self.brace(i, part, subs, dq)
-            self.underscore = self.underscore or t.startswith("${_", i)
+            self.underscore = self.underscore or bool(_UNDERSCORE_BRACE.match(t, i))
         elif m := _PARAMETER.match(t, i + 1):  # $$ is the process id, so a quote after it is a plain quote
             j = m.end()
             part.append(t[i:j])
@@ -774,26 +778,9 @@ def _token_mentions(tok: tuple, depth: int = 0) -> bool:
     return False
 
 
-def _command(cmd: list[tuple]) -> list[tuple]:
-    """The simple command without the reserved words before it ({ ! if then else elif do while until),
-    so `then cat x` is the command `cat x`."""
-    k = 0
-    while k < len(cmd) and cmd[k][0] == "w" and cmd[k][1] in _RESERVED_WORDS - {"}"}:
-        k += 1
-    return cmd[k:]
-
-
 def _read_only(cmd: list[tuple]) -> bool:
     """One cat, grep, head, jq, ls, tail or wc command without redirections or substitutions."""
-    cmd = _command(cmd)
     return bool(cmd) and all(tok[0] == "w" and not tok[2] for tok in cmd) and cmd[0][1] in READ_ONLY
-
-
-def _closer(cmd: list[tuple]) -> bool:
-    """The end of a group or a compound command (`}`, `fi`, `done`, `esac`, or what follows a `)`),
-    with its redirections. False for a simple command."""
-    cmd = _command(cmd)
-    return bool(cmd) and (cmd[0][0] == "redir" or (cmd[0][0] == "w" and cmd[0][1] in _CLOSERS))
 
 
 def _expands_underscore(text: str, depth: int = 0) -> bool:
@@ -830,51 +817,109 @@ def g8(command: str) -> str | None:
     character) passes only when (a) every simple command whose words, redirection targets or
     substitutions mention one is a read-only command (_read_only), (b) every part between the
     separators ; && || & and newline that holds a mention and a pipe has only read-only commands,
-    (c) no simple command is a runner, and (d) bash expands no $_. Reserved words before a simple
-    command (`then cat x`) are not part of it. A redirection after the end of a group or a compound
-    command (`} > x`, `fi > x`, `) > x`) denies a command with a mention. The text of a here-document body is a
+    (c) no simple command is a runner, and (d) bash expands no $_.
+
+    Only separators outside a group or a compound command ({ }, ( ), if, while, until, for, select,
+    case) split parts: a group can pass data on from a part before a separator into a pipe after it.
+    Reserved words count only where bash reads them (unquoted, at the start of a command), and are
+    not part of the simple command after them (`then cat x` is `cat x`). A redirection after the end
+    of a group that holds a mention (`} > x`, `fi > x`, `) > x`) denies the command. A function
+    definition or a coproc makes the whole command one part. The text of a here-document body is a
     mention only when the command has a pipe or a runner; the substitutions of an unquoted body always
     count, for the command that reads the body. A command the tokenizer cannot read is denied when its
     text mentions a protected file."""
+    lexer = _Lexer(command)
     try:
-        toks = _lex(command)
-    except ValueError:
+        toks = lexer.script(0, sub=False)[0]
+    except (ValueError, RecursionError):
         return G8_DENY if _raw_mentions(command) else None
-    cmds: list[list[tuple]] = [[]]
+    cmds: list[list[tuple]] = [[]]  # the simple commands, without the reserved words around them
     part_of = [0]  # the part of each simple command
     own = [False]  # its words, redirection targets or substitutions (also of its bodies) mention a file
     body = [False]  # the text of one of its here-document bodies mentions a file
     readers: list[int] = []  # the simple command of each here-document, in order
     pipe_parts: set[int] = set()
+    # Open groups: [closing word or ")", first simple command, case state]. The case state is "word"
+    # (before `in`), "start" (where a pattern or `esac` can stand), "pattern" (up to its `)`) or "body".
+    stack: list[list] = []
+    closed: list[tuple[int, int]] = []  # each closed group: (first simple command, the one with its end)
     grouped = orphan = False
-    part, prev = 0, None
-    for tok in toks:
+    part, prev, at_command = 0, None, True
+
+    def new_command() -> None:
+        cmds.append([])
+        part_of.append(part)
+        own.append(False)
+        body.append(False)
+
+    for k, tok in enumerate(toks):
+        top = stack[-1] if stack else None
+        case = top[2] if top and top[0] == "esac" else None
         if tok[0] == "op":
-            if tok[1] in _PART_SEPARATORS:
-                part += 1
-            elif tok[1] in _PIPES:
+            op = tok[1]
+            if case == "pattern" or (case == "start" and op == "("):
+                if op == ")":  # the end of the pattern; a command follows
+                    top[2] = "body"
+                    new_command()
+                    at_command = True
+                else:  # `(` before and `|` between the words of a pattern
+                    top[2] = "pattern"
+                prev = tok
+                continue
+            if op in _PART_SEPARATORS:
+                if not stack:
+                    part += 1
+                if case == "body" and op in _CASE_NEXT:
+                    top[2] = "start"
+            elif op in _PIPES:
                 pipe_parts.add(part)
-            else:
-                grouped = True  # ( ) (( or a case pattern
-            cmds.append([])
-            part_of.append(part)
-            own.append(False)
-            body.append(False)
+            elif op == "(":
+                stack.append([")", len(cmds), None])
+            elif op == ")":
+                if prev == ("op", "("):
+                    grouped = True  # name ( ) defines a function
+                if top and top[0] == ")":
+                    stack.pop()
+                    closed.append((top[1], len(cmds)))
+            new_command()
+            at_command = True
         elif tok[0] == "body":
             subs_mention = any(_text_mentions(s) for s in tok[2])
             if not readers:
                 orphan = orphan or subs_mention or _raw_mentions(tok[1])
-                continue
-            k = readers.pop(0)
-            own[k] = own[k] or subs_mention
-            body[k] = body[k] or _raw_mentions(tok[1])
+            else:
+                i = readers.pop(0)
+                own[i] = own[i] or subs_mention
+                body[i] = body[i] or _raw_mentions(tok[1])
         else:
-            if tok[0] == "w":
-                if prev in (("redir", "<<"), ("redir", "<<-")):
-                    readers.append(len(cmds) - 1)
-                own[-1] = own[-1] or _token_mentions(tok)
-                if not cmds[-1] and tok[1] in _COMPOUND:
+            word = tok[1] if tok[0] == "w" and k in lexer.plain else None  # an unquoted word
+            if tok[0] == "w" and prev in (("redir", "<<"), ("redir", "<<-")):
+                readers.append(len(cmds) - 1)
+            keyword = at_command and case not in ("word", "pattern")
+            if case == "word" and word == "in":
+                top[2] = "start"
+            elif case == "start":  # `esac` here ends the case, any other word starts a pattern
+                keyword = word == "esac"
+                if not keyword:
+                    top[2] = "pattern"
+            if keyword and word is not None and top and word == top[0]:
+                stack.pop()
+                closed.append((top[1], len(cmds) - 1))
+                at_command = False
+                prev = tok
+                continue
+            if keyword and (word in _OPENERS or word in _LEADING):
+                if word in _OPENERS:
+                    stack.append([_OPENERS[word], len(cmds) - 1, "word" if word == "case" else None])
+                at_command = word in _COMMAND_FOLLOWS
+                if word not in ("for", "select", "case"):
+                    prev = tok
+                    continue
+            else:
+                if keyword and word in ("function", "coproc"):
                     grouped = True
+                at_command = keyword and word == "time"
+            own[-1] = own[-1] or _token_mentions(tok)
             cmds[-1].append(tok)
         prev = tok
     piped = bool(pipe_parts)
@@ -886,15 +931,15 @@ def g8(command: str) -> str | None:
         return G8_DENY
     if any(o and not _read_only(c) for o, c in zip(own, cmds)):
         return G8_DENY
-    if any(_closer(c) and any(t[0] == "redir" for t in c) for c in cmds):
-        return G8_DENY  # the output of a group with a mention goes to a file
-    if grouped:  # a group or a subshell can pass data on across a separator: read it as one part
+    for first, end in closed:
+        if any(t[0] == "redir" for t in cmds[end]) and any(mentioned[first:end + 1]):
+            return G8_DENY  # the output of a group with a mention goes to a file
+    if grouped:  # a function or a coproc can pass data on across a separator: read it as one part
         part_of = [0] * len(cmds)
         pipe_parts = {0} if piped else set()
     for p in pipe_parts:
         members = [i for i in range(len(cmds)) if part_of[i] == p]
-        rest = [c for i in members if (c := _command(cmds[i])) and not (len(c) == 1 and c[0][1] in _CLOSERS)]
-        if any(mentioned[i] for i in members) and not all(_read_only(c) for c in rest):
+        if any(mentioned[i] for i in members) and not all(_read_only(cmds[i]) for i in members if cmds[i]):
             return G8_DENY
     return None
 
