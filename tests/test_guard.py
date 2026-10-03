@@ -472,6 +472,47 @@ def test_read_only_parts_and_here_document_bodies_pass_g8(cmd):
     assert classify(bash(cmd)) is None
 
 
+# QA FAIL on #86, attempt 1: a reserved word before a read-only command, and a `$_` that is not expanded.
+@pytest.mark.parametrize("cmd", [
+    f"if true; then cat {SETFILE}; fi",
+    f"if true\nthen\n  cat {SETFILE}\nfi",
+    f"if grep -q x {SETFILE}; then echo yes; else ls {HOOKSGLOB}; fi",
+    f"while false; do cat {SETFILE}; done",
+    f"{{ cat {SETFILE}; }}",
+    f"! grep -q x {SETFILE}",
+    f"{{ cat {SETFILE}; }} | wc -l",
+    f"ls {SETFILE}; cat '$_'",
+    f"ls {SETFILE}; cat \\$_",
+    f"ls {SETFILE}; cat '${{_}}'",
+    f"ls {SETFILE}; echo $'$_'",
+    f"cat > /tmp/x <<'EOF'\n{SETFILE} $_\nEOF",
+])
+def test_reserved_words_and_unexpanded_underscore_pass_g8(cmd):
+    assert guard.g8(cmd) is None
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    # the reserved word is stripped, the rest of the rule still holds
+    f"if true; then cp x {SETFILE}; fi",
+    f"while read f; do cat {SETFILE}; done < /tmp/x",
+    f"while read f; do cat x; done < {SETFILE}",
+    f"for f in {SETFILE}; do cat x; done",
+    f"if true; then cat {SETFILE}; fi > /tmp/x",
+    f"{{ cat {SETFILE}; }} > /tmp/x",
+    f"(cat {SETFILE}) > /tmp/x",
+    f"time cat {SETFILE}",
+    # `$_` that bash expands: in double quotes, in a substitution, in backticks, in an unquoted body
+    f'ls {SETFILE}; cat "$_"',
+    f"ls {SETFILE}; echo $(echo $_)",
+    f"ls {SETFILE}; echo `echo $_`",
+    f"ls {SETFILE}; cat <<EOF > /tmp/x\n$_\nEOF",
+    f"ls {SETFILE}; echo $((${{_}} + 1))",
+])
+def test_reserved_words_and_expanded_underscore_still_deny_g8(cmd):
+    assert denied(bash(cmd)).startswith("G8:")
+
+
 @pytest.mark.parametrize("cmd", [
     f'ls {SETFILE}; cp x "$_"',
     f"ls {SETFILE}; cp x ${{_}}",

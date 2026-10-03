@@ -119,7 +119,8 @@ _PIPES = {"|", "|&"}
 # First words of a group or a compound command: data can flow from a part before a separator into a pipe after it.
 _COMPOUND = {"{", "}", "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
              "done", "function", "coproc"}
-_UNDERSCORE = re.compile(r"\$(?:_(?![A-Za-z0-9_])|\{_)")  # $_, ${_} and ${_…}: the last argument of the command before
+# Words that end a group or a compound command. A redirection after them takes the output of the whole group.
+_CLOSERS = {"}", "fi", "done", "esac"}
 G8_DENY = (
     "G8: the command may write to .claude/settings*.json. A command that names these files passes only when every "
     f"simple command that names them is one {', '.join(sorted(READ_ONLY))} command without redirections or "
@@ -176,6 +177,7 @@ class _Lexer:
         self.level = 0  # nesting of $…, <(…) and >(…)
         self.case_anywhere = case_anywhere
         self.arrays = arrays
+        self.underscore = False  # bash expands $_, ${_} or ${_…} somewhere in the text it read
 
     def join(self, i: int) -> None:
         """Remove the line continuations (backslash-newline) inside the token that starts at i.
@@ -289,7 +291,9 @@ class _Lexer:
                     i, body = self.heredoc(i, delim, strip, joined=not q)
                     body_subs: list[str] = []
                     if not q:
-                        _Lexer(body, self.case_anywhere, self.arrays).double(0, [], body_subs, None)
+                        body_lexer = _Lexer(body, self.case_anywhere, self.arrays)
+                        body_lexer.double(0, [], body_subs, None)
+                        self.underscore = self.underscore or body_lexer.underscore
                     toks.append(("body", body, tuple(body_subs)))
                 heredocs = []
             elif c == "\\":
@@ -388,9 +392,11 @@ class _Lexer:
         part: list[str] = []
         if t.startswith("${", i):
             j = self.brace(i, part, subs, dq)
+            self.underscore = self.underscore or t.startswith("${_", i)
         elif m := _PARAMETER.match(t, i + 1):  # $$ is the process id, so a quote after it is a plain quote
             j = m.end()
             part.append(t[i:j])
+            self.underscore = self.underscore or m.group() == "_"
         else:
             j = self.expression(i, part, subs)
         if not part:
@@ -768,9 +774,41 @@ def _token_mentions(tok: tuple, depth: int = 0) -> bool:
     return False
 
 
+def _command(cmd: list[tuple]) -> list[tuple]:
+    """The simple command without the reserved words before it ({ ! if then else elif do while until),
+    so `then cat x` is the command `cat x`."""
+    k = 0
+    while k < len(cmd) and cmd[k][0] == "w" and cmd[k][1] in _RESERVED_WORDS - {"}"}:
+        k += 1
+    return cmd[k:]
+
+
 def _read_only(cmd: list[tuple]) -> bool:
     """One cat, grep, head, jq, ls, tail or wc command without redirections or substitutions."""
+    cmd = _command(cmd)
     return bool(cmd) and all(tok[0] == "w" and not tok[2] for tok in cmd) and cmd[0][1] in READ_ONLY
+
+
+def _closer(cmd: list[tuple]) -> bool:
+    """The end of a group or a compound command (`}`, `fi`, `done`, `esac`, or what follows a `)`),
+    with its redirections. False for a simple command."""
+    cmd = _command(cmd)
+    return bool(cmd) and (cmd[0][0] == "redir" or (cmd[0][0] == "w" and cmd[0][1] in _CLOSERS))
+
+
+def _expands_underscore(text: str, depth: int = 0) -> bool:
+    """Bash expands $_, ${_} or ${_…} (the last argument of the command before) somewhere in the text:
+    not in single quotes, $'…', a quoted here-document or after a backslash. Substitutions count,
+    also backticks. True when the text cannot be read."""
+    if depth > _MAX_NESTING:
+        return True
+    lexer = _Lexer(text)
+    try:
+        toks = lexer.script(0, sub=False)[0]
+    except (ValueError, RecursionError):
+        return True
+    return lexer.underscore or any(_expands_underscore(s, depth + 1)
+                                   for tok in toks if tok[0] in ("w", "body") for s in tok[2])
 
 
 def _has_runner(command: str) -> bool:
@@ -792,7 +830,9 @@ def g8(command: str) -> str | None:
     character) passes only when (a) every simple command whose words, redirection targets or
     substitutions mention one is a read-only command (_read_only), (b) every part between the
     separators ; && || & and newline that holds a mention and a pipe has only read-only commands,
-    (c) no simple command is a runner, and (d) no word uses $_. The text of a here-document body is a
+    (c) no simple command is a runner, and (d) bash expands no $_. Reserved words before a simple
+    command (`then cat x`) are not part of it. A redirection after the end of a group or a compound
+    command (`} > x`, `fi > x`, `) > x`) denies a command with a mention. The text of a here-document body is a
     mention only when the command has a pipe or a runner; the substitutions of an unquoted body always
     count, for the command that reads the body. A command the tokenizer cannot read is denied when its
     text mentions a protected file."""
@@ -806,7 +846,7 @@ def g8(command: str) -> str | None:
     body = [False]  # the text of one of its here-document bodies mentions a file
     readers: list[int] = []  # the simple command of each here-document, in order
     pipe_parts: set[int] = set()
-    grouped = underscore = orphan = False
+    grouped = orphan = False
     part, prev = 0, None
     for tok in toks:
         if tok[0] == "op":
@@ -822,7 +862,6 @@ def g8(command: str) -> str | None:
             body.append(False)
         elif tok[0] == "body":
             subs_mention = any(_text_mentions(s) for s in tok[2])
-            underscore = underscore or any(_UNDERSCORE.search(s) for s in tok[2])
             if not readers:
                 orphan = orphan or subs_mention or _raw_mentions(tok[1])
                 continue
@@ -834,7 +873,6 @@ def g8(command: str) -> str | None:
                 if prev in (("redir", "<<"), ("redir", "<<-")):
                     readers.append(len(cmds) - 1)
                 own[-1] = own[-1] or _token_mentions(tok)
-                underscore = underscore or bool(_UNDERSCORE.search(tok[1]))
                 if not cmds[-1] and tok[1] in _COMPOUND:
                     grouped = True
             cmds[-1].append(tok)
@@ -844,16 +882,19 @@ def g8(command: str) -> str | None:
     mentioned = [o or (b and body_counts) for o, b in zip(own, body)]
     if not (any(mentioned) or orphan):
         return None
-    if orphan or underscore or _has_runner(command):
+    if orphan or _expands_underscore(command) or _has_runner(command):
         return G8_DENY
     if any(o and not _read_only(c) for o, c in zip(own, cmds)):
         return G8_DENY
+    if any(_closer(c) and any(t[0] == "redir" for t in c) for c in cmds):
+        return G8_DENY  # the output of a group with a mention goes to a file
     if grouped:  # a group or a subshell can pass data on across a separator: read it as one part
         part_of = [0] * len(cmds)
         pipe_parts = {0} if piped else set()
     for p in pipe_parts:
         members = [i for i in range(len(cmds)) if part_of[i] == p]
-        if any(mentioned[i] for i in members) and not all(_read_only(cmds[i]) for i in members if cmds[i]):
+        rest = [c for i in members if (c := _command(cmds[i])) and not (len(c) == 1 and c[0][1] in _CLOSERS)]
+        if any(mentioned[i] for i in members) and not all(_read_only(c) for c in rest):
             return G8_DENY
     return None
 
