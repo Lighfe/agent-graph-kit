@@ -114,6 +114,18 @@ SETTINGS_NAME = re.compile(r"settings[^/\s]*\.json", re.IGNORECASE)
 CLAUDE_GLOB = re.compile(r"\.claude/[^\s'\"]*[*?\[]")
 READ_ONLY = {"cat", "jq", "head", "tail", "grep", "wc", "ls"}
 _NO_BRACES = str.maketrans("", "", "{},")
+_PART_SEPARATORS = {";", "&&", "||", "&", "\n", ";;", ";&", ";;&"}
+_PIPES = {"|", "|&"}
+# First words of a group or a compound command: data can flow from a part before a separator into a pipe after it.
+_COMPOUND = {"{", "}", "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until", "do",
+             "done", "function", "coproc"}
+_UNDERSCORE = re.compile(r"\$(?:_(?![A-Za-z0-9_])|\{_)")  # $_, ${_} and ${_…}: the last argument of the command before
+G8_DENY = (
+    "G8: the command may write to .claude/settings*.json. A command that names these files passes only when every "
+    f"simple command that names them is one {', '.join(sorted(READ_ONLY))} command without redirections or "
+    "substitutions, a pipe in the same part has only such commands, and no runner (bash, xargs, eval …) and no $_ "
+    "is used. Way around: split the command so the parts that name the protected files are read-only commands, "
+    "or use the Read or Grep tool. A here-document body only mentions the files unless a pipe or a runner reads it")
 
 
 class Deny(Exception):
@@ -132,7 +144,8 @@ class Deny(Exception):
 # Tokens: ("w", value, subs) a word, quotes removed, `subs` the texts inside $(…),
 # <(…), >(…), backticks, arithmetic and subscripts (unquoted or in double quotes);
 # ("op", op) a command separator, also "((" before an arithmetic command; ("redir", op)
-# a redirection; ("body", "", subs) the substitutions in an unquoted here-document body.
+# a redirection; ("body", text, subs) a here-document body, one per `<<` or `<<-` in the order of
+# these redirections, with its text and (only in an unquoted body) the substitutions in it.
 # G8 uses it as it is. G1 sets `arrays` (NAME=(…) is one word) and reads once with `case_anywhere`
 # and once without it (`case` is a reserved word only where bash reads one).
 
@@ -274,10 +287,10 @@ class _Lexer:
                 i += 1
                 for delim, strip, q in heredocs:
                     i, body = self.heredoc(i, delim, strip, joined=not q)
+                    body_subs: list[str] = []
                     if not q:
-                        body_subs: list[str] = []
                         _Lexer(body, self.case_anywhere, self.arrays).double(0, [], body_subs, None)
-                        toks.append(("body", "", tuple(body_subs)))
+                    toks.append(("body", body, tuple(body_subs)))
                 heredocs = []
             elif c == "\\":
                 if i + 1 >= n:
@@ -616,21 +629,6 @@ def _lex(command: str, case_anywhere: bool = True, arrays: bool = False) -> list
         raise ValueError("the command is nested too deeply") from None
 
 
-def _simple_commands(toks: list[tuple]) -> tuple[list[list[tuple]], int]:
-    cmds: list[list[tuple]] = []
-    cur: list[tuple] = []
-    ops = 0
-    for tok in toks:
-        if tok[0] == "op":
-            ops += 1
-            cmds.append(cur)
-            cur = []
-        else:
-            cur.append(tok)
-    cmds.append(cur)
-    return [c for c in cmds if c], ops
-
-
 # --- classification -------------------------------------------------------------------
 
 
@@ -737,28 +735,126 @@ def _runs_guarded(command: str) -> bool:
     return "run" in found or (triggered and "runner" in found)
 
 
+def _raw_mentions(text: str) -> bool:
+    return bool(SETTINGS_NAME.search(text) or CLAUDE_GLOB.search(text))
+
+
+def _value_mentions(value: str) -> bool:
+    """A word after quote removal names a protected file, also with braces removed
+    (settings.{json,bak} names settings.json)."""
+    return any(SETTINGS_NAME.search(v) or (".claude/" in v and any(ch in v for ch in "*?["))
+               for v in (value, value.translate(_NO_BRACES)))
+
+
+def _text_mentions(text: str, depth: int = 0) -> bool:
+    """The text of a substitution names a protected file: in its raw text, or in a word inside it
+    (read with the tokenizer, recursively). Here-document bodies inside a substitution count too."""
+    if _raw_mentions(text):
+        return True
+    if depth > _MAX_NESTING:
+        return True
+    try:
+        toks = _lex(text)
+    except ValueError:
+        return False  # the raw text has no mention
+    return any(_token_mentions(tok, depth + 1) for tok in toks)
+
+
+def _token_mentions(tok: tuple, depth: int = 0) -> bool:
+    if tok[0] == "w":
+        return _value_mentions(tok[1]) or any(_text_mentions(s, depth) for s in tok[2])
+    if tok[0] == "body":
+        return _raw_mentions(tok[1]) or any(_text_mentions(s, depth) for s in tok[2])
+    return False
+
+
+def _read_only(cmd: list[tuple]) -> bool:
+    """One cat, grep, head, jq, ls, tail or wc command without redirections or substitutions."""
+    return bool(cmd) and all(tok[0] == "w" and not tok[2] for tok in cmd) and cmd[0][1] in READ_ONLY
+
+
+def _has_runner(command: str) -> bool:
+    """A simple command, also inside a substitution, runs a runner (RUNNER_COMMANDS). True when the
+    command cannot be read this way."""
+    found: set[str] = set()
+    try:
+        for case_anywhere in (True, False):
+            _scan(command, found, case_anywhere)
+    except (ValueError, RecursionError):
+        return True
+    return "runner" in found
+
+
 def g8(command: str) -> str | None:
-    """Deny reason if the command may write to .claude/settings*.json (G8)."""
-    reason = ("G8: the command may write to .claude/settings*.json, expected only one simple "
-              f"{', '.join(sorted(READ_ONLY))} command without operators or redirections")
+    """Deny reason if the command may write to .claude/settings*.json (G8, issue #86).
+
+    A command that mentions a protected file (a settings*.json name or a .claude/ path with a glob
+    character) passes only when (a) every simple command whose words, redirection targets or
+    substitutions mention one is a read-only command (_read_only), (b) every part between the
+    separators ; && || & and newline that holds a mention and a pipe has only read-only commands,
+    (c) no simple command is a runner, and (d) no word uses $_. The text of a here-document body is a
+    mention only when the command has a pipe or a runner; the substitutions of an unquoted body always
+    count, for the command that reads the body. A command the tokenizer cannot read is denied when its
+    text mentions a protected file."""
     try:
         toks = _lex(command)
     except ValueError:
-        toks = None
-    values = [tok[1] for tok in toks or () if tok[0] == "w"]  # quotes removed
-    values += [v.translate(_NO_BRACES) for v in values if "{" in v]  # settings.{json,bak} names settings.json
-    mentions = SETTINGS_NAME.search(command) or CLAUDE_GLOB.search(command) or any(
-        SETTINGS_NAME.search(v) or (".claude/" in v and any(ch in v for ch in "*?[")) for v in values)
-    if not mentions:
+        return G8_DENY if _raw_mentions(command) else None
+    cmds: list[list[tuple]] = [[]]
+    part_of = [0]  # the part of each simple command
+    own = [False]  # its words, redirection targets or substitutions (also of its bodies) mention a file
+    body = [False]  # the text of one of its here-document bodies mentions a file
+    readers: list[int] = []  # the simple command of each here-document, in order
+    pipe_parts: set[int] = set()
+    grouped = underscore = orphan = False
+    part, prev = 0, None
+    for tok in toks:
+        if tok[0] == "op":
+            if tok[1] in _PART_SEPARATORS:
+                part += 1
+            elif tok[1] in _PIPES:
+                pipe_parts.add(part)
+            else:
+                grouped = True  # ( ) (( or a case pattern
+            cmds.append([])
+            part_of.append(part)
+            own.append(False)
+            body.append(False)
+        elif tok[0] == "body":
+            subs_mention = any(_text_mentions(s) for s in tok[2])
+            underscore = underscore or any(_UNDERSCORE.search(s) for s in tok[2])
+            if not readers:
+                orphan = orphan or subs_mention or _raw_mentions(tok[1])
+                continue
+            k = readers.pop(0)
+            own[k] = own[k] or subs_mention
+            body[k] = body[k] or _raw_mentions(tok[1])
+        else:
+            if tok[0] == "w":
+                if prev in (("redir", "<<"), ("redir", "<<-")):
+                    readers.append(len(cmds) - 1)
+                own[-1] = own[-1] or _token_mentions(tok)
+                underscore = underscore or bool(_UNDERSCORE.search(tok[1]))
+                if not cmds[-1] and tok[1] in _COMPOUND:
+                    grouped = True
+            cmds[-1].append(tok)
+        prev = tok
+    piped = bool(pipe_parts)
+    body_counts = any(body) and (piped or _has_runner(command))
+    mentioned = [o or (b and body_counts) for o, b in zip(own, body)]
+    if not (any(mentioned) or orphan):
         return None
-    if toks is None:
-        return reason
-    cmds, ops = _simple_commands(toks)
-    if ops or len(cmds) != 1:
-        return reason
-    cmd = cmds[0]
-    if any(tok[0] != "w" or tok[2] for tok in cmd) or cmd[0][1] not in READ_ONLY:
-        return reason
+    if orphan or underscore or _has_runner(command):
+        return G8_DENY
+    if any(o and not _read_only(c) for o, c in zip(own, cmds)):
+        return G8_DENY
+    if grouped:  # a group or a subshell can pass data on across a separator: read it as one part
+        part_of = [0] * len(cmds)
+        pipe_parts = {0} if piped else set()
+    for p in pipe_parts:
+        members = [i for i in range(len(cmds)) if part_of[i] == p]
+        if any(mentioned[i] for i in members) and not all(_read_only(cmds[i]) for i in members if cmds[i]):
+            return G8_DENY
     return None
 
 

@@ -450,6 +450,72 @@ def test_g8_runs_before_the_trigger_rule():
     assert denied(bash("cp scripts/qa-codex .claude/settings.json")).startswith("G8:")
 
 
+# Issue #86: read-only parts in a list, and here-document bodies that only mention the files.
+SETFILE = ".claude/settings.local.json"
+HOOKSGLOB = ".claude/hooks/*.py"
+NAMING_BODY = f"Do not edit {SETFILE} or {HOOKSGLOB} by hand.\nThe hooks in {HOOKSGLOB} stay.\n"
+
+
+@pytest.mark.parametrize("cmd", [
+    f"gh issue view 86 --jq .title; grep -n G8 {HOOKSGLOB}",
+    f"grep -n g8 {HOOKSGLOB} | head; sed -n 1,5p docs/specs/agent-graph-kit.md",
+    f"grep -n x {HOOKSGLOB} && wc -l docs/process.md",
+    f"ls {HOOKSGLOB} | wc -l",
+    f"cat {SETFILE} | jq .",
+    f"cat > /tmp/pm-86-attempt1.md <<'EOF'\n## PM: GROOMED\n\n{NAMING_BODY}EOF",
+    f"cat > /tmp/pm-86-attempt1.md <<EOF\n## PM: GROOMED\n\n{NAMING_BODY}EOF",
+    f"cat > /tmp/pm-86-attempt1.md <<'EOF'\n{NAMING_BODY}EOF\n",
+    f"cat > /tmp/pm-86-attempt1.md <<-EOF\n\t{NAMING_BODY}\tEOF",
+])
+def test_read_only_parts_and_here_document_bodies_pass_g8(cmd):
+    assert guard.g8(cmd) is None
+    assert classify(bash(cmd)) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    f'ls {SETFILE}; cp x "$_"',
+    f"ls {SETFILE}; cp x ${{_}}",
+    f"ls {SETFILE}; cp x ${{_%.json}}.json",
+    f'ls {SETFILE} | while read f; do cp x "$f"; done',
+    f"ls {SETFILE} | xargs cp x",
+    f"ls {SETFILE} | tee /tmp/x",
+    f"ls {SETFILE} |& tee /tmp/x",
+    f"ls {SETFILE} > /tmp/x",
+    f"cat {SETFILE}; cp x {SETFILE}",
+    "cd .claude && cp x settings.local.json",
+    f"cat <<'EOF' | sh\ncp x {SETFILE}\nEOF",
+    f"bash <<'EOF'\ncp x {SETFILE}\nEOF",
+    f"cat > {SETFILE} <<'EOF'\n{{}}\nEOF",
+    f"cat <<EOF > /tmp/x\n$(cp x {SETFILE})\nEOF",
+    f"ls {HOOKSGLOB}; cat $(echo {SETFILE})",
+    # data passed on from a mention through a group or a subshell into a pipe
+    f"{{ ls {SETFILE}; }} | tee /tmp/x",
+    f"(ls {SETFILE}; true) | tee /tmp/x",
+    f"if true; then ls {SETFILE}; fi | tee /tmp/x",
+    # a runner anywhere, also inside a substitution
+    f"ls {SETFILE}; xargs cp x < /tmp/list",
+    f"ls {SETFILE}; echo $(bash -c true)",
+    f"ls {SETFILE}; f=$(ls {SETFILE}); cp x $f",
+    f"/bin/ls {SETFILE}; true",
+    # a here-document body that a pipe or a runner reads
+    f"cat <<'EOF' | tee /tmp/x\n{SETFILE}\nEOF",
+    f"python3 - <<'EOF'\nopen('{SETFILE}', 'w')\nEOF",
+])
+def test_g8_still_denies_what_may_write(cmd):
+    assert denied(bash(cmd)).startswith("G8:")
+
+
+def test_g8_message_names_the_way_around():
+    reason = denied(bash(f"cat {SETFILE}; cp x {SETFILE}"))
+    assert "split the command so the parts that name the protected files are read-only commands" in reason
+    assert "use the Read or Grep tool" in reason
+
+
+def test_cannot_be_read_with_a_mention_is_denied_with_g8():
+    assert denied(bash(f"ls {HOOKSGLOB}; echo 'unterminated")).startswith("G8:")
+    assert classify(bash("ls docs; echo ok")) is None
+
+
 # --- comment commands (the comment-form check removed in issue #90) -------------------------------------------
 # A comment command is not checked for its form any more. It is not a guarded call,
 # so it passes unless G8 or the G1 trigger rule denies it. Nothing is read or posted.
