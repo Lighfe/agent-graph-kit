@@ -24,7 +24,8 @@ MARKERS: dict[str, tuple[str, ...]] = {
     "qa": ("## QA: PASS", "## QA: FAIL", "## QA: UNAVAILABLE", "## QA: INVALID", "## QA: UNVERIFIABLE"),
     "planner": ("## Planner: STAGE REVIEW",),  # issue #99: one comment, then the planner ends
 }
-RESUME = "## Owner: RESUME"
+RESUME = "## Owner: RESUME"  # the canonical marker; deny messages name exactly this line
+_RESUME_KEY = RESUME.casefold()
 # The only authorAssociation whose comments count (issue #70). Organization-owned repos are not supported yet.
 OWNER = "OWNER"
 AGENT_LANE = {"default": "software-engineer", "frontend": "frontend-engineer"}
@@ -163,6 +164,13 @@ def parse_issue(data: dict) -> Issue:
 
 def first_line(body: str) -> str:
     return body.split("\n", 1)[0].rstrip()
+
+
+def is_resume(line: str) -> bool:
+    """The resume match (issue #131): the first line is the owner's resume marker when, with
+    whitespace runs as one space, leading and trailing whitespace removed and case ignored, it is
+    `## Owner: RESUME`. Only this marker is matched loosely; all other markers match exactly."""
+    return " ".join(line.split()).casefold() == _RESUME_KEY
 
 
 def evidence_line(reason: str) -> str:
@@ -383,20 +391,22 @@ def is_pending(issue: Issue) -> bool:
     if j is None:
         return False
     role = _launch_role(lines[j])
-    return not any(line == RESUME or _result_role(line) == role for line in lines[j + 1:])
+    return not any(is_resume(line) or _result_role(line) == role for line in lines[j + 1:])
 
 
 def current_result(issue: Issue) -> tuple[int, str] | None:
     lines = _lines(issue)
     for i in range(len(lines) - 1, -1, -1):
-        if lines[i] == RESUME or _valid(lines, i):
+        if is_resume(lines[i]):
+            return i, RESUME  # the canonical marker also for a variant line, so G2 compares it
+        if _valid(lines, i):
             return i, lines[i]
     return None
 
 
 def returns_since_resume(issue: Issue) -> int:
     lines = _lines(issue)
-    resumes = [i for i, line in enumerate(lines) if line == RESUME]
+    resumes = [i for i, line in enumerate(lines) if is_resume(line)]
     start = resumes[-1] + 1 if resumes else 0
     count = 0
     for i in range(start, len(lines)):
@@ -441,7 +451,7 @@ def _void_comment(issue: Issue, head: str, role: str | None, reason: str,
     receipt_role = _launch_role(raw[j])
     if role is not None and receipt_role != role:
         return None
-    if any(line == RESUME or _result_role(line) == receipt_role for line in raw[j + 1:]):
+    if any(is_resume(line) or _result_role(line) == receipt_role for line in raw[j + 1:]):
         return None
     key = raw[j][len("## Launch: "):]
     text = evidence_line(reason) if verbatim else first_line(reason)[:REASON_MAX]
@@ -470,7 +480,7 @@ def _two_not_started(issue: Issue) -> bool:
     receipts = [i for i, line in enumerate(raw) if _launch_role(line)]
     if len(receipts) < 2 or not set(receipts[-2:]) <= _not_started(issue):
         return False
-    return not any(line == RESUME or _result_role(line) for line in raw[receipts[-2] + 1:])
+    return not any(is_resume(line) or _result_role(line) for line in raw[receipts[-2] + 1:])
 
 
 # --- checks (docs/specs/agent-graph-kit.md#checks) ---------------------------------------

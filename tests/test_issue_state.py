@@ -1837,3 +1837,92 @@ def test_role_launches_and_stage_close_are_unchanged_by_a_planner_result():
         msg = check(call, facts(iss))
         assert msg.startswith("G1:") and "ready" in msg, msg
     assert check(CLOSE, stage_facts(iss, subs=(s(3),))) is None
+
+
+# --- the resume match (issue #131) -------------------------------------------
+# A first line is the owner's resume marker when " ".join(line.split()).casefold() == "## owner: resume".
+
+from issue_state import is_resume  # noqa: E402
+
+RESUME_COUNTS = [
+    "## Owner: RESUME",  # exact line
+    "## OWNER: RESUME",  # upper case
+    "## OWNER: Resume", "## owner: resume",  # mixed and lower case
+    "##  Owner:  RESUME ", "   ## Owner: RESUME", "##\tOwner: RESUME\r",  # spaces, leading, tab, CRLF
+]
+RESUME_DOES_NOT_COUNT = [
+    "## Owner: RESUME later",  # trailing text
+    "Owner: RESUME", "# Owner: RESUME",  # missing or short ##
+    "##Owner: RESUME", "## Owner:RESUME",  # a missing space is not extra whitespace
+]
+
+
+def _needs_owner_then(line):
+    return issue(launch("pm"), "## PM: NEEDS OWNER", line + "\nplease go on")
+
+
+@pytest.mark.parametrize("line", RESUME_COUNTS)
+def test_resume_variant_counts(line):
+    assert is_resume(line)
+    pending = issue(launch("engineer"), line + "\nnote")
+    assert not is_pending(pending)
+    assert current_result(pending) == (1, RESUME)
+    assert check(PM, facts(_needs_owner_then(line))) is None  # G2 passes
+    after = issue(*_three_owner_returns(), line)
+    assert returns_since_resume(after) == 0
+    assert check(PM, facts(after)) is None  # G7 count reset
+
+
+@pytest.mark.parametrize("line", RESUME_DOES_NOT_COUNT)
+def test_resume_non_match_does_not_count(line):
+    assert not is_resume(line)
+    pending = issue(launch("engineer"), line + "\nnote")
+    assert is_pending(pending)
+    assert current_result(pending) is None
+    assert check(PM, facts(_needs_owner_then(line))).startswith("G2:")
+    after = issue(*_three_owner_returns(), line)
+    assert returns_since_resume(after) == 3
+    assert check(PM, facts(after)).startswith("G7:")
+
+
+def test_resume_variant_by_a_stranger_is_ignored():
+    base = (launch("pm"), "## PM: NEEDS OWNER")
+    assert check(PM, facts(parse_issue(gh_issue(*base, stranger("## OWNER: Resume", "CONTRIBUTOR"))))).startswith("G2:")
+    iss = parse_issue(gh_issue(*_three_owner_returns(), stranger("## OWNER: Resume", "CONTRIBUTOR")))
+    assert returns_since_resume(iss) == 3
+    assert check(PM, facts(iss)).startswith("G7:")
+
+
+@pytest.mark.parametrize("line", RESUME_COUNTS)
+def test_resume_variant_stops_not_started_and_outage_stop_comments(line):
+    iss = issue(launch("pm", call=X), line)
+    assert not_started_comment(iss, X, "Classifier unavailable") is None
+    assert outage_stop_comment(iss, "pm", "Classifier unavailable") is None
+    control = issue(launch("pm", call=X), "note")
+    assert not_started_comment(control, X, "Classifier unavailable") is not None
+    assert outage_stop_comment(control, "pm", "Classifier unavailable") is not None
+
+
+@pytest.mark.parametrize("line", RESUME_COUNTS)
+def test_resume_variant_after_two_voided_receipts_lets_g1_pass(line):
+    assert check(PM, facts(issue(*two_not_started().comments, line))) is None
+
+
+@pytest.mark.parametrize("line", RESUME_DOES_NOT_COUNT)
+def test_non_match_after_two_voided_receipts_keeps_g1_deny(line):
+    msg = check(PM, facts(issue(*two_not_started().comments, line)))
+    assert msg.startswith("G1: issue #7: the last 2 launches")
+
+
+def test_deny_messages_name_the_exact_resume_line():
+    assert RESUME == "## Owner: RESUME"
+    assert RESUME in check(PM, facts(two_not_started()))
+    assert RESUME in check(PM, facts(issue(launch("engineer"))))  # G1 pending
+    assert RESUME in check(PM, facts(issue(launch("pm"), "## PM: NEEDS OWNER")))  # G2
+    assert RESUME in check(PM, facts(issue(*_three_owner_returns())))  # G7
+
+
+def test_other_markers_keep_their_exact_match():
+    assert current_result(issue(launch("pm"), "## pm: groomed")) is None
+    assert current_result(issue(launch("qa"), "##  QA:  PASS")) is None
+    assert is_pending(issue("## launch: pm (attempt 1)\nAgent: pm")) is False

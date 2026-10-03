@@ -1236,6 +1236,22 @@ def test_stranger_resume_does_not_resume_through_the_guard(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+def test_stranger_resume_variant_does_not_resume_through_the_guard(env):
+    # issue #131: the resume match ignores case and extra whitespace, but only for the owner
+    write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: NEEDS OWNER"),
+                       {"body": "## OWNER: Resume", "authorAssociation": "CONTRIBUTOR"})
+    code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
+    assert code == 0 and deny_reason(out).startswith("G2:")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_owner_resume_variant_resumes_through_the_guard(env):
+    write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: NEEDS OWNER"),
+                       owner("## OWNER: Resume"))
+    assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[0] == 0
+    assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 2)\nAgent: pm"}]
+
+
 def test_stranger_pass_does_not_close_through_the_guard(env):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: GROOMED"),
                        owner(launch("engineer")), owner("## Engineer: DONE\nCommits: a..b"),

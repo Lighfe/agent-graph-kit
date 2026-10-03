@@ -209,13 +209,25 @@ Do not work around a deny in any other way.
 
 ## Escalate an issue
 
-1. Write a comment on the issue: what is blocked, what you tried, and what you need from the owner.
+1. Write a comment on the issue: what is blocked, what you tried, and what you need from the owner. End the comment with the exact line the owner posts to resume, in a fenced block the owner can copy, and the label changes the owner makes. For a task issue:
+
+   ````
+   To resume, post a comment whose first line is:
+
+   ```
+   ## Owner: RESUME
+   ```
+
+   Then remove the label `needs-owner` and add the label `ready`.
+   ````
+
+   For a stage issue, the last sentence is: remove the label `needs-owner` and do not add `ready`. The escalation comment's own first line is never the marker: never post a comment whose first line passes the resume match (see "Valid result, pending and current result" in `docs/specs/agent-graph-kit.md`), so start the comment with another line, for example `Escalated: the PM asks for an owner decision`.
 2. Remove the label `ready` and add the label `needs-owner`.
 3. Continue with the next issue (see "Before each issue").
 
 Escalate a stage issue (label `stage`) the same way, with two differences: add the label `needs-owner`, but do not add or remove `ready` (a stage issue never has `ready`), and stop the loop instead of continuing with the next issue.
 
-The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. On a stage issue, the owner removes `needs-owner` and does not add `ready`. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
+The owner answers on the issue with a comment whose first line is `## Owner: RESUME` (the hooks accept it with another letter case or extra whitespace, the resume match), removes `needs-owner`, and adds `ready` again. On a stage issue, the owner removes `needs-owner` and does not add `ready`. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
 
 Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command, with the body file path and the read-back of "Body files" below.
 

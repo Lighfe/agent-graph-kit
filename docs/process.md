@@ -140,6 +140,7 @@ The details are in "Stage end" in `docs/team/orchestrator.md`.
 - Agents post issue comments only with `gh issue comment <n> --body-file <literal path>` as the whole command, with the body written to a file with a literal absolute path first. Each body gets its own path: `/tmp/<role>-<issue>-attempt<n>.md` for a launched role, where `<n>` is the number of its newest `## Launch: <role> (…)` receipt on the issue, and `/tmp/<role>-<issue>-<UTC time>.md` (time from `date -u +%Y%m%dT%H%M%S`) for the orchestrator and the planner in the main session, which have no receipt. The agent writes the file fresh, reads it back with `cat <path>` as its own call right before the post, and posts only when the first line is the intended one and no placeholder text is left. The same holds for bodies passed with `--body-file` to `gh issue create` and `gh issue edit`. The details are in "Body files" of each role file in `docs/team/`. This is a rule, not a check: the guard check G9 that denied other forms was removed ([#90](https://github.com/Lighfe/agent-graph-kit/issues/90)).
 - Agents never post a `## Owner: …` comment on their own. This is a rule, not a check
 - The owner posts `## Owner: RESUME` on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`
+- The resume match: a comment's first line is the owner's resume marker when it is `## Owner: RESUME` after leading and trailing whitespace is removed, each run of whitespace inside (spaces, tabs, CR) counts as one space, and letter case is ignored. So `## OWNER: Resume` counts; `## Owner: RESUME later`, `# Owner: RESUME` and `##Owner: RESUME` do not. Every mention of `## Owner: RESUME` as a comment on the issue means a comment that passes the resume match. All other markers match exactly. The escalation comment names the exact line `## Owner: RESUME` to copy
 - Before the next issue, the working tree must be clean (`git status --porcelain` is empty). If not, stop the whole loop and ask the owner
 
 ## Escalation
@@ -151,6 +152,6 @@ The details are in "Stage end" in `docs/team/orchestrator.md`.
   - make the change and close the fix issue
   - close the fix issue as not planned: the blocked issue then goes back to the PM, which posts `## PM: NEEDS OWNER` and names the closed fix issue
 - The orchestrator comments the reason, removes the label `ready`, and adds the label `needs-owner`. Then it continues with the next issue.
-- The owner answers with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again.
+- The owner answers with a comment whose first line passes the resume match (see Rules), removes `needs-owner`, and adds `ready` again.
 - A stage issue never has `ready`. When a stage issue is escalated, the orchestrator only adds `needs-owner`. The owner answers with `## Owner: RESUME`, removes `needs-owner`, and does not add `ready`.
 - After `## Owner: RESUME`, the issue goes back to the PM. The PM applies the edits of the issue that this owner comment asks for (see `docs/team/pm.md`).

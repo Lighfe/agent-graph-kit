@@ -166,7 +166,8 @@ Comment order is the order of the `gh` comments array. Only first lines count, a
 
 - A result comment is **valid** when its first line is a result marker of a role (see "Result markers") and it comes after the newest receipt of that role. An old result from an earlier attempt is ignored.
 - The issue is **pending** when the newest receipt has no result of its role and no `## Owner: RESUME` after it. While an issue is pending, every guarded call on it is denied (G1). If a role ends without a result, the orchestrator escalates, and the owner continues with `## Owner: RESUME`.
-- The **current result** is the newest comment that is a valid result or `## Owner: RESUME`.
+- The **current result** is the newest comment that is a valid result or `## Owner: RESUME`. For a variant line that passes the resume match, the current result is the canonical `## Owner: RESUME`.
+- The **resume match** ([#131](https://github.com/Lighfe/agent-graph-kit/issues/131), `is_resume` in `issue_state.py`): a comment's first line is the owner's resume marker when `" ".join(line.split()).casefold() == "## owner: resume"`. So leading and trailing whitespace is removed, each run of whitespace inside (spaces, tabs, CR) counts as one space, and letter case is ignored: `## OWNER: Resume` counts, `## Owner: RESUME later`, `# Owner: RESUME`, `##Owner: RESUME` and `## Owner:RESUME` do not. Only the owner's comments count, as for every marker. Everywhere in this spec, `## Owner: RESUME` as a comment on the issue means a comment that passes the resume match. All other markers (result markers, receipts, not-started and stop comments) match exactly. The constant `RESUME` and every deny message name exactly `## Owner: RESUME`.
 - The newest valid `## Engineer: DONE` gives the commit range (G4, `qa-codex`). Its `Commits: <base>..<head>` value, and the `Verified: <SHA>` value of a QA result, are read from the lines outside fenced code blocks; lines that disagree make the value unknown.
 
 ### Checks
@@ -276,7 +277,7 @@ A result is a comment whose first line is one of these markers (`MARKERS` and `R
 | `## QA: INVALID` | `qa-codex` or the fallback |
 | `## QA: UNVERIFIABLE` | `qa-codex` or the fallback |
 | `## Planner: STAGE REVIEW` | the planner subagent |
-| `## Owner: RESUME` | the owner (never an agent) |
+| `## Owner: RESUME` (the resume match, see "Valid result, pending and current result") | the owner (never an agent) |
 
 The comments of the hooks (`## Launch:`, `## Launch not started:`, `## Launch stopped by outage:`) are not results.
 
