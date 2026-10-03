@@ -106,7 +106,8 @@ class Facts:
     blockers: tuple[Blocker, ...] | None = None
     open_blockers: int | None = None
     # The two sub-issue reads (issue #97), None when not read. The guard reads them only for the
-    # close of a stage issue: the sub-issue list (all pages, a set) and sub_issues_summary.total.
+    # close of a stage issue and a planner launch on an open stage issue (issue #119): the
+    # sub-issue list (all pages, a set) and sub_issues_summary.total.
     sub_issues: tuple[SubIssue, ...] | None = None
     sub_issue_total: int | None = None
 
@@ -547,15 +548,19 @@ def g1(call: Call, facts: Facts) -> str | None:
 
 def g1_planner(call: Call, facts: Facts) -> str | None:
     """G1 on the planner path (issue #99): the issue is open and has the label `stage` (the label
-    ready is neither required nor denied), no label later or needs-owner, a clean tree, not voided
-    twice, and the pending rule of issue #132 (one planner miss allows one new launch, two misses
-    in a row are denied). No blocker read: the blocked-by links between stage issues order the start
-    of stages, and a stage review reviews a stage that has run."""
+    ready is neither required nor denied), the stage has ended (issue #119: at least one sub-issue,
+    every sub-issue closed, from the two sub-issue reads of the stage close), no label later or
+    needs-owner, a clean tree, not voided twice, and the pending rule of issue #132 (one planner
+    miss allows one new launch, two misses in a row are denied). No blocker read: the blocked-by
+    links between stage issues order the start of stages, and a stage review reviews a stage that
+    has run."""
     iss = facts.issue
     if problem := g1_open(call, facts):
         return problem
     if not is_stage(iss):
         return f"G1: issue #{iss.number} has no label {STAGE}, expected the label {STAGE} for a planner launch"
+    if problem := stage_not_ended("G1", facts):
+        return problem
     return _g1_rest(call, facts)
 
 
@@ -657,15 +662,16 @@ def g6(call: Call, facts: Facts) -> str | None:
     return None
 
 
-def g6_stage(call: Call, facts: Facts) -> str | None:
-    """G6 on the stage path of close (issue #97): instead of a QA PASS, every sub-issue is closed.
-    Denies when the reads are missing, when the list is empty, for every open sub-issue (by name,
-    in any order) and when sub_issues_summary.total is greater than the listed entries (a sub-issue
-    the login cannot see; the list may be incomplete, #95)."""
+def stage_not_ended(check_id: str, facts: Facts) -> str | None:
+    """The stage has not ended (shared by the stage path of close, G6, and the planner path of G1):
+    the deny message with the prefix `check_id`, or None when the list is not empty and every
+    sub-issue is closed. Denies when the reads are missing, when the list is empty, for every open
+    sub-issue (by name, in any order) and when sub_issues_summary.total is greater than the listed
+    entries (a sub-issue the login cannot see; the list may be incomplete, #95)."""
     n = facts.issue.number
     subs, total = facts.sub_issues, facts.sub_issue_total
     if subs is None or total is None:
-        return f"G6: the sub-issues of stage issue #{n} were not read, expected both sub-issue reads"
+        return f"{check_id}: the sub-issues of stage issue #{n} were not read, expected both sub-issue reads"
     expected = "expected at least one sub-issue, every sub-issue closed"
     parts = []
     if not subs:
@@ -676,7 +682,13 @@ def g6_stage(call: Call, facts: Facts) -> str | None:
     if total > len(subs):
         parts.append(f"the sub-issue count is {total} but the list holds {len(subs)}, so the count shows "
                      f"a sub-issue the list does not hold")
-    return f"G6: stage issue #{n}: {'; '.join(parts)}, {expected}" if parts else None
+    return f"{check_id}: stage issue #{n}: {'; '.join(parts)}, {expected}" if parts else None
+
+
+def g6_stage(call: Call, facts: Facts) -> str | None:
+    """G6 on the stage path of close (issue #97): instead of a QA PASS, every sub-issue is closed
+    (see `stage_not_ended`)."""
+    return stage_not_ended("G6", facts)
 
 
 def g7(call: Call, facts: Facts) -> str | None:
@@ -722,6 +734,17 @@ def _planner_check(call: Call, facts: Facts) -> str | None:
 def is_stage_close(call: Call, issue: Issue) -> bool:
     """The stage path (issue #97): a close of an issue with the label `stage`."""
     return call.role == "close" and is_stage(issue)
+
+
+def needs_sub_issues(call: Call, issue: Issue) -> bool:
+    """The calls for which the guard runs the two sub-issue reads: the close of a stage issue
+    (issue #97), and a new launch of the agent planner on an open issue with the label `stage`
+    (issue #119). A planner call that is denied before the sub-issue check (a continuation, another
+    agent, a closed issue, no label `stage`) runs no read, so a failing read cannot change its message."""
+    if is_stage_close(call, issue):
+        return True
+    return (call.role == PLANNER and not call.continued and call.agent == PLANNER
+            and issue.open and is_stage(issue))
 
 
 def check(call: Call, facts: Facts) -> str | None:

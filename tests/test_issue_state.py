@@ -1705,9 +1705,12 @@ def planner_receipt(n=1, call=None):
     return launch("planner", n, agent="planner", call=call)
 
 
-def planner_facts(iss=None, **kw):
-    """Facts of a planner launch: the guard runs no blocker read for it (issue #99)."""
-    return facts(iss if iss is not None else stage(), blockers=None, open_blockers=None, **kw)
+def planner_facts(iss=None, subs=(s(3),), total=None, **kw):
+    """Facts of a planner launch: the guard runs no blocker read for it (issue #99), and it runs the
+    two sub-issue reads (issue #119); by default the stage has one sub-issue and it is closed."""
+    total = len(subs) if total is None and subs is not None else total
+    return facts(iss if iss is not None else stage(), blockers=None, open_blockers=None,
+                 sub_issues=subs, sub_issue_total=total, **kw)
 
 
 def test_planner_marker_is_a_result_marker_of_the_role_planner():
@@ -1785,7 +1788,66 @@ def test_planner_allowed_after_one_voided_launch():
 
 @pytest.mark.parametrize("blockers, count", [(None, None), ((b(3, "open"),), 1), ((), 2)])
 def test_planner_path_does_not_look_at_blockers(blockers, count):
-    assert check(PLANNER, facts(stage(), blockers=blockers, open_blockers=count)) is None
+    assert check(PLANNER, facts(stage(), blockers=blockers, open_blockers=count,
+                                sub_issues=(s(3),), sub_issue_total=1)) is None
+
+
+# --- a planner launch only when every sub-issue is closed (issue #119) ---------------------
+
+def test_planner_allowed_when_every_sub_issue_is_closed():
+    assert check(PLANNER, planner_facts(subs=(s(3), s(4), s(8, "closed", "other/lib")))) is None
+
+
+def test_planner_denied_on_an_open_sub_issue_and_names_every_open_one():
+    for subs in ((s(3), s(5, "open"), s(2, "open", "other/lib")), (s(2, "open", "other/lib"), s(3), s(5, "open"))):
+        msg = check(PLANNER, planner_facts(subs=subs))
+        assert msg.startswith("G1:") and "octo/kit#5" in msg and "other/lib#2" in msg, msg
+        assert "octo/kit#3" not in msg, msg
+
+
+def test_planner_denied_on_an_open_sub_issue_in_another_repo():
+    msg = check(PLANNER, planner_facts(subs=(s(8, "open", "other/lib"),)))
+    assert msg.startswith("G1:") and "other/lib#8" in msg, msg
+
+
+def test_planner_denied_on_no_sub_issue():
+    msg = check(PLANNER, planner_facts(subs=(), total=0))
+    assert msg.startswith("G1:") and "has no sub-issue" in msg, msg
+
+
+@pytest.mark.parametrize("subs", [(), (s(3),), (s(3), s(4))])
+def test_planner_denied_on_a_total_greater_than_the_list_also_when_all_listed_are_closed(subs):
+    msg = check(PLANNER, planner_facts(subs=subs, total=len(subs) + 1))
+    assert msg.startswith("G1:") and f"count is {len(subs) + 1}" in msg and f"holds {len(subs)}" in msg, msg
+
+
+@pytest.mark.parametrize("subs, total", [(None, 0), ((s(3),), None), (None, None)])
+def test_planner_denied_when_a_sub_issue_read_is_missing(subs, total):
+    msg = check(PLANNER, facts(stage(), blockers=None, open_blockers=None, sub_issues=subs,
+                               sub_issue_total=total))
+    assert msg.startswith("G1:") and "not read" in msg, msg
+
+
+@pytest.mark.parametrize("labels", [(), ("ready",)])
+def test_planner_without_the_label_stage_keeps_its_message_without_sub_issue_reads(labels):
+    msg = check(PLANNER, facts(issue(labels=labels), blockers=None, open_blockers=None))
+    assert msg == "G1: issue #7 has no label stage, expected the label stage for a planner launch", msg
+
+
+def test_planner_sub_issue_check_keeps_the_pending_rule():
+    assert check(PLANNER, planner_facts(stage(planner_receipt()))) is None
+    msg = check(PLANNER, planner_facts(stage(planner_receipt(), planner_receipt(2))))
+    assert msg.startswith("G1: issue #7 is pending: the last 2 launches of planner"), msg
+
+
+def test_stage_close_messages_are_unchanged_by_the_planner_check():
+    msg = check(CLOSE, stage_facts(subs=(s(3), s(4, "open")), total=3))
+    assert msg == ("G6: stage issue #7: open sub-issue octo/kit#4; the sub-issue count is 3 but the list "
+                   "holds 2, so the count shows a sub-issue the list does not hold, expected at least one "
+                   "sub-issue, every sub-issue closed"), msg
+    assert check(CLOSE, stage_facts(subs=(), total=0)) == (
+        "G6: stage issue #7: stage issue #7 has no sub-issue, expected at least one sub-issue, "
+        "every sub-issue closed")
 
 
 def test_planner_path_runs_no_g2_to_g7():

@@ -602,10 +602,12 @@ def test_owner_marker_comment_through_main_is_allowed(tmp_path, env, monkeypatch
 
 
 class FakeIO:
-    def __init__(self, iss, head=FAKE_HEAD, clean=True, blockers=(), open_blockers=0):
+    def __init__(self, iss, head=FAKE_HEAD, clean=True, blockers=(), open_blockers=0,
+                 sub_issues=(issue_state.SubIssue("octo/kit", 3, "closed"),), sub_issue_total=1):
         self.facts = facts(iss, head=head, clean=clean, blockers=None, open_blockers=None)
         self.blockers = (blockers, open_blockers)
-        self.reads, self.posts, self.blocker_reads = [], [], []
+        self.sub_issues = (sub_issues, sub_issue_total)
+        self.reads, self.posts, self.blocker_reads, self.sub_reads = [], [], [], []
 
     def read_facts(self, number):
         self.reads.append(number)
@@ -615,8 +617,13 @@ class FakeIO:
         self.blocker_reads.append(number)
         return self.blockers
 
+    def read_sub_issues(self, number):
+        self.sub_reads.append(number)
+        return self.sub_issues
+
     def decide(self, event):
-        return decide(event, self.read_facts, self.post_comment, read_blockers=self.read_blockers)
+        return decide(event, self.read_facts, self.post_comment, read_blockers=self.read_blockers,
+                      read_sub_issues=self.read_sub_issues)
 
     def post_comment(self, number, body):
         self.posts.append((number, body))
@@ -1505,13 +1512,19 @@ def test_decide_planner_send_message_reads_nothing():
     assert fio.reads == [] and fio.posts == [] and fio.blocker_reads == []
 
 
+def planner_stage(env, *comments, subs=None, **kw):
+    """A stage issue #7 for a planner launch; by default its one sub-issue is closed (issue #119)."""
+    write_subs(env, subs if subs is not None else [api_blocker(3)])
+    write_stage(env, *comments, **kw)
+
+
 def test_decide_planner_launch_posts_its_receipt_and_reads_no_blockers():
     fio = FakeIO(issue(labels=("stage",)))
     event = {**PLANNER_7, "tool_use_id": "toolu_synthetic_1"}
     assert fio.decide(event) is None
     h = issue_state.call_hash("toolu_synthetic_1")
     assert fio.posts == [(7, f"## Launch: planner (attempt 1)\nAgent: planner\nCall: {h}")]
-    assert fio.blocker_reads == []
+    assert fio.blocker_reads == [] and fio.sub_reads == [7]
 
 
 def test_decide_planner_launch_with_a_raising_blocker_reader_is_allowed():
@@ -1520,30 +1533,122 @@ def test_decide_planner_launch_with_a_raising_blocker_reader_is_allowed():
     def boom(n):
         raise Deny("guard error: synthetic blocker read failure")
 
-    assert decide(PLANNER_7, fio.read_facts, fio.post_comment, read_blockers=boom) is None
-    assert decide(PLANNER_7, FakeIO(issue(labels=("stage",))).read_facts, lambda n, b: None) is None
+    assert decide(PLANNER_7, fio.read_facts, fio.post_comment, read_blockers=boom,
+                  read_sub_issues=fio.read_sub_issues) is None
     assert fio.posts == [(7, "## Launch: planner (attempt 1)\nAgent: planner")]
 
 
-def test_decide_planner_launch_runs_no_sub_issue_read():
+def test_decide_without_a_sub_issue_reader_denies_a_planner_launch():
     fio = FakeIO(issue(labels=("stage",)))
-    reads = []
-    assert decide(PLANNER_7, fio.read_facts, fio.post_comment,
-                  read_sub_issues=lambda n: reads.append(n) or ((), 0)) is None
-    assert reads == []
+    with pytest.raises(Deny) as e:
+        decide(PLANNER_7, fio.read_facts, fio.post_comment)
+    assert str(e.value).startswith("guard error") and fio.posts == []
+
+
+def test_decide_planner_launch_reads_sub_issues_inside_the_lock_before_the_post():
+    events = []
+
+    class Lock:
+        def __enter__(self):
+            events.append("lock")
+
+        def __exit__(self, *exc):
+            events.append("unlock")
+
+    assert decide(PLANNER_7, lambda n: events.append("read") or facts(issue(labels=("stage",))),
+                  lambda n, b: events.append("post"), lock=Lock,
+                  read_sub_issues=lambda n: events.append("subs") or (
+                      (issue_state.SubIssue("octo/kit", 3, "closed"),), 1)) is None
+    assert events == ["lock", "read", "subs", "post", "unlock"]
+
+
+@pytest.mark.parametrize("event, iss", [
+    (PLANNER_7, issue(labels=("ready",))),  # no label stage
+    (agent("pm", "ROLE=planner ISSUE=7"), issue(labels=("stage",))),  # denied before any read
+    (send("planner-1", "ROLE=planner ISSUE=7"), issue(labels=("stage",))),
+])
+def test_decide_planner_call_off_the_stage_path_runs_no_sub_issue_read(event, iss):
+    fio = FakeIO(iss)
+    assert fio.decide(event).startswith("G1:")
+    assert fio.sub_reads == [] and fio.posts == []
 
 
 def test_guard_planner_launch_on_a_stage_issue_is_allowed_and_posts_the_receipt(env):
-    write_stage(env)
+    planner_stage(env, subs=[api_blocker(3), api_blocker(4)])
     code, out = run_guard({**PLANNER_7, "tool_use_id": "toolu_synthetic_1"}, env)
     assert (code, out) == (0, "")
     h = issue_state.call_hash("toolu_synthetic_1")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": f"## Launch: planner (attempt 1)\nAgent: planner\nCall: {h}"}]
-    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))  # no blocker and no sub-issue read
+    calls = lines(env["FAKE_GH_CALLS"])
+    assert SUB_ISSUES_READ in calls and TOTAL_READ in calls  # the two reads of the stage close
+    assert BLOCKERS_READ not in calls and COUNT_READ not in calls  # no blocker read
+
+
+def test_guard_planner_launch_denies_an_open_sub_issue_and_names_it(env):
+    planner_stage(env, subs=[api_blocker(3), api_blocker(4, "open"), api_blocker(5, "open")])
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason.startswith("G1:") and "octo/kit#4" in reason and "octo/kit#5" in reason
+    assert "octo/kit#3" not in reason
+    assert lines(env["FAKE_GH_LOG"]) == []  # no receipt
+
+
+def test_guard_planner_launch_denies_an_open_sub_issue_in_another_repo(env):
+    planner_stage(env, subs=[api_blocker(3), api_blocker(9, "open", "other/lib")])
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason.startswith("G1:") and "other/lib#9" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_planner_launch_denies_no_sub_issue(env):
+    planner_stage(env, subs=[])
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason.startswith("G1:") and "stage issue #7 has no sub-issue" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_planner_launch_denies_a_total_greater_than_the_list(env):
+    write_subs(env, [api_blocker(3), api_blocker(4)], total=3)
+    write_stage(env)
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason.startswith("G1:") and "count is 3" in reason and "holds 2" in reason
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_planner_launch_reads_every_page_of_sub_issues(env):
+    planner_stage(env, subs=None)
+    write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
+    reason = deny_reason(run_guard(PLANNER_7, env)[1])
+    assert reason.startswith("G1:") and "octo/kit#31" in reason
+
+
+@pytest.mark.parametrize("key", ["sub_issues", "issue"])
+def test_guard_planner_launch_failing_sub_issue_read_denies_with_guard_error(env, key):
+    planner_stage(env)
+    code, out = run_guard(PLANNER_7, env, FAKE_GH_API_FAIL=key)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+@pytest.mark.parametrize("pages, total", [("not json\n", 0), ([[api_blocker(3)]], "null")])
+def test_guard_planner_launch_sub_issue_output_it_cannot_read_denies_with_guard_error(env, pages, total):
+    write_subs(env, pages=pages, total=total)
+    write_stage(env)
+    code, out = run_guard(PLANNER_7, env)
+    assert code == 0 and deny_reason(out).startswith("guard error")
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+@pytest.mark.parametrize("key", ["sub_issues", "issue"])
+def test_guard_planner_launch_without_stage_keeps_its_message_when_a_sub_issue_read_fails(env, key):
+    write_subs(env, [api_blocker(3, "open")])
+    write_issue(Path(env["FAKE_GH_ISSUE"]), labels=("ready",))
+    reason = deny_reason(run_guard(PLANNER_7, env, FAKE_GH_API_FAIL=key)[1])
+    assert reason == "G1: issue #7 has no label stage, expected the label stage for a planner launch"
+    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
 
 
 def test_guard_planner_launch_on_a_stage_issue_with_ready_is_allowed(env):
-    write_stage(env, labels=("stage", "ready"))
+    planner_stage(env, labels=("stage", "ready"))
     assert run_guard(PLANNER_7, env) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 1)\nAgent: planner"}]
 
@@ -1557,31 +1662,31 @@ def test_guard_planner_launch_without_the_label_stage_is_denied(env, labels):
 
 
 def test_guard_planner_launch_on_a_closed_stage_issue_is_denied(env):
-    write_stage(env, state="CLOSED")
+    planner_stage(env, state="CLOSED")
     assert deny_reason(run_guard(PLANNER_7, env)[1]) == "G1: issue #7 is closed, expected an open issue"
 
 
 @pytest.mark.parametrize("label", ["later", "needs-owner"])
 def test_guard_planner_launch_with_later_or_needs_owner_is_denied(env, label):
-    write_stage(env, labels=("stage", label))
+    planner_stage(env, labels=("stage", label))
     assert deny_reason(run_guard(PLANNER_7, env)[1]) == (
         f"G1: issue #7 has the label {label}, expected no label later or needs-owner")
 
 
 def test_guard_planner_launch_on_a_dirty_tree_is_denied(env):
-    write_stage(env)
+    planner_stage(env)
     assert deny_reason(run_guard(PLANNER_7, env, FAKE_GIT_DIRTY="1")[1]) == (
         "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)")
 
 
 def test_guard_planner_launch_after_one_planner_miss_gets_attempt_2(env):
-    write_stage(env, planner_receipt())
+    planner_stage(env, planner_receipt())
     assert run_guard(PLANNER_7, env) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
 
 
 def test_guard_planner_launch_after_two_planner_misses_is_denied(env):
-    write_stage(env, planner_receipt(), planner_receipt(2))
+    planner_stage(env, planner_receipt(), planner_receipt(2))
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
     assert reason == ("G1: issue #7 is pending: the last 2 launches of planner ended without a result "
                       "(## Launch: planner (attempt 1), ## Launch: planner (attempt 2)), "
@@ -1591,7 +1696,7 @@ def test_guard_planner_launch_after_two_planner_misses_is_denied(env):
 
 @pytest.mark.parametrize("after", [STAGE_REVIEW, "## Owner: RESUME"])
 def test_guard_planner_launch_after_a_result_or_resume_gets_attempt_2(env, after):
-    write_stage(env, planner_receipt(), after)
+    planner_stage(env, planner_receipt(), after)
     assert run_guard(PLANNER_7, env) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
 
@@ -1599,16 +1704,18 @@ def test_guard_planner_launch_after_a_result_or_resume_gets_attempt_2(env, after
 def test_guard_planner_launch_after_two_voided_receipts_is_denied(env):
     from helpers import not_started, stopped
     x, y = "0123456789ab", "ba9876543210"
-    write_stage(env, planner_receipt(1, x), not_started("planner", 1, x), planner_receipt(2, y),
+    planner_stage(env, planner_receipt(1, x), not_started("planner", 1, x), planner_receipt(2, y),
                 stopped("planner", 2, y))
     assert deny_reason(run_guard(PLANNER_7, env)[1]).startswith("G1: issue #7: the last 2 launches")
 
 
-@pytest.mark.parametrize("key", ["blocked_by", "issue"])
-def test_guard_planner_launch_ignores_a_failing_blocker_read(env, key):
-    write_stage(env)
-    assert run_guard(PLANNER_7, env, FAKE_GH_API_FAIL=key) == (0, "")
-    assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
+def test_guard_planner_launch_ignores_a_failing_blocker_read(env):
+    # the blocker count read and the sub-issue total read share the key "issue"; the failing
+    # sub-issue reads are covered above (issue #119)
+    planner_stage(env)
+    assert run_guard(PLANNER_7, env, FAKE_GH_API_FAIL="blocked_by") == (0, "")
+    calls = lines(env["FAKE_GH_CALLS"])
+    assert BLOCKERS_READ not in calls and COUNT_READ not in calls
 
 
 def test_guard_pm_launch_on_a_stage_issue_is_unchanged(env):

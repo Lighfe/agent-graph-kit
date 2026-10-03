@@ -818,8 +818,8 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
     `Call:` line when the event has a string tool_use_id (docs/specs/agent-graph-kit.md#launch-comments). For every role launch
     (not for close and not for the planner, issue #99), `read_blockers(n)` gives (blocker list,
     open-blocker count) inside the lock.
-    Only for the close of a stage issue (issue #97), `read_sub_issues(n)` gives
-    (sub-issue list, sub_issues_summary.total) inside the lock."""
+    Only for the close of a stage issue (issue #97) and a planner launch on an open stage issue
+    (issue #119), `read_sub_issues(n)` gives (sub-issue list, sub_issues_summary.total) inside the lock."""
     try:
         call = classify(event)
     except Deny as e:
@@ -831,7 +831,7 @@ def decide(event: dict, read_facts, post_comment, lock=contextlib.nullcontext,
         if call.role not in ("close", issue_state.PLANNER):
             blockers, count = read_blockers(call.issue)
             facts = dataclasses.replace(facts, blockers=blockers, open_blockers=count)
-        elif issue_state.is_stage_close(call, facts.issue):
+        elif issue_state.needs_sub_issues(call, facts.issue):
             subs, total = read_sub_issues(call.issue)
             facts = dataclasses.replace(facts, sub_issues=subs, sub_issue_total=total)
         reason = issue_state.check(call, facts)
