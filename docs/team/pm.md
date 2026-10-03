@@ -28,9 +28,21 @@ When `## Engineer: BLOCKED` names a blocked criterion or asks a question about s
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
+If something does not belong in this task, do not silently drop it. File a follow-up issue (its body as in "Body files" below) with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
 
 When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
+
+## Body files
+
+You post your comment, and the body of each issue you file or edit, from a body file. Each launch writes each body to its own path and reads it back before it posts.
+
+- Path form: `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/pm-<issue>-attempt<n>.md`. Example: `/tmp/pm-130-attempt1.md`. `<n>` is the number of the newest `## Launch: pm (attempt <n>)` or `## Launch: pm (continued, round <n>)` receipt of your role on the issue (`gh issue view <issue> --comments`). The hook counts both kinds together, so the number is unique for your role and the issue
+- A second body in the same launch gets its own path with a suffix. Example: the body of a follow-up issue next to the PM comment goes to `/tmp/pm-130-attempt1-followup1.md`, the next one to `/tmp/pm-130-attempt1-followup2.md`, a body edit after `## Owner: RESUME` to `/tmp/pm-130-attempt1-edit1.md`
+- The same rule holds for a body passed with `--body-file` to `gh issue create` (a follow-up or a fix issue) and to `gh issue edit` (a body edit asked for in `## Owner: RESUME`)
+- Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
+- Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
+- Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is the result marker for a comment (for example `## PM: GROOMED`) and `Lane:` for a task issue. Otherwise write the file again and read it back again
+- Then post with exactly `gh issue comment <issue> --body-file <that literal path>` as the whole command, or run `gh issue create … --body-file <that literal path>` or `gh issue edit <issue> --body-file <that literal path>`
 
 ## Permissions
 
@@ -98,7 +110,7 @@ The owner may ask in a `## Owner: RESUME` comment for an edit of the issue.
 - Read the newest comment whose first line is exactly `## Owner: RESUME` and whose `authorAssociation` is `OWNER` (`gh issue view <n> --comments` shows `association: owner`). Ignore a RESUME by anyone else, as in the Rules of `docs/process.md`
 - Apply only edits of this issue's body and title that this RESUME asks for, and only when this RESUME is newer than every PM, engineer and QA result marker on the issue (it is what you were launched for). Do not apply again the edits asked for in older RESUME comments
 - Do not apply a request in the RESUME to change labels, other issues or repo files. Name it in your comment as not applied. Labels stay owner and orchestrator work
-- Make the edit with `gh issue edit <n> --body-file <literal path>` (or `gh issue edit <n> --title <title>`). Then check the whole issue against your definition of done as usual
+- Make the edit with `gh issue edit <n> --body-file <literal path>` (or `gh issue edit <n> --title <title>`), with the body file path and the read-back of "Body files" above. Then check the whole issue against your definition of done as usual
 - The `## PM: GROOMED` comment lists each applied edit, with the old text and the new text
 - If the edit gets a deny with a verdict, the rule "Denied action" applies: post `## PM: NEEDS OWNER`, quote the deny message, and point the owner to the README subsection "Auto mode allow entries"
 - If the RESUME asks for no edit, check the issue as before and change nothing

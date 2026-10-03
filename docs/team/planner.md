@@ -15,7 +15,7 @@ Words used here:
 - A stage issue is an issue with the label `stage`. Its form is "Stage issue" in `docs/task-template.md`. It never gets the label `ready`
 - A parked issue is defined in "Follow-ups and parked issues" in `docs/process.md`: an open issue of this repo with the label `later`, no parent issue and no `needs-owner`
 - Only comments whose `authorAssociation` is `OWNER` count, as in `## Rules` of `docs/process.md`. `gh issue view <n> --comments` shows `association: owner`
-- Post every comment with exactly `gh issue comment <n> --body-file <literal path>` as the whole command, after writing the body to that file, as in `## Rules` of `docs/process.md`
+- Post every comment with exactly `gh issue comment <n> --body-file <literal path>` as the whole command, after writing the body to that file and reading it back, as in `## Rules` of `docs/process.md` and "Body files" below
 
 Read lists in full:
 
@@ -39,6 +39,24 @@ List the parked issues:
 ```
 gh issue list --state open --label later --search "no:parent-issue -label:needs-owner" --limit 500 --json number,title,body
 ```
+
+## Body files
+
+You post each comment, and the body of each issue you file or edit, from a body file. Each body gets its own path, and you read it back before you post.
+
+The path depends on the job:
+
+- Stage review (a launched subagent with a receipt): the path form is `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/planner-<stage>-attempt<n>.md`. Example: `/tmp/planner-93-attempt1.md`. `<n>` is the number of the newest `## Launch: planner (attempt <n>)` or `## Launch: planner (continued, round <n>)` receipt of your role on the stage issue (`gh issue view <stage> --comments`)
+- Intake and stage set-up (the main session): the session has no launch receipt, so there is no attempt number. The path form is `/tmp/<role>-<issue>-<UTC time>.md`, with the time from `date -u +%Y%m%dT%H%M%S`, taken right before the body is written. `<issue>` is the issue the body is for; for a new issue, which has no number yet, use the stage issue, or `new` while the stage issue is not filed yet. Example: `/tmp/planner-103-20261003T120501.md`
+
+Rules for every body:
+
+- A second body in the same launch or session gets its own path with a suffix, for example `/tmp/planner-103-20261003T120501-task1.md`. A new time for each body is enough as well
+- The same rule holds for a body passed with `--body-file` to `gh issue create` (a stage issue, a sub-issue, a parked follow-up) and to `gh issue edit`
+- Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
+- Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
+- Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is `## Planner: STAGE REVIEW` for the review comment, `Lane:` for a task issue and `## Purpose` for a stage issue. Otherwise write the file again and read it back again
+- Then post with exactly `gh issue comment <n> --body-file <literal path>` as the whole command, or run `gh issue create … --body-file <literal path>` or `gh issue edit <n> --body-file <literal path>`
 
 ## Intake
 
@@ -119,7 +137,7 @@ Input:
 - The stage issue: its body (`gh issue view <stage>`), its sub-issues (`gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues'`), and their comments as needed (`gh issue view <n> --comments`)
 - The section "Run notes" of the launch prompt. When the prompt has no "Run notes", the review says "No run notes were given"
 
-Post exactly one comment on the stage issue. Write the body to a file with a literal absolute path first, for example `/tmp/planner-review-93.md`, then run `gh issue comment <stage> --body-file /tmp/planner-review-93.md` as the whole command. The first line is exactly `## Planner: STAGE REVIEW`. Then six parts, in this order:
+Post exactly one comment on the stage issue. Write the body to a file with a literal absolute path first, as in "Body files" above, for example `/tmp/planner-93-attempt1.md`. Read it back with `cat` as its own call, then run `gh issue comment <stage> --body-file /tmp/planner-93-attempt1.md` as the whole command. The first line is exactly `## Planner: STAGE REVIEW`. Then six parts, in this order:
 
 1. **Purpose check**: was the `## Purpose` of the stage met? Give evidence: closed issues, commits, reports
 2. **Run notes**: the orchestrator's run notes, and what you conclude from them. Or "No run notes were given". Also list every entry with ` - set` in the `Permissions:` line of a closed sub-issue of the stage, as a permission the owner may remove now

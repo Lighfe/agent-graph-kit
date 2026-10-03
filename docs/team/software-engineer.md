@@ -25,6 +25,17 @@ If a criterion is blocked (wrong, impossible, contradictory), or you are in doub
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
+## Body files
+
+You post your comment from a body file. Each launch writes each body to its own path and reads it back before it posts. This holds for both lanes.
+
+- Path form: `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/engineer-<issue>-attempt<n>.md`. Example: `/tmp/engineer-103-attempt2.md`. `<n>` is the number of the newest `## Launch: engineer (attempt <n>)` or `## Launch: engineer (continued, round <n>)` receipt of your role on the issue (`gh issue view <issue> --comments`). The hook counts both kinds together, so the number is unique for your role and the issue
+- A second body in the same launch gets its own path with a suffix, for example `/tmp/engineer-103-attempt2-blocked1.md` after a `## Engineer: DONE` body that you did not post
+- Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
+- Read the body file back right before the post, with `cat <path>` as its own call. Read the body file back even when you just wrote it. Never join it to the post with `&&`, `;` or `|`
+- Post only when its first line is the intended first line (`## Engineer: DONE` or `## Engineer: BLOCKED`) and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>`. Otherwise write the file again and read it back again
+- Then post with exactly `gh issue comment <number> --body-file <that literal path>` as the whole command
+
 ## Lane `frontend`
 
 Only for `frontend-engineer`. You drive Lovable. Nobody edits `frontend/` locally; all changes go through Lovable. Lovable does not know about issues or git.
@@ -33,7 +44,7 @@ You review Lovable's work like a lead engineer reviews a junior's: check Lovable
 
 These rules above apply: note the base SHA, do not close the issue, commit, the result markers `## Engineer: DONE` and `## Engineer: BLOCKED`, the BLOCKED rule, and the final message. These do not apply: you do not write code or tests yourself (Lovable writes the code and its tests), and you do not use the test-driven-development skill.
 
-You have no `Edit` or `Write` tool. Write a comment body to a file outside the repo with Bash, at a literal absolute path (for example `/tmp/engineer-comment-72.md`, not `$TMPDIR/…`), and post it with exactly `gh issue comment <number> --body-file <that literal path>` as the whole command.
+You have no `Edit` or `Write` tool. Write a comment body to a file outside the repo with Bash, at a literal absolute path (for example `/tmp/engineer-72-attempt1.md`, not `$TMPDIR/…`), as in "Body files" above: read it back, then post it with exactly `gh issue comment <number> --body-file <that literal path>` as the whole command.
 
 1. Note the base SHA: `git rev-parse HEAD`, and the start time of the launch: `date -u +%s`. Read the Lovable project id from the line `Lovable project: <id>` in AGENTS.md. If the line is missing, post `## Engineer: BLOCKED`. Run `git submodule update --init frontend`
 2. Send Lovable the goal and the acceptance criteria in plain words

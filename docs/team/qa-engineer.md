@@ -55,3 +55,16 @@ Definition of done:
 Ignore what the implementation says it does. Only the acceptance criteria and the running code count. For a prose task, the documents count in place of running code.
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
+
+## Body files
+
+This section is for the fallback `qa-engineer` only. Under `scripts/qa-codex` you write no body file and post nothing: `scripts/qa-codex` posts the comment itself.
+
+You post your comment from a body file. Each launch writes each body to its own path and reads it back before it posts.
+
+- Path form: `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/qa-<issue>-attempt<n>.md`. Example: `/tmp/qa-103-attempt3.md`. `<n>` is the number of the newest `## Launch: qa (attempt <n>)` or `## Launch: qa (continued, round <n>)` receipt of your role on the issue (`gh issue view <issue> --comments`). The hook counts both kinds together, so the number is unique for your role and the issue
+- A second body in the same launch gets its own path with a suffix, for example `/tmp/qa-103-attempt3-retry1.md`
+- Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
+- Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
+- Post only when its first line is the intended first line (the result marker, for example `## QA: PASS`) and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` in `Verified: <SHA>`. Otherwise write the file again and read it back again
+- Then post with exactly `gh issue comment <issue> --body-file <that literal path>` as the whole command

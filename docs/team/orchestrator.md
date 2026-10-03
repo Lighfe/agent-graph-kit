@@ -217,7 +217,19 @@ Escalate a stage issue (label `stage`) the same way, with two differences: add t
 
 The owner answers on the issue with a comment that starts with `## Owner: RESUME`, removes `needs-owner`, and adds `ready` again. On a stage issue, the owner removes `needs-owner` and does not add `ready`. The owner posts this comment on the GitHub web page, in a terminal, or from a Claude Code session with the exact form `gh issue comment <n> --body-file <literal path>`. Never post a `## Owner: …` comment on your own.
 
-Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command.
+Post your own comments (the escalation comment) only with `gh issue comment <n> --body-file <literal absolute path>` as the whole command, with the body file path and the read-back of "Body files" below.
+
+## Body files
+
+You post each comment, and the body of each follow-up issue you file, from a body file. Each body gets its own path, and you read it back before you post.
+
+- You are the main session, so you have no launch receipt and no attempt number. The path form is `/tmp/<role>-<issue>-<UTC time>.md`, for you `/tmp/orchestrator-<issue>-<UTC time>.md`, with the time from `date -u +%Y%m%dT%H%M%S`, taken right before the body is written. `<issue>` is the issue the comment is on, or for a follow-up the issue it came from. Example: `/tmp/orchestrator-103-20261003T120501.md`
+- A second body in the same session gets its own path with a suffix, for example `/tmp/orchestrator-103-20261003T120501-followup1.md`. A new time for each body is enough as well
+- The same rule holds for a body passed with `--body-file` to `gh issue create` (a follow-up) and to `gh issue edit`
+- Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
+- Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
+- Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is the first line you wrote for the comment, and `Lane:` for a follow-up task issue. Otherwise write the file again and read it back again
+- Then post with exactly `gh issue comment <n> --body-file <literal path>` as the whole command, or run `gh issue create … --body-file <literal path>`
 
 ## Close an issue
 
