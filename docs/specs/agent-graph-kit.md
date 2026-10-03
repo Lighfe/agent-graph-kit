@@ -392,7 +392,7 @@ The loop steps for stages (pick order, promotion, stage end) are in "Stages" of 
 - **Eligible sub-issue**: open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker.
 - **Promotion of a parked blocker**: when an open blocker of a sub-issue of the active stage is a parked issue (open, this repo, label `later`, no parent, no `needs-owner`), the orchestrator adds it to the stage as a sub-issue and changes `later` to `ready`.
 - **Stage end**: when the sub-issue list is not empty and every entry is closed, the orchestrator launches the planner subagent on the stage issue (`ROLE=planner ISSUE=<stage issue>`). The planner posts one comment, `## Planner: STAGE REVIEW`, and the loop stops.
-- **Closing**: the planner closes the stage issue at stage set-up, in the main session, with `gh issue close <n>`.
+- **Closing**: the planner closes the stage issue at stage set-up, in the main session, with `gh issue close <n>`. Before the close, set-up files the to-be-filed sub-issues of the options not chosen as parked follow-ups (see "Stage set-up" in `docs/team/planner.md`).
 
 What the hooks do for a stage issue:
 

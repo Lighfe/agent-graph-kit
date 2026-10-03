@@ -80,6 +80,12 @@ Steps, in this order:
 
 Then:
 
+- File each sub-issue to be filed (not an existing issue; in practice marked "New:") of every option the owner did not choose as a parked follow-up in `docs/task-template.md` format, with the label `later`, no parent issue, and the line `Source: <URL of the review comment>`. Do this before the close below, so the review is mined while its stage issue is open
+  - First check that no open issue already covers the item. If one does, name that issue to the owner instead of filing a duplicate
+  - Skip an item that is already a sub-issue of the new stage (for example moved there by the review's recommendation or by the owner), and an item the owner says not to file
+  - A filed follow-up never gets `needs-owner`. When the review marks an item as needing the owner (for example a hook or settings edit), the body says so in words
+  - A filed issue reads on its own: no references such as "Option 2" or "point 3"; restate the content of the item in words
+  - Tell the owner every issue you filed (number and title) and every to-be-filed item you did not file, with the reason: covered by an open issue, already in the new stage, or the owner said not to file it
 - Close the finished stage issue with exactly `gh issue close <number>` as the whole command. The close check allows it only when all its sub-issues are closed
 - Follow-ups that the owner decided to close: name them for the owner to close. Do not close them yourself: the close check denies a task issue without `## QA: PASS`
 - Archive the plan: move it from `docs/plans/` to `docs/archive/` once every stage issue made from it has been set up. A plan with several stages stays in `docs/plans/` until its last stage is set up. Commit the move
