@@ -56,7 +56,7 @@ When a criterion asks a text-matching check to pass or deny a class of commands 
 
 Example criterion:
 
-> The guard passes these read-only `tallyctl` calls and denies these writes to `ledger/`:
+> The guard passes these read-only `tallyctl` calls and denies these writes to the ledger files:
 >
 > - pass: `tallyctl show ledger/2026.csv`
 > - pass: `tallyctl show --sum ledger/2026.csv`
