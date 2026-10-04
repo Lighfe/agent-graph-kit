@@ -5,8 +5,7 @@
       "Bash(gh issue close *)"
     ],
     "deny": [
-      "Edit(/.claude/settings*.json)",
-      "Write(/.claude/settings*.json)"
+      "Edit(/.claude/settings*.json)"
     ]
   },
   "hooks": {

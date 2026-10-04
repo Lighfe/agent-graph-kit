@@ -13,7 +13,8 @@ SETTINGS = ROOT / ".claude" / "settings.json"
 # Path syntax: https://code.claude.com/docs/en/permissions ("Read and Edit").
 # A leading "/" anchors the pattern at the project root for project settings.
 DENY_PATTERN = "/.claude/settings*.json"
-DENY_RULES = {f"Edit({DENY_PATTERN})", f"Write({DENY_PATTERN})"}
+# Only Edit(...) rules: file permission checks do not match Write(...) rules (#136).
+DENY_RULES = {f"Edit({DENY_PATTERN})"}
 ALLOW_RULES = {"Bash(scripts/qa-codex ROLE=qa ISSUE=*)", "Bash(gh issue close *)"}
 
 
@@ -51,6 +52,7 @@ def test_allow_rules_are_exactly_the_two_guarded_forms():
 def test_deny_rules_protect_both_settings_files():
     deny = load()["permissions"]["deny"]
     assert DENY_RULES <= set(deny)
+    assert not [rule for rule in deny if rule.startswith("Write(")]
     anchored = DENY_PATTERN.lstrip("/")
     for name in (".claude/settings.json", ".claude/settings.local.json"):
         assert fnmatchcase(name, anchored), name

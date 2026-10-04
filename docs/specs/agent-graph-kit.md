@@ -250,7 +250,7 @@ For a PM or engineer launch or continuation: fewer than 3 returns (`MAX_RETURNS`
 
 Any agent that can write files could put `disableAllHooks` into the local settings file, and the change applies at the next tool call. So:
 
-- `.claude/settings.json` has `permissions.deny` rules for `Edit` and `Write` on `/.claude/settings*.json`.
+- `.claude/settings.json` has a `permissions.deny` rule for `Edit` on `/.claude/settings*.json`. Claude Code applies it to the Edit and Write tools; it does not match `Write(…)` rules in file permission checks, so the settings have none ([#136](https://github.com/Lighfe/agent-graph-kit/issues/136)).
 - The guard checks every Bash command first, before any `gh` call and without reading issue state. It reads the command with its shell tokenizer (`_lex`). A mention is a word after quote removal (also with braces removed, so `settings.{json,bak}` counts), a redirection target or the text of a substitution that names `settings*.json` (case-insensitive) or a `.claude/` path with a glob character. A command without a mention passes G8 ([#86](https://github.com/Lighfe/agent-graph-kit/issues/86)).
 - Here-document body: the text of a here-document body is not a mention, unless the whole command has a pipe (`|` or `|&`) or a runner (see below). The substitutions inside an unquoted body still count as a mention when their text names a protected file; they count for the command that reads the body, so that command is not read-only.
 - Read-only parts: a command with a mention passes G8 only when all of these hold:
