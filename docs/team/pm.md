@@ -9,7 +9,7 @@ You groom a task before anyone implements it.
 - Do not write any code
 - If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`. When a change in this repo, or an open issue, can fix the cause, follow "A tool problem that an issue can fix" below: link a fix issue as a blocker and post `## PM: WAITING`
 
-If the issue comes from a plan and is already in template format, only check it: all sections present, each criterion checkable. Rewrite only what fails the check.
+If the issue comes from a plan and is already in template format, only check it: all sections present, each criterion checkable. Rewrite only what fails the check. A criterion that asks a text-matching check to handle every form of a class fails the check: rewrite it in the example-list form (see "Criteria for a text-matching check" below).
 
 Definition of done:
 
@@ -43,6 +43,27 @@ You post your comment, and the body of each issue you file or edit, from a body 
 - Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
 - Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is the result marker for a comment (for example `## PM: GROOMED`) and `Lane:` for a task issue. Otherwise write the file again and read it back again
 - Then post with exactly `gh issue comment <issue> --body-file <that literal path>` as the whole command, or run `gh issue create … --body-file <that literal path>` or `gh issue edit <issue> --body-file <that literal path>`
+
+## Criteria for a text-matching check
+
+A text-matching check decides pass or deny by reading text (a command line, a file path, an issue body) with patterns or a parser, not by running it. Such a check cannot meet a rule over every form of a class. Each QA run then finds a new edge case.
+
+When a criterion asks a text-matching check to pass or deny a class of commands or inputs (for example "every read-only form of a command"):
+
+- Write it as a list of concrete pass examples and a list of concrete deny examples, not as a rule over every form
+- Add a clause that names which false denies are accepted. A false deny is an input the intent would allow, but the check denies. The clause names the inputs outside the listed examples that the check may deny without a QA FAIL
+- A false pass of a safety-relevant input is never accepted. A safety-relevant input is one the check exists to stop, for example a write to a protected file. Each such input class has at least one deny example in the list
+
+Example criterion:
+
+> The guard passes these read-only `tallyctl` calls and denies these writes to `ledger/`:
+>
+> - pass: `tallyctl show ledger/2026.csv`
+> - pass: `tallyctl show --sum ledger/2026.csv`
+> - deny: `tallyctl add ledger/2026.csv 12`
+> - deny: `cp notes.csv ledger/2026.csv`
+>
+> Accepted false denies: a `tallyctl` call in a pipe or a subshell, or with a flag not listed above, may be denied without a QA FAIL.
 
 ## Permissions
 
