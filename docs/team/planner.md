@@ -52,7 +52,7 @@ The path depends on the job:
 Rules for every body:
 
 - A second body in the same launch or session gets its own path with a suffix, for example `/tmp/planner-103-20261003T120501-task1.md`. A new time for each body is enough as well
-- The same rule holds for a body passed with `--body-file` to `gh issue create` (a stage issue, a sub-issue, a parked follow-up) and to `gh issue edit`
+- The same rule holds for a body passed with `--body-file` to `gh issue create` (a stage issue, a sub-issue, a follow-up) and to `gh issue edit`
 - Write the body file fresh: overwrite it, never append. If the write call is denied or fails, do not post
 - Read the body file back right before the post, with `cat <path>` as its own call. Never join it to the post with `&&`, `;` or `|`
 - Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is `## Planner: STAGE REVIEW` for the review comment, `Lane:` for a task issue and `## Purpose` for a stage issue. Otherwise write the file again and read it back again
@@ -98,10 +98,13 @@ Steps, in this order:
 
 Then:
 
-- File each sub-issue to be filed (not an existing issue; in practice marked "New:") of every option the owner did not choose as a parked follow-up in `docs/task-template.md` format, with the label `later`, no parent issue, and the line `Source: <URL of the review comment>`. Do this before the close below, so the review is mined while its stage issue is open
+- File each sub-issue to be filed (not an existing issue; in practice marked "New:") of every option the owner did not choose as a follow-up in `docs/task-template.md` format, with the label `later`, no parent issue, and the line `Source: <URL of the review comment>`. Do this before the close below, so the review is mined while its stage issue is open
   - First check that no open issue already covers the item. If one does, name that issue to the owner instead of filing a duplicate
   - Skip an item that is already a sub-issue of the new stage (for example moved there by the review's recommendation or by the owner), and an item the owner says not to file
-  - A filed follow-up never gets `needs-owner`. When the review marks an item as needing the owner (for example a hook or settings edit), the body says so in words
+  - A follow-up filed here whose change edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex` (source: "Escalation" in `docs/process.md`), or whose work spends money or quota, gets the label `needs-owner` in addition to `later`, and its body states in words what the owner decides
+  - Every other follow-up filed here gets only `later` (no `needs-owner`). An item the review marks as needing the owner for another reason (for example a scope question) also gets only `later`, and its body says in words what the owner must decide
+  - A follow-up with only `later` is a parked issue; a follow-up with `needs-owner` is not a parked issue (definition in "Follow-ups and parked issues" in `docs/process.md`), so the orchestrator does not promote it while it waits for the owner. For the owner's approval, see "Escalation" in `docs/process.md`
+  - The label applies only to issues you file. When an open issue already covers the item (the check above), do not change the labels of that issue
   - A filed issue reads on its own: no references such as "Option 2" or "point 3"; restate the content of the item in words
   - Tell the owner every issue you filed (number and title) and every to-be-filed item you did not file, with the reason: covered by an open issue, already in the new stage, or the owner said not to file it
 - Close the finished stage issue with exactly `gh issue close <number>` as the whole command. The close check allows it only when all its sub-issues are closed

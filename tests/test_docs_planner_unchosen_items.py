@@ -57,12 +57,12 @@ def test_step_comes_before_the_close():
     assert entries.index(step) < close[0]
 
 
-def test_step_files_parked_follow_ups_with_source():
+def test_step_files_follow_ups_with_source():
     step = unchosen_step()
     assert "to be filed" in step
     assert '"New:"' in step
     assert "every option the owner did not choose" in step
-    assert "parked follow-up" in step
+    assert "as a follow-up in" in step
     assert "`docs/task-template.md` format" in step
     assert "`later`" in step
     assert "no parent issue" in step
@@ -77,10 +77,62 @@ def test_step_checks_duplicates_and_skips():
     assert "the owner says not to file" in step
 
 
-def test_step_never_adds_needs_owner_and_reads_on_its_own():
+def test_step_no_longer_says_never_needs_owner():
+    assert "never gets `needs-owner`" not in PLANNER
+
+
+def test_step_does_not_call_every_follow_up_parked():
     step = unchosen_step()
-    assert "never gets `needs-owner`" in step
-    assert "says so in words" in step
+    assert "as a parked follow-up" not in step
+    assert "a parked follow-up)" not in PLANNER
+    # A follow-up with needs-owner is not a parked issue.
+    assert "is not a parked issue" in step
+    assert '"Follow-ups and parked issues" in `docs/process.md`' in step
+
+
+def needs_owner_bullet():
+    hits = [l for l in unchosen_step().splitlines()
+            if "gets the label `needs-owner` in addition to `later`" in l]
+    assert len(hits) == 1, "one sub-bullet with the needs-owner rule"
+    return hits[0]
+
+
+def test_needs_owner_cases_and_source():
+    rule = needs_owner_bullet()
+    for case in (
+        "`.claude/hooks/`",
+        "the project settings files in `.claude/`",
+        "`QA_SANDBOX` in `scripts/qa-codex`",
+        "spends money or quota",
+    ):
+        assert case in rule, case
+    assert '"Escalation" in `docs/process.md`' in rule
+    assert "states in words what the owner decides" in rule
+
+
+def test_every_other_follow_up_gets_only_later():
+    step = unchosen_step()
+    assert "Every other follow-up filed here gets only `later` (no `needs-owner`)" in step
+    assert "for another reason (for example a scope question)" in step
+    assert "also gets only `later`" in step
+    assert "its body says in words what the owner must decide" in step
+
+
+def test_label_only_on_issues_the_planner_files():
+    step = unchosen_step()
+    assert "only to issues you file" in step
+    assert "do not change the labels of that issue" in step
+
+
+def test_approval_points_to_escalation_without_restating():
+    step = unchosen_step()
+    assert 'For the owner\'s approval, see "Escalation" in `docs/process.md`' in step
+    assert "remove `needs-owner` to approve" not in step
+    assert "not planned" not in step
+
+
+def test_step_reads_on_its_own():
+    step = unchosen_step()
     assert "reads on its own" in step
     assert '"Option 2"' in step and '"point 3"' in step
     assert "restate" in step
@@ -104,6 +156,8 @@ def test_spec_closing_bullet_names_the_filing():
     assert len(lines) == 1
     line = lines[0]
     assert "options not chosen" in line
-    assert "parked follow-ups" in line
+    assert "parked follow-ups" not in line
+    assert "as follow-ups" in line
+    assert "`needs-owner`" in line
     assert "Before the close" in line
     assert "docs/team/planner.md" in line
