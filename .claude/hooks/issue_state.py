@@ -564,6 +564,30 @@ def g1_planner(call: Call, facts: Facts) -> str | None:
     return _g1_rest(call, facts)
 
 
+GO_ON_ROLES = ("pm", "engineer", "qa")  # the roles whose go-on after one miss passes a dirty tree (issue #142)
+
+
+def _dirty_tree_problem(call: Call, iss: Issue) -> str | None:
+    """The deny message for a dirty tree, or None when the call is the go-on after one miss
+    (issue #142): a call of pm, engineer or qa on an issue that is pending after one miss of that
+    role. A role that ended early may leave uncommitted work, and the go-on finishes or resets it.
+    The match is by issue state only, never by file content. Two misses in a row give the
+    two-misses message of the pending check, as with a clean tree."""
+    if is_pending(iss):
+        lines = _lines(iss)
+        j = _newest_launch(lines)
+        if two_misses(iss):
+            return _two_misses_message(iss, lines, j)
+        if call.role in GO_ON_ROLES and call.role == _launch_role(lines[j]):
+            return None
+    return "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+
+
+def _two_misses_message(iss: Issue, lines: list[str], j: int) -> str:
+    return (f"G1: issue #{iss.number} is pending: the last 2 launches of {_launch_role(lines[j])} ended without "
+            f"a result ({lines[_receipts(lines)[-2]]}, {lines[j]}), expected {RESUME}; escalate the issue")
+
+
 def _g1_rest(call: Call, facts: Facts) -> str | None:
     """The part of G1 after the label check: the labels later and needs-owner, the clean tree,
     two voided launches (not for close) and the pending check. Pending means the newest receipt is a
@@ -573,8 +597,8 @@ def _g1_rest(call: Call, facts: Facts) -> str | None:
     for label in ("later", "needs-owner"):
         if label in iss.labels:
             return f"G1: issue #{iss.number} has the label {label}, expected no label later or needs-owner"
-    if not facts.clean:
-        return "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+    if not facts.clean and (problem := _dirty_tree_problem(call, iss)):
+        return problem
     if call.role != "close" and _two_not_started(iss):
         return (f"G1: issue #{iss.number}: the last 2 launches did not start or were stopped by an auto mode "
                 f"outage, expected a launch that runs; stop the loop, the owner posts {RESUME}")
@@ -585,8 +609,7 @@ def _g1_rest(call: Call, facts: Facts) -> str | None:
         j = _newest_launch(lines)
         role = _launch_role(lines[j])
         if two_misses(iss):
-            return (f"G1: issue #{iss.number} is pending: the last 2 launches of {role} ended without a result "
-                    f"({lines[_receipts(lines)[-2]]}, {lines[j]}), expected {RESUME}; escalate the issue")
+            return _two_misses_message(iss, lines, j)
         if call.role != role:
             return (f"G1: issue #{iss.number} is pending: {lines[j]} has no result, so only {role} may go on, "
                     f"expected one continuation or new launch of {role}, a result of {role} or {RESUME}")

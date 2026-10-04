@@ -2168,3 +2168,97 @@ def test_qa_codex_miss_after_pass_with_old_sha_keeps_the_recheck():
 def test_qa_codex_miss_after_pass_with_head_sha_is_still_denied_by_g4():
     iss = done(launch("qa"), f"## QA: PASS\nVerified: {HEAD}", launch("qa", 2))
     assert check(QA, facts(iss)).startswith("G4:")
+
+
+# --- the go-on after one miss with a dirty tree (issue #142) ----------------------------------
+
+from issue_state import Issue  # noqa: E402
+
+NOT_CLEAN = "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+
+
+@pytest.mark.parametrize("call", [ENG, ENG_CONT])
+def test_dirty_tree_engineer_go_on_after_one_engineer_miss_is_allowed(call):
+    iss = groomed(launch("engineer"))
+    assert check(call, facts(iss, clean=False)) is None
+
+
+def test_dirty_tree_pm_go_on_after_one_pm_miss_is_allowed():
+    iss = issue(launch("pm"))
+    assert check(PM, facts(iss, clean=False)) is None
+    assert check(PM_CONT, facts(iss, clean=False)) is None
+
+
+def test_dirty_tree_qa_go_on_after_one_qa_miss_is_allowed():
+    assert check(QA, facts(done(launch("qa")), clean=False)) is None
+    iss = done(launch("qa"), "## QA: UNAVAILABLE", launch("qa", 2, agent="qa-engineer"))
+    assert check(Call(role="qa", agent="qa-1", issue=7, continued=True), facts(iss, clean=False)) is None
+
+
+def test_dirty_tree_go_on_after_one_miss_still_runs_the_role_checks():
+    # G1 lets the go-on pass the tree, then G3 checks the lane as usual
+    iss = issue(launch("pm"), "## PM: GROOMED", launch("engineer"), body="")
+    assert check(ENG, facts(iss, clean=False)).startswith("G3:")
+
+
+def test_dirty_tree_go_on_after_one_miss_keeps_the_voided_twice_stop():
+    iss = groomed(launch("engineer"), launch("engineer", 2, call=X), not_started("engineer", 2, X),
+                  launch("engineer", 3, call=Y), stopped("engineer", 3, Y))
+    assert not two_misses(iss)
+    assert check(ENG, facts(iss, clean=False)).startswith("G1: issue #7: the last 2 launches did not start")
+
+
+@pytest.mark.parametrize("call", [PM, PM_CONT, QA, QA_FALLBACK, CLOSE])
+def test_dirty_tree_other_role_after_one_engineer_miss_is_denied_as_not_clean(call):
+    assert check(call, facts(groomed(launch("engineer")), clean=False)) == NOT_CLEAN
+
+
+def test_dirty_tree_call_on_another_issue_that_is_not_pending_is_denied_as_not_clean():
+    pending = groomed(launch("engineer"))
+    assert is_pending(pending)
+    other = Issue(number=8, open=True, labels=frozenset({"ready"}), body="Lane: default\n",
+                  comments=(launch("pm"), "## PM: GROOMED"))
+    assert not is_pending(other)
+    call = Call(role="engineer", agent="software-engineer", issue=8)
+    assert check(call, facts(other, clean=False)) == NOT_CLEAN
+    assert check(call, facts(other)) is None
+
+
+@pytest.mark.parametrize("call, iss", [
+    (PM, issue()),  # first launch
+    (ENG, groomed()),  # the next step after a result
+    (QA, done()),
+])
+def test_dirty_tree_call_without_a_miss_is_denied_as_not_clean(call, iss):
+    assert not is_pending(iss)
+    assert check(call, facts(iss, clean=False)) == NOT_CLEAN
+    assert check(call, facts(iss)) is None
+
+
+@pytest.mark.parametrize("second", [launch("engineer", 2), cont("engineer", 2, "eng-1")])
+@pytest.mark.parametrize("call", [ENG, ENG_CONT, PM, CLOSE])
+def test_dirty_tree_two_misses_give_the_two_misses_message(second, call):
+    iss = groomed(launch("engineer"), second)
+    msg = check(call, facts(iss, clean=False))
+    assert msg == check(call, facts(iss)), msg
+    assert msg.startswith("G1: issue #7 is pending: the last 2 launches of engineer ended without a result")
+
+
+def test_dirty_tree_planner_launch_after_one_planner_miss_is_denied_as_not_clean():
+    iss = stage(planner_receipt())
+    assert is_pending(iss)
+    assert check(PLANNER, planner_facts(iss, clean=False)) == NOT_CLEAN
+    assert check(PLANNER, planner_facts(iss)) is None
+
+
+def test_dirty_tree_close_with_a_current_pass_is_denied_as_not_clean():
+    iss = done(launch("qa"), f"## QA: PASS\nVerified: {HEAD}")
+    assert check(CLOSE, facts(iss, clean=False)) == NOT_CLEAN
+    assert check(CLOSE, facts(iss)) is None
+
+
+def test_dirty_tree_two_planner_misses_give_the_two_misses_message():
+    iss = stage(planner_receipt(), planner_receipt(2))
+    msg = check(PLANNER, planner_facts(iss, clean=False))
+    assert msg == check(PLANNER, planner_facts(iss))
+    assert msg.startswith("G1: issue #7 is pending: the last 2 launches of planner ended without a result")

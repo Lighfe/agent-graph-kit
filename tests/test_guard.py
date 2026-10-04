@@ -1920,3 +1920,56 @@ def test_guard_other_role_after_one_miss_is_denied(env):
     reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
     assert reason.startswith("G1: issue #7 is pending:") and "only engineer may go on" in reason
     assert lines(env["FAKE_GH_LOG"]) == []
+
+
+# --- the go-on after one miss with a dirty tree (issue #142) ----------------------------------
+
+NOT_CLEAN = "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)"
+
+
+@pytest.mark.parametrize("event, body", [
+    (agent("software-engineer", "ROLE=engineer ISSUE=7"), "## Launch: engineer (attempt 2)\nAgent: software-engineer"),
+    (send("a1b2c3", "ROLE=engineer ISSUE=7"), "## Launch: engineer (continued, round 2)\nAgent: a1b2c3"),
+])
+def test_guard_engineer_go_on_after_one_miss_with_a_dirty_tree_is_allowed(env, event, body):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
+    assert run_guard(event, env, FAKE_GIT_DIRTY="1") == (0, "")
+    assert [c["body"] for c in lines(env["FAKE_GH_LOG"])] == [body]
+
+
+@pytest.mark.parametrize("event", [
+    agent("pm", "ROLE=pm ISSUE=7"),
+    agent("qa-engineer", "ROLE=qa ISSUE=7"),
+    CLOSE_7,
+])
+def test_guard_other_call_after_one_engineer_miss_with_a_dirty_tree_is_denied_as_not_clean(env, event):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
+    assert deny_reason(run_guard(event, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_first_launch_with_a_dirty_tree_is_denied_as_not_clean(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]))
+    assert deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
+
+
+def test_guard_two_engineer_misses_with_a_dirty_tree_give_the_two_misses_message(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS, launch("engineer", 2))
+    event = agent("software-engineer", "ROLE=engineer ISSUE=7")
+    reason = deny_reason(run_guard(event, env, FAKE_GIT_DIRTY="1")[1])
+    assert reason == ("G1: issue #7 is pending: the last 2 launches of engineer ended without a result "
+                      "(## Launch: engineer (attempt 1), ## Launch: engineer (attempt 2)), "
+                      "expected ## Owner: RESUME; escalate the issue")
+
+
+def test_guard_planner_launch_after_one_planner_miss_with_a_dirty_tree_is_denied_as_not_clean(env):
+    planner_stage(env, planner_receipt())
+    assert deny_reason(run_guard(PLANNER_7, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
+    assert lines(env["FAKE_GH_LOG"]) == []
+
+
+def test_guard_close_with_a_current_pass_and_a_dirty_tree_is_denied_as_not_clean(env):
+    write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS, "## Engineer: DONE\nCommits: x..y",
+                launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
+    assert run_guard(CLOSE_7, env)[0] == 0  # a clean tree lets it through
+    assert deny_reason(run_guard(CLOSE_7, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
