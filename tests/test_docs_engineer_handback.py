@@ -99,4 +99,6 @@ def test_existing_rules_kept():
 
 
 def test_spec_g1_clean_tree_reason_kept():
-    assert "5. The working tree is clean (`git status --porcelain` is empty). This works because no role may leave uncommitted work." in SPEC
+    # issue #142 adds the exception for a role that ended early to the reason
+    assert ("5. The working tree is clean (`git status --porcelain` is empty). This works because no role "
+            "may leave uncommitted work, except a role that ended without a result") in SPEC

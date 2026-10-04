@@ -10,7 +10,7 @@ You are the main session. You coordinate the work on the issues. You follow the 
 
 ## Before each issue
 
-Run `git status --porcelain`. The output must be empty. If it is not empty, stop the whole loop and ask the owner. Do not commit, stash or discard the changes.
+Run `git status --porcelain`. The output must be empty. If it is not empty, stop the whole loop and ask the owner. Do not commit, stash or discard the changes. This check does not apply to the go-on after one miss of `pm`, `engineer` or `qa` (see "Hooks").
 
 Blockers are native "blocked by" links. An issue may have several, also in other repos. Read them for a `ready` issue with the same two reads as the hook:
 
@@ -192,7 +192,7 @@ The hook comments are `## Launch: …`, `## Launch not started: …` and `## Lau
 
 The issue is pending when the last launched role ended without a result: its receipt is a miss ([#132](https://github.com/Lighfe/agent-graph-kit/issues/132)). This also holds when the role started and then could not act, unless a hook marked its receipt as stopped by an outage (see below).
 
-- One miss: go on with the same role once, without the owner. Continue the agent with `SendMessage` (same `ROLE=… ISSUE=…` line first) or launch the same role again. `qa-codex` and the planner only get a new launch. The prompt or the message names the receipt of the miss (for example `## Launch: engineer (attempt 1)`) and says that the earlier launch ended without a result, so the agent first checks what is already committed or posted
+- One miss: go on with the same role once, without the owner. Continue the agent with `SendMessage` (same `ROLE=… ISSUE=…` line first) or launch the same role again. `qa-codex` and the planner only get a new launch. The prompt or the message names the receipt of the miss (for example `## Launch: engineer (attempt 1)`) and says that the earlier launch ended without a result, so the agent first checks what is already committed or posted. A dirty tree does not stop this go-on of `pm`, `engineer` or `qa`: the hook lets it pass G1, and you do not run your own clean-tree stop ("Before each issue") for it. The prompt or the message then also says that the earlier launch may have left uncommitted work, so the agent runs `git status` first ([#142](https://github.com/Lighfe/agent-graph-kit/issues/142)). This does not hold for the planner: a planner go-on with a dirty tree is denied as not clean
 - Two misses in a row (the two newest receipts are misses of the same role, with no `## Owner: RESUME` after the older one): the hook denies, and you escalate the issue (a stage issue: escalate it and stop the loop), as before
 - A miss is not a return. Receipts voided by `## Launch not started: …` or `## Launch stopped by outage: …` are left out when misses are counted
 
