@@ -74,8 +74,13 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 
 The sub-issues carry `later` until the owner confirms the stage.
 
-- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then end with the last line of "Stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
+- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then end with the last line of "Stage set-up" below; for an intake reached from stage set-up, first follow "Intake reached from stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
 - Without confirmation: the sub-issues stay `later`. Say so, and end
+
+Intake reached from stage set-up: this part applies only when you came to "Intake" from "Stage set-up" step 3 (the owner chose no option of a stage review). A fresh intake, with no stage review, skips it.
+
+- When the owner confirms the new stage: after the relabel, run the steps under "Then" in "Stage set-up" before its last line. The option entry there applies to every option of the review, since none was chosen. Then the entry for the findings outside any option, the close of the finished stage issue and the plan archive follow as written
+- Without confirmation: file nothing from the review and do not close the finished stage issue. Tell the owner that the next `/stage-start` finds the same review again
 
 Do not use the skills subagent-driven-development and executing-plans (as in `AGENTS.md`). If a skill offers one of them as the next step, do not accept. Turn the plan into issues as above.
 
@@ -89,7 +94,7 @@ Steps, in this order:
 
 1. Present the options of that review
 2. Answer the owner's questions
-3. The owner chooses an option and validates its purpose. If the owner asks for something else, that is intake: go to "Intake"
+3. The owner chooses an option and validates its purpose. If the owner asks for something else, that is intake: go to "Intake", and follow its part "Intake reached from stage set-up"
 4. Write the stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. It is blocked by no open stage issue except the finished one (`gh issue edit <new stage> --add-blocked-by <finished stage>`)
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
    - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions. Add ` - set` to an entry only when the owner says in the session that it is set
@@ -107,6 +112,8 @@ Then:
   - The label applies only to issues you file. When an open issue already covers the item (the check above), do not change the labels of that issue
   - A filed issue reads on its own: no references such as "Option 2" or "point 3"; restate the content of the item in words
   - Tell the owner every issue you filed (number and title) and every to-be-filed item you did not file, with the reason: covered by an open issue, already in the new stage, or the owner said not to file it
+- File each finding of the review that proposes a change and belongs to no option (a doc drift finding, such as a failing fact test or a prompt audit finding, or a run-note conclusion that asks for a change) as a follow-up, with the rules of the entry above: the duplicate check, the skips (already in the new stage, or the owner says not to file it), the label `later` and, in the same cases, `needs-owner`, no parent issue, the line `Source: <URL of the review comment>`, a body that reads on its own, and the report to the owner of what you filed and did not file. Do this before the close below as well
+  - Do not file a finding that proposes no change (for example "the fact tests passed", or an observation with no action)
 - Close the finished stage issue with exactly `gh issue close <number>` as the whole command. The close check allows it only when all its sub-issues are closed
 - Follow-ups that the owner decided to close: name them for the owner to close. Do not close them yourself: the close check denies a task issue without `## QA: PASS`
 - Archive the plan: move it from `docs/plans/` to `docs/archive/` once every stage issue made from it has been set up. A plan with several stages stays in `docs/plans/` until its last stage is set up. Commit the move
@@ -126,7 +133,7 @@ This rule applies to the relabel from `later` to `ready` in "Intake" and in "Sta
 - When the owner says the labels are set by hand: check the labels of every sub-issue of the stage (`gh issue view <n> --json labels`)
 - When the owner has set entry 3 and asks for a retry: run the relabel again once on each sub-issue that still has `later`, then check the labels of every sub-issue of the stage as above
 - If any sub-issue still has `later` or lacks `ready` after the check, name those sub-issues again and wait for the owner
-- When every sub-issue has `ready`, go on where the step left off: in "Stage set-up" with the steps under "Then" and the last line; in "Intake" with the last line of "Stage set-up"
+- When every sub-issue has `ready`, go on where the step left off: in "Stage set-up" with the steps under "Then" and the last line; in "Intake" with the last line of "Stage set-up" (for an intake reached from stage set-up, first the steps under "Then", as in "Intake reached from stage set-up")
 - An outage deny (the reason's first line starts with `Classifier unavailable`, `Auto mode could not evaluate this action and is blocking it for safety` or `Auto mode unavailable`): say that it is an Auto mode outage, do not point to the allow entry, and retry the relabel only when the owner asks
 
 ## Stage review
