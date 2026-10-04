@@ -25,6 +25,30 @@ If a criterion is blocked (wrong, impossible, contradictory), or you are in doub
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
+## Test runs and background commands
+
+- Run the test command `uv run --with pytest pytest` in the foreground, with the Bash timeout of 600000 ms. A full run takes from about 2 to about 6 minutes, depending on machine load
+- When that foreground run hits the timeout, run it again with the Bash tool's `run_in_background` option, and wait for it to end before you read the result or hand back
+- When a command runs in the background, wait for it to end before the hand-back, or stop it when it is a command that does not end by itself (for example a server or a watcher)
+- Never hand back while a test run is still going
+
+## Clean hand-back
+
+A hand-back is the end of your launch: after `## Engineer: DONE`, after `## Engineer: BLOCKED`, or without a result marker.
+
+- Before every hand-back, `git status --porcelain` is empty
+- Commit the work that belongs to the issue, or reset it. Reset covers both changed tracked files and new untracked files, since `git status --porcelain` lists both
+- The next launch on any issue needs a clean tree: the guard denies it otherwise
+
+## Going on after a launch without a result
+
+Your prompt or message may say that an earlier launch ended without a result, and name its receipt (for example `## Launch: engineer (attempt 1)`). Then:
+
+1. First run `git status` and `git log`, and look at what the earlier launch left: uncommitted changes, and commits it made for the issue after the base of that launch
+2. Keep and finish uncommitted work that belongs to the issue: review it, test it, commit it
+3. Reset work you cannot account for
+4. The `Commits: <base>..<head>` line of your `## Engineer: DONE` starts before the first commit that the earlier launch made for the issue, so the range covers those commits too. The base is not simply `HEAD` at the start of your launch: take the base SHA that the earlier launch started from (the parent of its first commit for the issue)
+
 ## Body files
 
 You post your comment from a body file. Each launch writes each body to its own path and reads it back before it posts. This holds for both lanes.
@@ -42,7 +66,7 @@ Only for `frontend-engineer`. You drive Lovable. Nobody edits `frontend/` locall
 
 You review Lovable's work like a lead engineer reviews a junior's: check Lovable's plan and its result (the diff of Lovable's commit, `get_diff`) against the goal, the criteria and the constraints of the issue, and steer Lovable with follow-up messages.
 
-These rules above apply: note the base SHA, do not close the issue, commit, the result markers `## Engineer: DONE` and `## Engineer: BLOCKED`, the BLOCKED rule, and the final message. These do not apply: you do not write code or tests yourself (Lovable writes the code and its tests), and you do not use the test-driven-development skill.
+These rules above apply: note the base SHA, do not close the issue, commit, the result markers `## Engineer: DONE` and `## Engineer: BLOCKED`, the BLOCKED rule, the final message, "Test runs and background commands", "Clean hand-back" and "Going on after a launch without a result". In this lane, reset an uncommitted pointer change with `git submodule update frontend`. These do not apply: you do not write code or tests yourself (Lovable writes the code and its tests), and you do not use the test-driven-development skill.
 
 You have no `Edit` or `Write` tool. Write a comment body to a file outside the repo with Bash, at a literal absolute path (for example `/tmp/engineer-72-attempt1.md`, not `$TMPDIR/…`), as in "Body files" above: read it back, then post it with exactly `gh issue comment <number> --body-file <that literal path>` as the whole command.
 
