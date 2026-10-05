@@ -59,8 +59,14 @@ def test_launched_role_gives_attempt_path_form(name, role):
     assert "`/tmp/<role>-<issue>-attempt<n>.md`" in text
     assert re.search(rf"`/tmp/{role}-\d+-attempt\d+\.md`", text), f"concrete example for {role}"
     assert f"`## Launch: {role} (attempt <n>)`" in text
-    assert f"`## Launch: {role} (continued, round <n>)`" in text
+    if role != "planner":
+        assert f"`## Launch: {role} (continued, round <n>)`" in text
     assert "newest" in text
+
+
+def test_planner_names_only_the_attempt_receipt():
+    text = body_files("planner.md")
+    assert "continued" not in text
 
 
 @pytest.mark.parametrize("name,role", RECEIPTLESS.items())

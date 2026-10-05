@@ -46,7 +46,7 @@ You post each comment, and the body of each issue you file or edit, from a body 
 
 The path depends on the job:
 
-- Stage review (a launched subagent with a receipt): the path form is `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/planner-<stage>-attempt<n>.md`. Example: `/tmp/planner-93-attempt1.md`. `<n>` is the number of the newest `## Launch: planner (attempt <n>)` or `## Launch: planner (continued, round <n>)` receipt of your role on the stage issue (`gh issue view <stage> --comments`)
+- Stage review (a launched subagent with a receipt): the path form is `/tmp/<role>-<issue>-attempt<n>.md`, for you `/tmp/planner-<stage>-attempt<n>.md`. Example: `/tmp/planner-93-attempt1.md`. `<n>` is the number of the newest `## Launch: planner (attempt <n>)` receipt of your role on the stage issue (`gh issue view <stage> --comments`)
 - Intake and stage set-up (the main session): the session has no launch receipt, so there is no attempt number. The path form is `/tmp/<role>-<issue>-<UTC time>.md`, with the time from `date -u +%Y%m%dT%H%M%S`, taken right before the body is written. `<issue>` is the issue the body is for; for a new issue, which has no number yet, use the stage issue, or `new` while the stage issue is not filed yet. Example: `/tmp/planner-103-20261003T120501.md`
 
 Rules for every body:
