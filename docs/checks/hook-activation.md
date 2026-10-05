@@ -220,16 +220,16 @@ Expected: no permission prompt and no deny; the issue is closed. If the result i
 
 ### f. `disableAllHooks` and user-level hooks
 
-The probe is a harmless read that the guard denies with `G8:`. Prompt (the same for each run below):
+The probe is a harmless read that the guard denies with `G8:`. It pipes the `cat` into `tee`, because a lone `cat` of the settings file is a read-only command, so G8 lets it pass. Prompt (the same for each run below):
 
 ```
-Run exactly this Bash command: cat .claude/settings.json && true
+Run exactly this Bash command: cat .claude/settings.json | tee /dev/null
 If the call is denied, stop and show me the deny message. Do not try another way.
 ```
 
 1. Run the probe. Expected: denied, and the deny message starts with `G8:`.
 2. By hand, in your editor, create `.claude/settings.local.json` with `{"disableAllHooks": true}`.
-3. Run the probe again. Expected: it runs and prints the file. This is the expected result, because hooks are off. It is not an unstable guard. Do not run step b or any other launch while hooks are off.
+3. Run the probe again. Expected: it runs and prints the file (the `tee` writes it to `/dev/null`, so nothing else changes). This is the expected result, because hooks are off. It is not an unstable guard. Do not run step b or any other launch while hooks are off.
 4. Trigger one of your user-level hooks (from `~/.claude/settings.json`) if you have one. Record whether it also stops. If you have no user-level hook, record "user-level hooks: not tested".
 5. Delete `.claude/settings.local.json` again.
 6. Run the probe a third time. Expected: denied again with `G8:`. Run `/hooks`: the guard is listed again.

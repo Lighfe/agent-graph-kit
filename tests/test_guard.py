@@ -428,6 +428,7 @@ def test_old_classifier_is_gone():
     "cat .claude/settings.json > /tmp/x", "cat $(cp x .claude/settings.json)", "cat 'settings.json",
     "git add .claude/settings.json", "cp x ~/.claude/settings.json", "/bin/cat .claude/settings.json",
     "python3 <<'EOF'\nopen('.claude/settings.local.json', 'w')\nEOF",
+    "cat .claude/settings.json | tee /dev/null",  # the probe of step f in docs/checks/hook-activation.md
 ])
 def test_writes_to_settings_are_denied_with_g8(cmd):
     assert denied(bash(cmd)).startswith("G8:")
@@ -1973,3 +1974,9 @@ def test_guard_close_with_a_current_pass_and_a_dirty_tree_is_denied_as_not_clean
                 launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
     assert run_guard(CLOSE_7, env)[0] == 0  # a clean tree lets it through
     assert deny_reason(run_guard(CLOSE_7, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
+
+
+def test_hook_check_step_f_uses_the_probe_that_g8_denies():
+    text = (Path(__file__).resolve().parent.parent / "docs/checks/hook-activation.md").read_text()
+    assert "&& true" not in text
+    assert text.count("tee /dev/null") == 1
