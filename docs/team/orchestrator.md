@@ -122,11 +122,11 @@ Launch a new subagent for each step. Each subagent starts with a fresh context. 
 
 Run `scripts/qa-codex ROLE=qa ISSUE=<number>` as the whole Bash command, with the Bash tool's `run_in_background` option. No `&`, no `cd … &&`, no redirection, nothing in front of `scripts/`. Wait until it ends.
 
-Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer` and for `frontend-engineer`, `qa` for `qa-engineer`, `planner` for `planner`. The guard accepts only `pm`, `engineer`, `qa` and `planner`, so the launch line of `frontend-engineer` is `ROLE=engineer`, and the launch line of `planner` is `ROLE=planner`:
+Prompt for each subagent. The first line is the launch line: `pm` for `pm`, `engineer` for `software-engineer` and for `frontend-engineer`, `qa` for `qa-engineer`, `planner` for `planner`. The guard accepts only `pm`, `engineer`, `qa` and `planner`, so the launch line of `frontend-engineer` is `ROLE=engineer`, and the launch line of `planner` is `ROLE=planner`. The role file in the role line depends on the agent: `pm` uses `docs/team/pm.md`, `software-engineer` and `frontend-engineer` use `docs/team/software-engineer.md`, `qa-engineer` uses `docs/team/qa-engineer.md`:
 
 ```
 ROLE=<pm|engineer|qa> ISSUE=<number>
-Your role is defined in docs/team/<role>.md.
+Your role is defined in <role file of the agent>.
 Work on issue #<number>. Follow the process in docs/process.md.
 <input from the table, if any>
 ```
