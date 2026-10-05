@@ -25,7 +25,7 @@ PLUGIN = ROOT / "plugin"
 HOOK_SCRIPTS = ["guard.py", "issue_state.py", "not_started.py", "outage_stop.py"]
 AGENTS = ["pm", "software-engineer", "frontend-engineer", "qa-engineer", "planner"]
 SKILLS = ["stage-start", "codex-review"]
-HAND_SKILLS = ["setup"]  # written by hand in plugin/skills/, not built (issue #160)
+HAND_SKILLS = ["setup", "drift"]  # written by hand in plugin/skills/, not built (issues #160, #161)
 # plugin/templates/: the files that /agk:setup copies into a project (issue #160)
 TEMPLATE_FILES = ["docs/process.md", "docs/task-template.md", "scripts/qa-codex", "scripts/codex_exec.py",
                   "scripts/qa-result.schema.json"]
