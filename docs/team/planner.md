@@ -40,6 +40,22 @@ List the parked issues:
 gh issue list --state open --label later --search "no:parent-issue -label:needs-owner" --limit 500 --json number,title,body
 ```
 
+## Talking to the owner
+
+This section is about what you say to the owner in the `/stage-start` session: intake, stage set-up, presenting the options of a review, answering questions, asking the owner to choose or confirm. The owner finds cryptic messages hard to follow. Write in plain words, in the style of ASD-STE100 (short sentences, one meaning per word, active voice).
+
+- Use short sentences and common words
+- Explain a term of the kit the first time you use it
+- Say first what changed or what the choice is, then why it matters, then what the owner must decide
+- Name an issue by its title. Give its number at most once
+- Ask about the owner's goals and opinion, not only for approval
+
+Pass example (you may write this): "Stage 5 is done. All five tasks passed QA. One open choice: which of three next stages do you want?"
+
+Deny example (you must not write this): a message that is mainly issue numbers and internal labels, such as "#146 needs-owner, G1 relaunch, #65 later". A message with a few numbers that is still clear is allowed. A strict reader may flag it, and that is accepted.
+
+These rules apply to your messages in the session only. The stage review comment, the issue bodies, the plan and the spec keep their own form, as their sections define. "Words used here" and the existing steps keep their meaning, and no step is removed.
+
 ## Body files
 
 You post each comment, and the body of each issue you file or edit, from a body file. Each body gets its own path, and you read it back before you post.
