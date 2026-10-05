@@ -144,7 +144,7 @@ Permissions: create and delete a throwaway GitHub repo with `gh repo create` and
 **Goal:** The plugin has run one task through the loop in a fresh project, and the findings are on record.
 
 **Acceptance criteria**
-- [ ] A report `docs/reviews/plugin-trial.md` lists each step as done in a fresh throwaway project that holds only synthetic data: create the repo, install the plugin, run the setup, do the manual steps from the README, file one small task issue, run PM, engineer and QA, close the issue
+- [ ] A report `docs/reviews/plugin-trial.md` lists each step as done in a fresh throwaway project that holds only synthetic data: create the repo, install the plugin, run the setup, do the manual steps from the README, file one small task issue (the owner's one-line request: use a Hugging Face model named Kolibri and try different German question prompts until the model answers "I don't know" or the German equivalent; the PM may narrow it so it fits one task), run PM, engineer and QA, close the issue
 - [ ] For each step the report says "worked", "needed a change" or "failed", with the command and its output (shortened, no secrets) and the README line that was wrong or missing
 - [ ] Each finding that asks for a change becomes a follow-up issue in `docs/task-template.md` format with the label `later` and the line `Source:` pointing at the report
 - [ ] The throwaway repo is deleted after the trial; the report shows the final state
@@ -152,6 +152,7 @@ Permissions: create and delete a throwaway GitHub repo with `gh repo create` and
 
 **Out of scope**
 - Fixing the findings in this issue
+- The trial task's own result: the trial counts as done when the loop ran, even if the model task ends as BLOCKED or UNVERIFIABLE (for example no network or no model access); the report says what happened
 
 **Constraints**
 - Blocked by task 5. The owner is present for the manual steps (user-level entries, logins)
