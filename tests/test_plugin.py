@@ -90,3 +90,19 @@ def test_claude_plugin_validate_strict_passes():
     p = subprocess.run(["claude", "plugin", "validate", str(PLUGIN), "--strict"], capture_output=True,
                        text=True, timeout=120, env=env)
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_marketplace_lists_the_plugin_and_the_readme_names_it():
+    mkt = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    assert [(p["name"], p["source"]) for p in mkt["plugins"]] == [("agk", "./plugin")]
+    readme = (ROOT / "README.md").read_text()
+    assert "claude plugin marketplace add Lighfe/agent-graph-kit" in readme
+    assert f"claude plugin install agk@{mkt['name']} --scope project" in readme
+
+
+@pytest.mark.skipif(shutil.which("claude") is None, reason="the claude command is not available: marketplace validate did not run")
+def test_claude_plugin_validate_marketplace_passes():
+    env = {**os.environ, "DISABLE_TELEMETRY": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    p = subprocess.run(["claude", "plugin", "validate", str(ROOT)], capture_output=True,
+                       text=True, timeout=120, env=env)
+    assert p.returncode == 0, p.stdout + p.stderr

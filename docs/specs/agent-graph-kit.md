@@ -420,6 +420,17 @@ What the hooks do for a stage issue:
 - The close of a stage issue is allowed only when it is open and every sub-issue is closed: the stage path of [G1](#g1-launch-preconditions) and [G6](#g6-close).
 - `qa-codex` gives Codex the sub-issues of the checked issue in `sub-issues.json` (see "What Codex gets").
 
+## Installation as a plugin
+
+The kit is installed as a Claude Code plugin `agk` ([plugin/](../../plugin/), listed in [.claude-plugin/marketplace.json](../../.claude-plugin/marketplace.json)). The plugin has these parts:
+
+- **Hooks**: the guard, the not-started hook and the outage-stop hook, from `plugin/hooks/`.
+- **Agents**: the role agents, from `plugin/agents/`.
+- **Skills**: `stage-start`, `codex-review`, `setup` and `drift`, from `plugin/skills/`.
+- **Project templates**: the files that `/agk:setup` copies into a project, in `plugin/templates/`.
+
+The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. The steps are in "Install the kit as a plugin (v2)" in the README. The manual copy of v1 stays as the manual route.
+
 ## Doc lifecycles
 
 Each kind of doc has a folder and a lifecycle. The reading rules for these folders are prose in "Work rules" of [docs/process.md](../process.md#work-rules); no hook checks them.

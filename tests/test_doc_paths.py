@@ -8,8 +8,9 @@ never meaning.
 Files read (INSTRUCTION_FILES below): AGENTS.md, CLAUDE.md, docs/process.md,
 docs/task-template.md, every .md file in docs/team/ and .claude/agents/, every
 .md file under .agents/skills/, the living spec docs/specs/agent-graph-kit.md,
-and of README.md only the section "## Set up the kit in a project" (from that
-heading to the next "## " heading).
+and of README.md only three sections (README_SECTIONS below: the v2 install
+section, the Lovable section and the v1 section), each from its heading to the
+next "## " heading.
 
 Candidates: the inline code spans with single backticks and the markdown link
 targets `](...)`, both outside fenced code blocks (lines between ``` or ~~~
@@ -58,7 +59,11 @@ INSTRUCTION_FILES = [
     "docs/specs/agent-graph-kit.md",
 ]
 README = "README.md"
-README_SECTION = "## Set up the kit in a project"
+README_SECTIONS = [
+    "## Install the kit as a plugin (v2)",
+    "## Lovable frontend lane (optional, v2)",
+    "## Set up the kit in a project",
+]
 
 # Paths that are skipped, with the reason for each.
 SKIP_LIST = {
@@ -193,7 +198,7 @@ def instruction_texts():
             if path.is_file():
                 texts[path.relative_to(ROOT).as_posix()] = path.read_text(encoding="utf-8")
     readme = (ROOT / README).read_text(encoding="utf-8")
-    texts[README] = section(readme, README_SECTION)
+    texts[README] = "\n".join(section(readme, h) for h in README_SECTIONS)
     return texts
 
 
@@ -206,8 +211,8 @@ def test_instruction_files_are_read():
                  "docs/team/orchestrator.md", ".claude/agents/pm.md",
                  ".agents/skills/stage-start/SKILL.md", "docs/specs/agent-graph-kit.md", "README.md"]:
         assert name in texts
-    assert texts["README.md"].startswith(README_SECTION)
-    assert "\n## " not in texts["README.md"]
+    headings = [line for line in texts["README.md"].splitlines() if line.startswith("## ")]
+    assert headings == README_SECTIONS
 
 
 def test_every_named_repo_path_exists():

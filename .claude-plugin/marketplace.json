@@ -1,0 +1,14 @@
+{
+  "name": "agent-graph-kit",
+  "description": "Marketplace of the agent-graph-kit repo: the agk plugin.",
+  "owner": {
+    "name": "Lighfe"
+  },
+  "plugins": [
+    {
+      "name": "agk",
+      "source": "./plugin",
+      "description": "Multi-agent graph engineering kit: guard hooks, role agents and planning skills for a GitHub-issue loop."
+    }
+  ]
+}

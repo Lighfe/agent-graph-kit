@@ -14,9 +14,57 @@ Later, this repo becomes a Claude Code plugin.
 
 ## Status
 
-v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. You set up the kit in a project by hand with the steps below. The first project that uses these steps is the paint-math demo.
+v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. You set up the kit in a project by hand with the steps in "Set up the kit in a project". The first project that uses these steps is the paint-math demo.
+
+v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Install the kit as a plugin (v2)" below.
+
+## Install the kit as a plugin (v2)
+
+Run these steps in the root of the project (the git root).
+
+1. Add the marketplace and install the plugin:
+
+   ```bash
+   claude plugin marketplace add Lighfe/agent-graph-kit
+   claude plugin install agk@agent-graph-kit --scope project
+   ```
+
+2. Run the setup in a Claude Code session in the project:
+
+   ```text
+   /agk:setup
+   ```
+
+   The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file.
+3. Do the remaining manual steps:
+   1. Check `gh auth status`. If it fails, log in with `gh auth login`.
+   2. Log in to Codex with `codex login`.
+   3. Add the Codex trust entry to `$HOME/.codex/config.toml`. Use the absolute path of the project (`git rev-parse --show-toplevel`):
+
+      ```toml
+      [projects."/home/you/projects/example-app"]
+      trust_level = "trusted"
+      ```
+
+   4. Add the three Auto mode entries in `/permissions`, in the Auto mode tab. The texts of entry 2 and entry 3 are in [Auto mode allow entries](#auto-mode-allow-entries). Entry 1 allows exactly this command in the project repo:
+
+      ```text
+      scripts/qa-codex ROLE=qa ISSUE=<number>
+      ```
+
+To see which copied files changed since the setup, run `/agk:drift` (`plugin/skills/drift/SKILL.md`).
+
+## Lovable frontend lane (optional, v2)
+
+The base kit works without this lane. To add it:
+
+1. Create the Lovable project.
+2. Add the line `Lovable project: <id>` to `AGENTS.md`.
+3. Install the `lovable` plugin.
 
 ## Set up the kit in a project
+
+This is the manual route (v1). For v2 use the section "Install the kit as a plugin (v2)" above.
 
 Run these steps in the root of the new project (the git root; see "Project repo" for a new, empty repo), in a terminal outside Claude Code. Do not run them from a Claude Code session: the kit's guard hooks deny the `cp` of `.claude/settings.json` (`G8:`), and the Auto mode classifier denies the copy into `.claude/` and the `git submodule add`. The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
 
