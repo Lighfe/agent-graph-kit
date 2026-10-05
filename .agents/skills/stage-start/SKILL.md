@@ -10,7 +10,7 @@ With this skill, this session works as the planner, in dialogue with the owner.
 ## Before you start
 
 - If this session already ran `/goal` as orchestrator, tell the owner to start `/stage-start` in a new session. Do nothing else. A session switches from planner to orchestrator at most once, and never back.
-- Read `docs/team/planner.md` first. You follow its sections "Intake" and "Stage set-up". Its steps are the one source of truth; this skill does not repeat them.
+- Read `docs/team/planner.md` first. You follow its sections "Intake" and "Stage set-up". The steps below restate them in other words. Where this skill and `docs/team/planner.md` differ, `docs/team/planner.md` wins.
 - The stage review job ("Stage review" in `docs/team/planner.md`) is not run from this skill. That job is the planner subagent, launched by the orchestrator.
 
 ## Steps

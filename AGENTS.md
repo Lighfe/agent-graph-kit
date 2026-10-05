@@ -1,7 +1,7 @@
 # agent-graph-kit
 
 This repo will become a Claude Code plugin for multi-agent Graph Engineering.
-Now, it is in bootstrap. Hooks in `.claude/hooks/` check the handoff calls (see `docs/process.md`).
+Hooks in `.claude/hooks/` check the handoff calls (see `docs/process.md`).
 
 ## Documents
 
@@ -48,7 +48,7 @@ Do not use these skills: subagent-driven-development, executing-plans.
 
 Reason: these two skills are a second orchestrator. They make their own rulings without asking the human. This conflicts with `docs/process.md`, which defines when to escalate to the owner.
 
-If a skill offers one of these two skills as the next step, do not accept. Turn the plan into issues and follow `docs/process.md`. If conflicts repeat, copy the used skills into the kit (fork later, only with evidence).
+If a skill offers one of these two skills as the next step, do not accept. Turn the plan into issues and follow `docs/process.md`.
 
 ### Public repo
 
