@@ -37,8 +37,19 @@ Run these steps in the root of the project (the git root).
 
    The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file.
 3. Do the remaining manual steps:
-   1. Check `gh auth status`. If it fails, log in with `gh auth login`.
-   2. Log in to Codex with `codex login`.
+   1. Check the `gh` login. If the check fails, log in:
+
+      ```bash
+      gh auth status
+      gh auth login
+      ```
+
+   2. Log in to Codex:
+
+      ```bash
+      codex login
+      ```
+
    3. Add the Codex trust entry to `$HOME/.codex/config.toml`. Use the absolute path of the project (`git rev-parse --show-toplevel`):
 
       ```toml
