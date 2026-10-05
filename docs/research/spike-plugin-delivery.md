@@ -86,7 +86,7 @@ Not tested: `skills`, `memory`, `maxTurns`, `color`, `effort`, `isolation`, `bac
 
 ## The thin wrapper of D6
 
-Works for the delivery path, with one limit.
+Works for the delivery path (stub and real launcher both start from the wrapper); the real launcher needs one change before it runs from `bin/`.
 
 Test: the scratch project had `scripts/qa-codex`:
 
@@ -97,29 +97,18 @@ exec qa-codex-launcher "$@"
 
 and the plugin `bin/qa-codex-launcher` was a stub that prints its arguments (the real v1 launcher posts comments and starts Codex, so the probe did not run it). After the scratch issue had the label, the launch comment and an `## Engineer: DONE` comment, this session ran: `claude -p "Run exactly this Bash command and report the raw output or error verbatim: scripts/qa-codex ROLE=qa ISSUE=1"`. Reply: `STUB LAUNCHER from plugin bin got: ROLE=qa ISSUE=1`. So the exact guard form passes the guard, the project file starts the launcher from the plugin `bin/`, and the arguments arrive unchanged. The guard reads only the command text, so the wrapper does not change what it sees.
 
+Second test, with the real launcher (run after the first probe, outside Claude Code, in a throwaway local git repo with no remote; no issue, no Codex). The real v1 `scripts/qa-codex` and its helpers `codex_exec.py` and `qa-result.schema.json` were copied into a folder `plug/bin/` that was put on PATH, the launcher under the name `qa-codex-launcher`. The project file `scripts/qa-codex` was the same two-line wrapper. Command: `PATH=plug/bin:$PATH scripts/qa-codex ROLE=qa ISSUE=1`. Output (shortened):
+
+```
+File ".../plug/bin/qa-codex-launcher", line 45, in <module>
+    import issue_state  # noqa: E402
+ModuleNotFoundError: No module named 'issue_state'
+exit=1
+```
+
+So the wrapper does start the real launcher from `bin/` (the traceback is the real launcher's own line 45). The real launcher then stops, because `ROOT` is the folder above `bin/` and `.claude/hooks/issue_state.py` is not there. The wrapper is proven. The real launcher is not yet usable from `bin/`.
+
 Limit: the real launcher `scripts/qa-codex` (v1) sets `ROOT = Path(__file__).resolve().parents[1]`, imports from `ROOT / ".claude" / "hooks"` and its own folder (`codex_exec`), and reads `ROOT / "scripts" / "qa-result.schema.json"`. Moved to a plugin `bin/`, `ROOT` is the plugin directory, so the project root is wrong for the `git` and `gh` calls and the hook import path. The launcher needs one change: take the project root from the working directory (`git rev-parse --show-toplevel`) and the helper files from its own folder. The plugin task must do that before the switch.
-
-## Consequences
-
-| Question | Answer | What it means |
-|---|---|---|
-| 1 PreToolUse guard from a plugin | works | D3 holds for the guard. The guard must also recognize the namespaced agent name `<plugin>:<agent>` (found above), else a launch by that name is unguarded. The plugin task adds this and a test |
-| 2 PermissionDenied and SubagentStop | SubagentStop works; PermissionDenied not observed (registered, no classifier deny could be provoked, see above) | D3 holds for SubagentStop. For PermissionDenied the trial in a fresh project must show the `## Launch not started: …` comment after an auto mode deny of a launch. Until then it is unproven |
-| 3 `${CLAUDE_PLUGIN_ROOT}` | works (local directory install; remote install not tested) | D3: hook commands use `${CLAUDE_PLUGIN_ROOT}`, and no copy of the hooks is needed in the project. The trial covers a remote-style install |
-| 4 plugin `bin/` on PATH, also in a subagent | works | D6: a project wrapper can start a launcher from `bin/` |
-| 5 plugin agents read the project's role files | works | D3 and D4: agents in the plugin, role files copied into the project at the same paths |
-| 6 front matter keys | `permissionMode`, `hooks`, `mcpServers` ignored; `model`, `tools`, `disallowedTools` honored | D3: the v1 agents need no change. A later agent must not rely on `permissionMode`, `hooks` or `mcpServers` in its front matter |
-
-Decisions:
-
-- D3: holds, with the guard change for the namespaced agent name
-- D4: holds. The role files can stay in the project (question 5)
-- D6: the wrapper works (see above). The switch needs the launcher change for `ROOT`. Keep the project copy of the launcher until that change is made and tested with the real launcher on a scratch issue
-
-Extra notes for the plugin task:
-
-- `claude plugin validate` needs an `author` field to pass `--strict`, and it does not check `hooks/hooks.json`
-- With the owner's Auto mode entry for the scratch repo, `gh repo create <name> --private --clone` and `gh repo delete <name> --yes` both ran
 
 ## Final state
 
@@ -131,4 +120,27 @@ After the probe (all commands run by the probe):
 - `gh repo delete Lighfe/agk-probe-158 --yes`, then `gh repo view Lighfe/agk-probe-158`: `GraphQL: Could not resolve to a Repository with the name 'Lighfe/agk-probe-158'. (repository)`
 - `gh repo list Lighfe --limit 50 | grep -c probe`: `0`
 - The scratch clone, the scratch marketplace and the scratch plugin folders were removed from the session scratch directory
+- The second wrapper test (real launcher) ran in a throwaway folder in the session scratch directory, with no remote and no network write
 - This repo has one new file, this note, and no other change
+
+## Consequences
+
+| Question | Answer | What it means |
+|---|---|---|
+| 1 PreToolUse guard from a plugin | works | D3 holds for the guard. The guard must also recognize the namespaced agent name `<plugin>:<agent>` (found above), else a launch by that name is unguarded. The plugin task adds this and a test |
+| 2 PermissionDenied and SubagentStop | SubagentStop works; PermissionDenied not observed (registered, no classifier deny could be provoked, see above) | D3 holds for SubagentStop. For PermissionDenied the trial in a fresh project must show the `## Launch not started: …` comment after an auto mode deny of a launch. Until then it is unproven |
+| 3 `${CLAUDE_PLUGIN_ROOT}` | works (local directory install; remote install not tested) | D3: hook commands use `${CLAUDE_PLUGIN_ROOT}`, and no copy of the hooks is needed in the project. The trial covers a remote-style install |
+| 4 plugin `bin/` on PATH, also in a subagent | works | D6: a project wrapper can start a launcher from `bin/` |
+| 5 plugin agents read the project's role files | works | D3 and D4: agents in the plugin, role files copied into the project at the same paths |
+| 6 front matter keys | works for `model`, `tools`, `disallowedTools` (honored); does not work for `permissionMode`, `hooks`, `mcpServers` (ignored) | D3: the v1 agents need no change. A later agent must not rely on `permissionMode`, `hooks` or `mcpServers` in its front matter |
+
+Decisions:
+
+- D3: holds, with the guard change for the namespaced agent name
+- D4: holds. The role files can stay in the project (question 5)
+- D6: the wrapper works with the stub and starts the real launcher (see above). The switch needs the launcher change for `ROOT`. Keep the project copy of the launcher until that change is made and tested with the real launcher on a scratch issue
+
+Extra notes for the plugin task:
+
+- `claude plugin validate` needs an `author` field to pass `--strict`, and it does not check `hooks/hooks.json`
+- With the owner's Auto mode entry for the scratch repo, `gh repo create <name> --private --clone` and `gh repo delete <name> --yes` both ran
