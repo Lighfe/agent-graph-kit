@@ -61,7 +61,7 @@ A stage issue is an issue with the label `stage`. Its sub-issues (native GitHub 
 
 The orchestrator finds the active stage once, at the start of a `/goal` run, and keeps it for the whole run, also after its last `ready` sub-issue is closed or escalated. The active stage is the one qualifying stage issue: an open issue with the label `stage` that has at least one sub-issue, open or closed, with the label `ready` (closing an issue does not remove its labels). The commands are in "Pick inside a stage" in `docs/team/orchestrator.md`.
 
-- When no open stage issue qualifies at the start of the run, no stage is active for the whole run: the loop picks as before (any `ready` issue without an open blocker). The orchestrator does not look for a stage again during the run.
+- When no open stage issue qualifies at the start of the run, no stage is active for the whole run: the loop picks any `ready` issue without an open blocker. The orchestrator does not look for a stage again during the run.
 - When two or more open stage issues qualify at the start of the run, the loop stops and asks the owner.
 
 An eligible sub-issue is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker.
@@ -91,7 +91,7 @@ Take the first eligible entry in that list order. Read the entries one by one; n
 
 ### `ready` issues outside the active stage
 
-- When no stage is active for the run, the loop picks as before (any `ready` issue without an open blocker).
+- When no stage is active for the run, the loop picks any `ready` issue without an open blocker.
 - While a stage is active, a `ready` issue that is not a sub-issue of the active stage is never picked, also when the stage has no eligible sub-issue left. The final report lists it.
 
 ### Follow-ups and parked issues
@@ -106,13 +106,13 @@ When no stage is active, or the blocked issue is not a sub-issue of the active s
 
 When an open blocker of a sub-issue of the active stage is a parked issue (open, this repo, label `later`, no parent, no `needs-owner`), the orchestrator adds it to the active stage as a sub-issue and changes its labels from `later` to `ready`. The commands are in `docs/team/orchestrator.md`.
 
-An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the blocked issue waits as today.
+An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the orchestrator does not promote it or pick it, and the blocked issue waits.
 
 ### Stage end
 
 When the active stage's sub-issue list is not empty and every entry is closed, the stage has ended. The orchestrator checks that the working tree is clean, then launches the planner subagent (`.claude/agents/planner.md`, agent `planner`, role `docs/team/planner.md`) on the stage issue with the launch line `ROLE=planner ISSUE=<stage issue>`. The prompt has a section "Run notes": the orchestrator's notes on the current run (escalations, guard and classifier denies, outages, collisions, anything unusual), or one line saying nothing unusual happened. The planner posts one comment on the stage issue with the first line `## Planner: STAGE REVIEW`. Then the loop stops, and the final report names the stage review.
 
-- When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop stops or continues as before.
+- When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop picks the next eligible sub-issue, or stops when none is eligible (see "Next step while a stage is active").
 - When the stage issue already has a stage review from an earlier run (an owner comment with the first line `## Planner: STAGE REVIEW`), the orchestrator does not launch the planner again. The final report names that review.
 - When the planner ended without a result (a miss), the orchestrator launches the planner once more. When the planner step gives no stage review after the second miss in a row, or gives a result in another form, the orchestrator escalates the stage issue and stops. A planner launch is not a return.
 - The orchestrator does not close the stage issue. The planner closes it at stage set-up.

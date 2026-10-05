@@ -60,4 +60,3 @@ def test_orchestrator_before_each_issue_names_the_go_on_exception():
 
 def test_orchestrator_not_clean_deny_still_stops_the_loop():
     assert "- `G1` working tree not clean: stop the loop and ask the owner\n" in ORCH
-    assert "- `G1` working tree not clean: stop the loop and ask the owner, as today" in ORCH

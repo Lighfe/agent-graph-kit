@@ -61,7 +61,7 @@ gh issue edit <stage> --add-sub-issue <number>
 gh issue edit <number> --remove-label later --add-label ready
 ```
 
-These label and sub-issue edits are allowed, although you do not edit issue bodies. Your final report names each promoted issue. An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the blocked issue waits as today.
+These label and sub-issue edits are allowed, although you do not edit issue bodies. Your final report names each promoted issue. An open blocker that is not a parked issue (another repo, a parent already set, no `later`, or `needs-owner`) is not promoted; the orchestrator does not promote that blocker, and the blocked issue waits.
 
 ### Stage end
 
@@ -78,7 +78,7 @@ The read for step 2 returns the newest stage review by the owner's login, or `nu
 gh issue view <stage> --json comments --jq '[.comments[] | select(.authorAssociation == "OWNER") | {line: (.body | split("\n")[0] | rtrimstr("\r")), url} | select(.line == "## Planner: STAGE REVIEW")] | last'
 ```
 
-When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop stops or continues as today.
+When any sub-issue of the stage is open (for example escalated with `needs-owner`, waiting on a blocker, or `later`), the stage has not ended: no planner launch, and the loop picks the next eligible sub-issue, or stops when none is eligible (see "Next step while a stage is active" in `docs/process.md`).
 
 Do not close the stage issue. The planner closes it at stage set-up (see "Stage set-up" in `docs/team/planner.md`).
 
@@ -103,7 +103,7 @@ A planner launch is not a return.
 - The first line of the result is not exactly `## Planner: STAGE REVIEW`: escalate the stage issue and stop the loop
 - `G1 … is pending: the last 2 launches of planner ended without a result` (two misses in a row): escalate the stage issue and stop the loop
 - `G1 … is pending: … so only <role> may go on`: go on with that role once, as in "Hooks"
-- `G1` working tree not clean: stop the loop and ask the owner, as today
+- `G1` working tree not clean: stop the loop and ask the owner
 - `G1 … the last 2 launches` (did not start or were stopped by an outage): stop the loop and ask the owner, as for the other roles
 - Any other deny of the planner launch: escalate the stage issue with the deny message and stop the loop
 - A `## Launch not started: …` or `## Launch stopped by outage: …` receipt on the stage issue: launch the planner again, as for the other roles
@@ -193,7 +193,7 @@ The hook comments are `## Launch: …`, `## Launch not started: …` and `## Lau
 The issue is pending when the last launched role ended without a result: its receipt is a miss. This also holds when the role started and then could not act, unless a hook marked its receipt as stopped by an outage (see below).
 
 - One miss: go on with the same role once, without the owner. Continue the agent with `SendMessage` (same `ROLE=… ISSUE=…` line first) or launch the same role again. `qa-codex` and the planner only get a new launch. The prompt or the message names the receipt of the miss (for example `## Launch: engineer (attempt 1)`) and says that the earlier launch ended without a result, so the agent first checks what is already committed or posted. A dirty tree does not stop this go-on of `pm`, `engineer` or `qa`: the hook lets it pass G1, and you do not run your own clean-tree stop ("Before each issue") for it. The prompt or the message then also says that the earlier launch may have left uncommitted work, so the agent runs `git status` first. This does not hold for the planner: a planner go-on with a dirty tree is denied as not clean
-- Two misses in a row (the two newest receipts are misses of the same role, with no `## Owner: RESUME` after the older one): the hook denies, and you escalate the issue (a stage issue: escalate it and stop the loop), as before
+- Two misses in a row (the two newest receipts are misses of the same role, with no `## Owner: RESUME` after the older one): the hook denies, and you escalate the issue (a stage issue: escalate it and stop the loop)
 - A miss is not a return. Receipts voided by `## Launch not started: …` or `## Launch stopped by outage: …` are left out when misses are counted
 
 When auto mode denies a launch, the `qa-codex` call or a `SendMessage` continuation before it runs, a second hook posts `## Launch not started: <role> (…)` for that receipt. The launch never happened: launch the same step again. This is not a return.

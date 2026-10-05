@@ -71,7 +71,7 @@ While grooming, check whether the work needs a permission beyond the defaults, a
 
 An `## Engineer: BLOCKED` caused by a missing permission leads to the same `## PM: NEEDS OWNER`. Add the missing entry to the `Permissions:` line in the same step.
 
-This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, `.claude/hooks/` or `QA_SANDBOX`), follow "A tool problem that an issue can fix" below as before.
+This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, `.claude/hooks/` or `QA_SANDBOX`), file or link the fix issue and post `## PM: WAITING`, as "A tool problem that an issue can fix" below says.
 
 ## A tool problem that an issue can fix
 
@@ -136,4 +136,4 @@ The resume match: a first line is the owner's resume marker when it is `## Owner
 - Make the edit with `gh issue edit <n> --body-file <literal path>` (or `gh issue edit <n> --title <title>`), with the body file path and the read-back of "Body files" above. Then check the whole issue against your definition of done as usual
 - The `## PM: GROOMED` comment lists each applied edit, with the old text and the new text
 - If the edit gets a deny with a verdict, the rule "Denied action" applies: post `## PM: NEEDS OWNER`, quote the deny message, and point the owner to the README subsection "Auto mode allow entries"
-- If the RESUME asks for no edit, check the issue as before and change nothing
+- If the RESUME asks for no edit, check the issue against the definition of done and change nothing
