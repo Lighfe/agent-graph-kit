@@ -6,8 +6,9 @@
 
 The v1 files stay the only source of the hook scripts, the agents and the skills.
 `plugin/hooks/*.py`, `plugin/agents/` and `plugin/skills/` are generated copies:
-do not edit them. The hand-written files are `plugin/.claude-plugin/plugin.json`
-and `plugin/hooks/hooks.json`.
+do not edit them. `plugin/templates/` (docs, role files, QA launcher) is built the same way.
+The hand-written files are `plugin/.claude-plugin/plugin.json`, `plugin/hooks/hooks.json`,
+`plugin/skills/setup/` and `plugin/templates/AGENTS.md.tmpl`.
 
   scripts/build_plugin.py          write the copies
   scripts/build_plugin.py --check  list copies that differ from the source, exit 1 when any
@@ -24,6 +25,12 @@ PLUGIN = ROOT / "plugin"
 HOOK_SCRIPTS = ["guard.py", "issue_state.py", "not_started.py", "outage_stop.py"]
 AGENTS = ["pm", "software-engineer", "frontend-engineer", "qa-engineer", "planner"]
 SKILLS = ["stage-start", "codex-review"]
+HAND_SKILLS = ["setup"]  # written by hand in plugin/skills/, not built (issue #160)
+# plugin/templates/: the files that /agk:setup copies into a project (issue #160)
+TEMPLATE_FILES = ["docs/process.md", "docs/task-template.md", "scripts/qa-codex", "scripts/codex_exec.py",
+                  "scripts/qa-result.schema.json"]
+TEMPLATE_DIRS = ["docs/team", "docs/checks"]
+HAND_TEMPLATES = {"AGENTS.md.tmpl"}  # written by hand in plugin/templates/
 IGNORED = {"__pycache__", ".pytest_cache"}
 
 
@@ -43,6 +50,8 @@ def mapping() -> list[tuple[Path, Path]]:
     pairs = [(ROOT / ".claude" / "hooks" / n, PLUGIN / "hooks" / n) for n in HOOK_SCRIPTS]
     pairs += [(ROOT / ".claude" / "agents" / f"{n}.md", PLUGIN / "agents" / f"{n}.md") for n in AGENTS]
     pairs += [(ROOT / ".agents" / "skills" / n, PLUGIN / "skills" / n) for n in SKILLS]
+    for rel in TEMPLATE_FILES + TEMPLATE_DIRS:
+        pairs.append((ROOT / rel, PLUGIN / "templates" / rel))
     return pairs
 
 
@@ -64,11 +73,17 @@ def differences() -> list[str]:
             elif want[rel] != have[rel]:
                 out.append(f"differs: {name}")
     # an agent or skill file in the plugin that no source names
-    for folder, known in (("agents", {f"{n}.md" for n in AGENTS}), ("skills", set(SKILLS))):
+    for folder, known in (("agents", {f"{n}.md" for n in AGENTS}), ("skills", set(SKILLS) | set(HAND_SKILLS))):
         d = PLUGIN / folder
         for p in sorted(d.iterdir()) if d.exists() else []:
             if p.name not in known:
                 out.append(f"extra: {p.relative_to(PLUGIN.parent).as_posix()}")
+    # a file in plugin/templates/ that no source names
+    tdir = PLUGIN / "templates"
+    wanted = set(TEMPLATE_FILES) | HAND_TEMPLATES
+    for rel in sorted(_tree(tdir)) if tdir.exists() else []:
+        if rel not in wanted and not any(rel.startswith(d + "/") for d in TEMPLATE_DIRS):
+            out.append(f"extra: plugin/templates/{rel}")
     return out
 
 
