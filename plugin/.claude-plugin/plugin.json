@@ -1,0 +1,9 @@
+{
+  "name": "agk",
+  "version": "0.1.0",
+  "description": "Multi-agent graph engineering kit: guard hooks, role agents and planning skills for a GitHub-issue loop.",
+  "author": {
+    "name": "Lighfe"
+  },
+  "license": "MIT"
+}
