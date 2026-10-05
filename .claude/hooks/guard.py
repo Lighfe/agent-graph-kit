@@ -63,6 +63,15 @@ from issue_state import Call
 SUBAGENT_TOOLS = {"Agent", "Task"}  # S1 Q1: the tool is "Agent"; "Task" is the old name
 AGENT_ROLE = {"pm": "pm", "software-engineer": "engineer", "frontend-engineer": "engineer", "qa-engineer": "qa",
               "planner": "planner"}  # the planner: issue #99
+PLUGIN_AGENT = re.compile(r"(?:[A-Za-z0-9_-]+:)*([^:]+)")  # `<plugin>:<agent>`: the part after the last colon
+
+
+def bare_agent(name: str) -> str | None:
+    """The bare role agent name of `name` (`pm` or a plugin name such as `agk:pm`), else None."""
+    m = PLUGIN_AGENT.fullmatch(name)
+    return m.group(1) if m and m.group(1) in AGENT_ROLE else None
+
+
 LAUNCH_LINE = re.compile(r"ROLE=(pm|engineer|qa|planner) ISSUE=([0-9]+)")
 LAUNCH_HINT = "exactly one line ROLE=<pm|engineer|qa|planner> ISSUE=<number>"
 PLANNER_CONTINUED = ("G1: SendMessage with ROLE=planner: a planner cannot be continued (it posts one comment "
@@ -658,8 +667,10 @@ def _classify_agent(tool_input: dict) -> Call | None:
         return None  # a general-purpose launch (S1 Q1)
     if not isinstance(agent, str):
         raise Deny("G1: subagent_type is not a string, expected a subagent name")
-    if agent not in AGENT_ROLE:
+    bare = bare_agent(agent)
+    if bare is None:
         return None
+    agent = bare
     prompt = tool_input.get("prompt")
     if not isinstance(prompt, str):
         raise Deny(f"G1: launch of {agent} has no string prompt, expected a prompt with {LAUNCH_HINT}")

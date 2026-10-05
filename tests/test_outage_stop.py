@@ -470,3 +470,11 @@ def test_continuation_after_a_miss_posts_stop_comment(tmp_path):
     env.run(env.event("software-engineer"))
     assert env.posts == [(12, f"## Launch stopped by outage: engineer (continued, round 2)\nCall: {X}\n"
                               "Reason: Classifier unavailable")]
+
+
+@pytest.mark.parametrize("agent_type, posts", [("agk:pm", 1), ("a:b:pm", 1), ("agk:unknown-agent", 0),
+                                               ("agk:pm:x", 0), ("agk:PM", 0), (":pm", 0)])
+def test_plugin_agent_type_resolves_like_bare(tmp_path, agent_type, posts):
+    env = Env(tmp_path).evidence().launch_line()
+    env.run(env.event(agent_type))
+    assert len(env.posts) == posts

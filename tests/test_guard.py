@@ -1980,3 +1980,37 @@ def test_hook_check_step_f_uses_the_probe_that_g8_denies():
     text = (Path(__file__).resolve().parent.parent / "docs/checks/hook-activation.md").read_text()
     assert "&& true" not in text
     assert text.count("tee /dev/null") == 1
+
+
+# --- plugin agent names (issue #164) -------------------------------------------------------
+
+RESOLVES = [("pm", "pm"), ("agk:pm", "pm"), ("agk-probe:pm", "pm"), ("a:b:pm", "pm"),
+            ("agk:software-engineer", "engineer"), ("agk:frontend-engineer", "engineer"),
+            ("agk:qa-engineer", "qa"), ("agk:planner", "planner")]
+NOT_RESOLVING = ["agk:unknown-agent", "agk:", ":pm", "agk:PM", "agk:pm:x"]
+
+
+@pytest.mark.parametrize("name, role", RESOLVES)
+def test_agent_role_lookup_resolves_plugin_names(name, role):
+    bare = guard.bare_agent(name)
+    assert bare is not None and guard.AGENT_ROLE[bare] == role
+
+
+@pytest.mark.parametrize("name", NOT_RESOLVING)
+def test_agent_role_lookup_ignores_other_names(name):
+    assert guard.bare_agent(name) is None
+
+
+def test_plugin_launch_without_launch_line_gets_the_same_deny_as_bare():
+    assert denied(agent("agk:pm", "no line")) == denied(agent("pm", "no line"))
+    assert "has no launch line" in denied(agent("agk:pm", "no line"))
+
+
+def test_plugin_launch_is_judged_like_bare():
+    assert classify(agent("agk:pm", "ROLE=pm ISSUE=1")) == classify(agent("pm", "ROLE=pm ISSUE=1"))
+    assert denied(agent("agk:pm", "ROLE=qa ISSUE=1")) == denied(agent("pm", "ROLE=qa ISSUE=1"))
+
+
+@pytest.mark.parametrize("name", NOT_RESOLVING)
+def test_plugin_unknown_agent_is_unguarded(name):
+    assert classify(agent(name, "no launch line")) is None

@@ -82,7 +82,8 @@ def handle(event, read_issue, post_comment, lock=contextlib.nullcontext, evidenc
     finally:
         path.unlink(missing_ok=True)  # evidence counts for one round only
     agent_type = event.get("agent_type")
-    role = guard.AGENT_ROLE.get(agent_type) if isinstance(agent_type, str) else None
+    bare = guard.bare_agent(agent_type) if isinstance(agent_type, str) else None
+    role = guard.AGENT_ROLE[bare] if bare else None
     transcript = event.get("agent_transcript_path")
     if role is None or not isinstance(transcript, str):
         return
