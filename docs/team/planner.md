@@ -42,7 +42,7 @@ gh issue list --state open --label later --search "no:parent-issue -label:needs-
 
 ## Talking to the owner
 
-In the `/stage-start` session, write to the owner in plain words (ASD-STE100 style: short sentences, active voice). Say first what the choice is, then why it matters. Name an issue by its title, and give its number at most once. The stage review comment, issue bodies, plan and spec keep their own form.
+In the `/stage-start` session, write to the owner in plain words (ASD-STE100 style: short sentences, active voice). Say first what the choice is, then why it matters. Name an issue by its title, and give its number at most once. Ask about the owner's goals and opinion, not only for approval: talk it through, do not hand over a menu. The stage review comment, issue bodies, plan and spec keep their own form.
 
 Pass example: "Stage 5 is done. All five tasks passed QA. One open choice: which of three next stages do you want?"
 
