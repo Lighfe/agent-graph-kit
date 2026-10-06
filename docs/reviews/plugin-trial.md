@@ -11,7 +11,7 @@ Date: 2026-10-06. Claude Code 2.1.289. The plugin source was the local checkout 
 | 1 | Create the repo | worked |
 | 2 | Add the marketplace and install the plugin (README, "Install the kit as a plugin (v2)", step 1) | failed, then needed a change |
 | 3 | Run `/agk:setup` (step 2) | worked, with findings |
-| 4 | Manual steps (step 3: `gh` login, Codex login, Codex trust entry, Auto mode entries) | needed a change |
+| 4 | Manual steps (step 3: `gh` login, Codex login, Codex trust entry, Auto mode entries) | needed a change; 3.4 failed (entries 2 and 3 not set, owner-only) |
 | 5 | File one small task issue | worked |
 | 6 | Run PM, engineer, QA | PM worked; engineer failed (ended BLOCKED); QA not reached (engineer ended BLOCKED, as the issue allows) |
 | 7 | Close the issue | not reached (no `## QA: PASS`; trial issue state: OPEN, label `needs-owner`) |
@@ -92,7 +92,7 @@ README line: step 3 of "Install the kit as a plugin (v2)" (3.1 `gh` login, 3.2 C
   $ claude -p "/agk:setup ..."   # second run: no "Missing: Codex trust entry" line
   ```
 
-- 3.4 Auto mode entries: partly set. The README names three entries: entry 1 QA launch (`scripts/qa-codex ROLE=qa ISSUE=<number>`), entry 2 PM edits (`gh issue edit` after `## Owner: RESUME`) and entry 3 planner relabel (`gh issue edit <n> --remove-label later --add-label ready`). The setup script does not check them, as designed ("Check by hand: the three Auto mode entries"). I checked by hand with a read-only `jq` command on the user-level settings file (`~/.claude/settings.json`). It prints only whether each entry text matches, not the texts:
+- 3.4 Auto mode entries: failed. README.md line 60 asks for all three entries, and entries 2 and 3 were not set. Only the owner can set user-level Auto mode entries, so the trial could not do this step in full. Nothing in the trial was affected (see below), but the step is not done as the README asks. The README names three entries: entry 1 QA launch (`scripts/qa-codex ROLE=qa ISSUE=<number>`), entry 2 PM edits (`gh issue edit` after `## Owner: RESUME`) and entry 3 planner relabel (`gh issue edit <n> --remove-label later --add-label ready`). The setup script does not check them, as designed ("Check by hand: the three Auto mode entries"). I checked by hand with a read-only `jq` command on the user-level settings file (`~/.claude/settings.json`). It prints only whether each entry text matches, not the texts:
 
   ```text
   $ jq '[.autoMode.allow[] | {qa: contains("qa-codex"), pm: contains("gh issue edit"), planner: contains("remove-label later")}]' ~/.claude/settings.json
