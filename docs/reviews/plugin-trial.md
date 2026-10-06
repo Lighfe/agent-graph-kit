@@ -166,6 +166,8 @@ The complete bodies and labels are in the appendix below. Copied with `gh issue 
 | #168 | Setup and README: add the steps the v2 route lacks | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
 | #169 | README: say how to merge the settings lines by hand | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
 
+Note on #166: the install route `claude plugin marketplace add Lighfe/agent-graph-kit` worked after the owner pushed `main`. The orchestrator checked it on 2026-10-06: the marketplace was added, lists plugin `agk` with source `./plugin`, and was removed again.
+
 ## Not covered
 
 QA by Codex, closing an issue and the hook activation check were not run, because the trial task ended BLOCKED. The issue counts the trial as done when the loop ran, even when the task ends BLOCKED. A second trial with a task that the machine can run would cover these three steps.
