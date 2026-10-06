@@ -13,8 +13,8 @@ Date: 2026-10-06. Claude Code 2.1.289. The plugin source was the local checkout 
 | 3 | Run `/agk:setup` (step 2) | worked, with findings |
 | 4 | Manual steps (step 3: `gh` login, Codex login, Codex trust entry, Auto mode entries) | needed a change |
 | 5 | File one small task issue | worked |
-| 6 | Run PM, engineer, QA | PM worked; engineer failed (ended BLOCKED); QA failed (not run, no `## Engineer: DONE`) |
-| 7 | Close the issue | failed (no `## QA: PASS`, issue stayed open) |
+| 6 | Run PM, engineer, QA | PM worked; engineer failed (ended BLOCKED); QA not reached (engineer ended BLOCKED, as the issue allows) |
+| 7 | Close the issue | not reached (no `## QA: PASS`; trial issue state: OPEN, label `needs-owner`) |
 | 8 | Delete the repo | worked |
 
 ### 1. Create the repo: worked
@@ -125,7 +125,7 @@ until the model answers "I don't know" or the German equivalent.
 
 `gh issue create ... --label ready` returned issue #1.
 
-### 6. PM, engineer, QA: partly
+### 6. PM, engineer, QA: PM worked, engineer BLOCKED, QA not reached
 
 Run with `claude -p "<orchestrator prompt>" --permission-mode auto` in the trial project. The plugin hooks and agents loaded and the launch comments appeared.
 
@@ -138,9 +138,9 @@ Escalated by the orchestrator: label ready removed, needs-owner added
 
 - PM: worked. It narrowed the request to a research note with at least 10 synthetic German prompts, and pinned the model to `Aleph-Alpha/Kolibri-1`.
 - Engineer: BLOCKED, as the issue's out-of-scope section allows. The model needs a GPU. The machine has no GPU, about 5 GB free RAM and no torch. The engineer made no change and no commit.
-- QA: failed (not run), because the loop needs `## Engineer: DONE` first. The Codex QA launch (`scripts/qa-codex`) is therefore not tested by this trial. An agent may not post `## Owner: RESUME`, so I did not resume the issue.
+- QA: not reached, because the loop needs `## Engineer: DONE` first. The Codex QA launch (`scripts/qa-codex`) is therefore not tested by this trial. An agent may not post `## Owner: RESUME`, so I did not resume the issue.
 
-### 7. Close: failed
+### 7. Close: not reached
 
 Command: none was run, because the close needs `## QA: PASS` (`gh issue close` is the orchestrator's step after QA). The orchestrator escalated instead, so the issue stayed open. State after the run:
 
