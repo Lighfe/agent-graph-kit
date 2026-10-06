@@ -92,19 +92,13 @@ README line: step 3 of "Install the kit as a plugin (v2)" (3.1 `gh` login, 3.2 C
   $ claude -p "/agk:setup ..."   # second run: no "Missing: Codex trust entry" line
   ```
 
-- 3.4 Auto mode entries: worked. The owner added the entries in `/permissions` (Auto mode tab) before the trial, as README line 60 says; the issue's `Permissions:` line records "set". The setup script does not check them, as designed ("Check by hand: the three Auto mode entries"). I checked by hand with a read-only command on the user-level settings file (entry texts cut to 70 characters; the QA launcher entry of the other project is left out):
+- 3.4 Auto mode entries: partly set. The README names three entries: entry 1 QA launch (`scripts/qa-codex ROLE=qa ISSUE=<number>`), entry 2 PM edits (`gh issue edit` after `## Owner: RESUME`) and entry 3 planner relabel (`gh issue edit <n> --remove-label later --add-label ready`). The setup script does not check them, as designed ("Check by hand: the three Auto mode entries"). I checked by hand with a read-only `jq` command on the user-level settings file (`~/.claude/settings.json`). It prints only whether each entry text matches, not the texts:
 
   ```text
-  $ jq '.autoMode.allow | length, (.[] | .[0:70])' ~/.claude/settings.json
-  6
-  "$defaults"
-  "QA launcher: in the agent-graph-kit repo, running exactly `scripts/qa-"
-  "In the agent-graph-kit repo, a subagent may run gh repo create <name> "
-  "In the agent-graph-kit repo, a subagent may install a Claude Code plug"
-  ...
+  $ jq '[.autoMode.allow[] | {qa: contains("qa-codex"), pm: contains("gh issue edit"), planner: contains("remove-label later")}]' ~/.claude/settings.json
   ```
 
-  The three kit entries are there (QA launcher, `gh repo create` and `gh repo delete`, plugin install), and the trial's PM and engineer launches ran in Auto mode without a classifier denial. No README line was wrong for 3.4.
+  Result: entry 1 (QA launch) was set: two entries name `qa-codex`, one for this repo and one for another project. Entry 2 (PM edits) was not set. Entry 3 (planner relabel) was not set. The other entries in the file (`gh repo create` and `gh repo delete`, plugin install) are not among the three README entries. The trial needed neither entry 2 nor entry 3: no `## Owner: RESUME` edit and no stage relabel happened. The PM and engineer launches ran in Auto mode without a classifier denial. Entry 1 was not exercised, because QA was not reached (step 6). No README line was wrong for 3.4.
 - Needed a change: the README says "merge by hand" for the project settings file without naming how. In the main session, `printf` and `cat >` commands that name `.claude/settings.json` were denied by the kit's guard:
 
   ```text
@@ -163,15 +157,135 @@ Final state: the repo is gone, the Codex trust entry is removed, the local marke
 
 ## Follow-up issues (label `later`)
 
-Checked with `gh issue view <n> --json title,labels,body` (the `Source:` line is the line of the body that starts with `Source`):
+The complete bodies and labels are in the appendix below. Copied with `gh issue view <n> --json title,labels,body` (the `Source:` line is the line of the body that starts with `Source`):
 
 | Issue | Title | Label | `Source:` line |
 | --- | --- | --- | --- |
 | #166 | Plugin install from GitHub: publish the plugin and re-check the README route | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
 | #167 | Setup: merge permissions into an existing settings file | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
 | #168 | Setup and README: add the steps the v2 route lacks | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
-| #169 | README: say how to merge the settings lines by hand | `later` | `Source:` points at this report |
+| #169 | README: say how to merge the settings lines by hand | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
 
 ## Not covered
 
 QA by Codex, closing an issue and the hook activation check were not run, because the trial task ended BLOCKED. The issue counts the trial as done when the loop ran, even when the task ends BLOCKED. A second trial with a task that the machine can run would cover these three steps.
+
+## Appendix: follow-up issues as filed
+
+Copied with `gh issue view <n> --json title,labels,body`. The label is `later` on each. No secrets appear.
+
+### #166: Plugin install from GitHub: publish the plugin and re-check the README route
+
+Labels: `later`
+
+````text
+Lane: default
+Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md
+Permissions: none
+
+## Goal
+
+The README route "Install the kit as a plugin (v2)" works against GitHub: the marketplace add and the plugin install succeed in a fresh project.
+
+## Acceptance criteria
+
+- [ ] After the plugin commits are on `origin/main`, `claude plugin marketplace add Lighfe/agent-graph-kit` and `claude plugin install agk@agent-graph-kit --scope project` both succeed in an empty throwaway project
+- [ ] The README says what the owner must do once before step 1 (push or release), if anything
+- [ ] The test command `uv run --with pytest pytest` passes
+
+## Out of scope
+
+- Changing the plugin files
+
+## Constraints
+
+- Files: `README.md`. The push itself is an owner action
+````
+
+### #167: Setup: merge permissions into an existing settings file
+
+Labels: `later`
+
+````text
+Lane: default
+Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md
+Permissions: none
+
+## Goal
+
+`/agk:setup` writes the permissions block of `.claude/settings.json` also after `claude plugin install --scope project`, which already created that file.
+
+## Acceptance criteria
+
+- [ ] When `.claude/settings.json` exists and holds only `enabledPlugins`, setup merges the `permissions` block into it without losing `enabledPlugins`
+- [ ] When the file holds other `permissions` entries, setup keeps them and adds only the missing lines
+- [ ] A test covers both cases
+- [ ] The test command `uv run --with pytest pytest` passes
+
+## Out of scope
+
+- Hooks (the plugin delivers them)
+
+## Constraints
+
+- Files: `plugin/skills/setup/`, its tests, `README.md`
+````
+
+### #168: Setup and README: add the steps the v2 route lacks
+
+Labels: `later`
+
+````text
+Lane: default
+Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md
+Permissions: none
+
+## Goal
+
+After `/agk:setup` and the README steps, a new project has everything the loop needs: the steps the v1 route had and the v2 route lacks are done by setup or named in the README.
+
+## Acceptance criteria
+
+- [ ] Setup writes `CLAUDE.md` with `@AGENTS.md` (the trial project had only `AGENTS.md`), or the README names the step
+- [ ] Setup writes the `.gitignore` lines (`.claude/settings.local.json`, `__pycache__/`), or the README names the step
+- [ ] The README names the four labels (`ready`, `needs-owner`, `later`, `stage`) with the `gh label create` commands, or setup creates them
+- [ ] The README names the steps: commit and push the setup files, open the project in Claude Code and accept the trust dialog (without it the project `permissions.allow` entries are ignored), and run the hook activation check in `docs/checks/hook-activation.md` before the first `ready` issue
+- [ ] The test command `uv run --with pytest pytest` passes
+
+## Out of scope
+
+- The Lovable lane
+
+## Constraints
+
+- Files: `plugin/skills/setup/`, its tests, `README.md`
+````
+
+### #169: README: say how to merge the settings lines by hand
+
+Labels: `later`
+
+````text
+Lane: default
+Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md
+Permissions: none
+
+## Goal
+
+The README step that tells the owner to merge the permission lines into `.claude/settings.json` by hand says how to do it, so the owner does not hit the kit's guard.
+
+## Acceptance criteria
+
+- [ ] The README v2 section says that the merge needs an editor, a terminal outside Claude Code, or the Write tool, because the kit's guard denies `printf` and `cat >` commands that name `.claude/settings.json` in the main session
+- [ ] The README names the lines to merge in one place that the setup output points to
+- [ ] The test command `uv run --with pytest pytest` passes
+
+## Out of scope
+
+- Changing the guard
+- Merging the settings automatically (see #167)
+
+## Constraints
+
+- Files: `README.md`
+````
