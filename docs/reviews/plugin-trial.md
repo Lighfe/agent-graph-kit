@@ -92,7 +92,19 @@ README line: step 3 of "Install the kit as a plugin (v2)" (3.1 `gh` login, 3.2 C
   $ claude -p "/agk:setup ..."   # second run: no "Missing: Codex trust entry" line
   ```
 
-- 3.4 Auto mode entries: set by the owner before the trial (the issue's `Permissions:` line). The script does not check them, as designed ("Check by hand: the three Auto mode entries").
+- 3.4 Auto mode entries: worked. The owner added the entries in `/permissions` (Auto mode tab) before the trial, as README line 60 says; the issue's `Permissions:` line records "set". The setup script does not check them, as designed ("Check by hand: the three Auto mode entries"). I checked by hand with a read-only command on the user-level settings file (entry texts cut to 70 characters; the QA launcher entry of the other project is left out):
+
+  ```text
+  $ jq '.autoMode.allow | length, (.[] | .[0:70])' ~/.claude/settings.json
+  6
+  "$defaults"
+  "QA launcher: in the agent-graph-kit repo, running exactly `scripts/qa-"
+  "In the agent-graph-kit repo, a subagent may run gh repo create <name> "
+  "In the agent-graph-kit repo, a subagent may install a Claude Code plug"
+  ...
+  ```
+
+  The three kit entries are there (QA launcher, `gh repo create` and `gh repo delete`, plugin install), and the trial's PM and engineer launches ran in Auto mode without a classifier denial. No README line was wrong for 3.4.
 - Needed a change: the README says "merge by hand" for the project settings file without naming how. In the main session, `printf` and `cat >` commands that name `.claude/settings.json` were denied by the kit's guard:
 
   ```text
@@ -151,10 +163,14 @@ Final state: the repo is gone, the Codex trust entry is removed, the local marke
 
 ## Follow-up issues (label `later`)
 
-- #166 Plugin install from GitHub: publish the plugin and re-check the README route
-- #167 Setup: merge permissions into an existing settings file
-- #168 Setup and README: add the steps the v2 route lacks
-- #169 README: say how to merge the settings lines by hand
+Checked with `gh issue view <n> --json title,labels,body` (the `Source:` line is the line of the body that starts with `Source`):
+
+| Issue | Title | Label | `Source:` line |
+| --- | --- | --- | --- |
+| #166 | Plugin install from GitHub: publish the plugin and re-check the README route | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
+| #167 | Setup: merge permissions into an existing settings file | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
+| #168 | Setup and README: add the steps the v2 route lacks | `later` | `Source: https://github.com/Lighfe/agent-graph-kit/blob/main/docs/reviews/plugin-trial.md` |
+| #169 | README: say how to merge the settings lines by hand | `later` | `Source:` points at this report |
 
 ## Not covered
 
