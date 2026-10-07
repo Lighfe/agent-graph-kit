@@ -18,6 +18,37 @@ v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lan
 
 v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Install the kit as a plugin (v2)" below.
 
+## Start a new project
+
+Follow these steps in order, from an empty folder to a first working loop. Each step is one line with a link to the place that holds it.
+
+Create the project folder, then the public GitHub repo, and push `main` (the first push of `main` needs a first commit):
+
+```bash
+gh repo create example-app --public --source . --push
+```
+
+Public repo rule: no secrets, no real account data and no full third-party articles in commits, issues or comments. Keys stay in the user environment.
+
+1. Install the plugin: [Install the kit as a plugin (v2)](#install-the-kit-as-a-plugin-v2).
+2. Run the setup in Claude Code:
+
+   ```text
+   /agk:setup
+   ```
+
+3. Do the manual steps (`gh` login, Codex login, Codex trust entry, the three Auto mode entries): [step 3 of the install section](#install-the-kit-as-a-plugin-v2), with the entry texts in [Auto mode allow entries](#auto-mode-allow-entries).
+4. Create the labels: [Labels](#labels).
+5. Commit and push: [Close the setup](#install-the-kit-as-a-plugin-v2) (step 5 there).
+6. Accept the trust dialog: [Close the setup](#install-the-kit-as-a-plugin-v2) (step 5.2 there).
+7. Run the hook activation check: [docs/checks/hook-activation.md](docs/checks/hook-activation.md).
+8. Optional: set up the Lovable lane: [Lovable frontend lane (optional, v2)](#lovable-frontend-lane-optional-v2).
+9. Plan the first stage with `/stage-start`: [Start](#start).
+
+Quota: the Codex QA run (the loop, after step 7) spends Codex quota, and the Lovable lane (step 8) spends Lovable credits. Writes to GitHub: creating the repo (the `gh repo create` line), the labels (step 4) and the push (step 5).
+
+Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.
+
 ## Install the kit as a plugin (v2)
 
 Run these steps in the root of the project (the git root).
