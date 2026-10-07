@@ -149,7 +149,7 @@ def gitignore_step(root: Path) -> None:
         print(f"CONFLICT  {GITIGNORE}: exists and is not a file; not changed")
         return
     have = path.read_text() if path.exists() else ""
-    present = {l.strip() for l in have.splitlines()}
+    present = {l.rstrip() for l in have.splitlines()}  # git ignores trailing spaces, not leading ones
     missing = [l for l in GITIGNORE_LINES if l not in present]
     if not missing:
         print(f"IDENTICAL {GITIGNORE}: already has the lines")

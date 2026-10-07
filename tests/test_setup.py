@@ -354,6 +354,12 @@ def test_existing_gitignore_gets_only_the_missing_lines(project, tmp_path):
     assert (project / ".gitignore").read_text() == "a\n.claude/settings.local.json\n__pycache__/\n"
 
 
+def test_gitignore_line_with_leading_space_is_not_the_required_line(project, tmp_path):
+    (project / ".gitignore").write_text(" __pycache__/\n" + GI_LINES[0] + "\n")
+    run(project, tmp_path)
+    assert (project / ".gitignore").read_text() == " __pycache__/\n" + GI_LINES[0] + "\n__pycache__/\n"
+
+
 def test_v2_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
     v2 = README.split("## Install the kit as a plugin (v2)")[1].split("## Lovable frontend lane")[0]
     for label in ("ready", "needs-owner", "later", "stage"):
