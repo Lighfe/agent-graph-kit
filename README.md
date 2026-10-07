@@ -31,7 +31,7 @@ gh repo create example-app --public --source . --push
 Public repo rule: no secrets, no real account data and no full third-party articles in commits, issues or comments. Keys stay in the user environment.
 
 1. Install the plugin: [Install the kit as a plugin (v2)](#install-the-kit-as-a-plugin-v2).
-2. Run the setup in Claude Code:
+2. Run the setup in Claude Code ([step 2 of the install section](#install-the-kit-as-a-plugin-v2)):
 
    ```text
    /agk:setup
