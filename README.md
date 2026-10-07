@@ -116,11 +116,44 @@ To see which copied files changed since the setup, run `/agk:drift` (`plugin/ski
 
 ## Lovable frontend lane (optional, v2)
 
-The base kit works without this lane. To add it:
+The base kit works without this lane. To add it, do these steps in order. No MCP tool can make the GitHub connection of a Lovable project, so you do steps 2 to 4 by hand:
 
 1. Create the Lovable project.
-2. Add the line `Lovable project: <id>` to `AGENTS.md`.
-3. Install the `lovable` plugin.
+2. Connect the Lovable workspace to GitHub (one time per workspace).
+3. Connect the project: Project settings -> Git -> GitHub -> Connect.
+4. Make the new GitHub repo of the Lovable project public.
+5. Add it as the `frontend/` submodule, tracking `main`:
+
+   ```bash
+   git submodule add -b main <Lovable repo URL> frontend
+   ```
+
+6. Add Playwright as a dev dependency through Lovable (QA needs it for the headless browser). Send the Lovable project a chat prompt, for example:
+
+   > Add `@playwright/test` as a dev dependency, update the lockfile, do not add tests.
+
+   Then check in the Lovable GitHub repo that the new commit changed `package.json` (`@playwright/test` under `devDependencies`) and the lockfile (`bun.lock` or `package-lock.json`).
+7. Bump the `frontend` submodule in the project to that commit, and commit the new pointer. The QA worktree checks out the commit that the submodule records, not the newest commit of the Lovable repo:
+
+   ```bash
+   git submodule update --remote frontend
+   git add frontend
+   git commit -m "Bump frontend to the commit with the Playwright dependency"
+   ```
+
+8. Add the line `Lovable project: <project id>` to `AGENTS.md`. `frontend-engineer` reads the project id from this line. The id is in the Lovable project URL. Example with a synthetic id:
+
+   ```
+   Lovable project: 00000000-0000-4000-8000-000000000000
+   ```
+
+9. Install the `lovable` plugin.
+
+Nobody edits `frontend/` locally. All frontend changes go through Lovable.
+
+Lovable can pause a message and wait for input. The `frontend-engineer` answers a plan or a question itself: it checks Lovable's plan against the issue and approves or corrects it. A credit or spend-limit check-in can only be answered by a person in the Lovable editor. Then the engineer posts `## Engineer: BLOCKED`, and the issue is escalated to you. Check that the Lovable workspace has enough credits before a frontend issue gets the label `ready`.
+
+The QA pre-step and its accepted risk are in "Frontend lane (optional)" below.
 
 ## Set up the kit in a project
 
@@ -241,38 +274,11 @@ An entry for a task's `Permissions:` line (see `docs/task-template.md`) is tempo
 
 ### Frontend lane (optional)
 
-Frontend lane only. No MCP tool can make the GitHub connection of a Lovable project, so you do these steps by hand:
-
-1. Create the Lovable project.
-2. Connect the Lovable workspace to GitHub (one time per workspace).
-3. Connect the project: Project settings -> Git -> GitHub -> Connect.
-4. Make the new GitHub repo of the Lovable project public.
-5. Add it as the `frontend/` submodule, tracking `main`:
-
-   ```bash
-   git submodule add -b main <Lovable repo URL> frontend
-   ```
-
-6. Add Playwright as a dev dependency through Lovable (QA needs it for the headless browser). Send the Lovable project a chat prompt, for example:
-
-   > Add `@playwright/test` as a dev dependency, update the lockfile, do not add tests.
-
-   Then check in the Lovable GitHub repo that the new commit changed `package.json` (`@playwright/test` under `devDependencies`) and the lockfile (`bun.lock` or `package-lock.json`).
-7. Bump the `frontend` submodule in the project to that commit, and commit the new pointer. The QA worktree checks out the commit that the submodule records, not the newest commit of the Lovable repo:
-
-   ```bash
-   git submodule update --remote frontend
-   git add frontend
-   git commit -m "Bump frontend to the commit with the Playwright dependency"
-   ```
-
-Nobody edits `frontend/` locally. All frontend changes go through Lovable.
-
-Lovable can pause a message and wait for input. The `frontend-engineer` answers a plan or a question itself: it checks Lovable's plan against the issue and approves or corrects it. A credit or spend-limit check-in can only be answered by a person in the Lovable editor. Then the engineer posts `## Engineer: BLOCKED`, and the issue is escalated to you. Check that the Lovable workspace has enough credits before a frontend issue gets the label `ready`.
+Frontend lane only. The set-up steps (Lovable project, GitHub connection, `frontend/` submodule, Playwright dependency, submodule bump, `AGENTS.md` line) are in "Lovable frontend lane (optional, v2)" above.
 
 The QA pre-step installs the frontend dependencies with the install command that follows the lockfile in `frontend/`: an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) gives `npm ci`, else a bun lockfile (`bun.lock` or `bun.lockb`) gives `bun install --frozen-lockfile`, else the result is `## QA: UNAVAILABLE`. If both kinds exist, `npm ci` runs. A bun frontend (Lovable projects often use bun) needs `bun` on `PATH`; without it, the result is `## QA: UNAVAILABLE`.
 
-The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (as a dev dependency: step 6 above) in `dependencies` or `devDependencies` of `frontend/package.json`, and in its lockfile. Without it, the result is `## QA: UNAVAILABLE`, and nothing is installed. After the install, the pre-step installs the browser with the Playwright CLI of that dependency, through the package manager of the lockfile: `npx --no playwright install chromium` (npm lockfile) or `bun x --no-install playwright install chromium` (bun lockfile). `--no` and `--no-install` stop a registry fetch, so the browser version follows the frontend's lockfile and nothing is fetched from the registry for it. A bun frontend does not need `npx`.
+The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (as a dev dependency: step 6 of "Lovable frontend lane (optional, v2)") in `dependencies` or `devDependencies` of `frontend/package.json`, and in its lockfile. Without it, the result is `## QA: UNAVAILABLE`, and nothing is installed. After the install, the pre-step installs the browser with the Playwright CLI of that dependency, through the package manager of the lockfile: `npx --no playwright install chromium` (npm lockfile) or `bun x --no-install playwright install chromium` (bun lockfile). `--no` and `--no-install` stop a registry fetch, so the browser version follows the frontend's lockfile and nothing is fetched from the registry for it. A bun frontend does not need `npx`.
 
 Accepted risk ("Worktree and pre-step" in [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md#worktree-and-pre-step)): the QA pre-step runs code from the repository outside the Codex sandbox, with your environment and access. This happens on three paths: the lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) of `frontend/package.json` and of every dependency with `npm ci`, or of the dependencies bun trusts (`trustedDependencies` and bun's default trusted list) with `bun install`; the package manager config `frontend/.npmrc` or `frontend/bunfig.toml`; and the Playwright CLI from `frontend/node_modules`, which the lockfile decides. This is accepted because the frontend code comes from your own Lovable project and from the loop's engineer (issue #50). The remaining risk includes packages that agents add: a new dependency or version that Lovable or another agent of the loop puts into `package.json` or the lockfile runs with your access at the next QA run, before QA or you have looked at it. Nothing in the loop checks it first. Treat changes to `frontend/package.json`, the lockfile, `.npmrc`, `bunfig.toml` or `trustedDependencies` as review items.
 
