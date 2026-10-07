@@ -7,7 +7,7 @@
   uv run --script setup.py --root <project root> --name <project name> --test-command <test command> [--home <dir>]
 
 Copies the files of `plugin/templates/` into the project, writes AGENTS.md from its template,
-writes `.agent-graph-kit.lock`, creates `.claude/settings.json` when it does not exist, and
+writes `.agent-graph-kit.lock`, creates `.claude/settings.json` when it does not exist (or merges the permission lines into it), and
 prints the manual checks. It never overwrites a file, never follows a symlink out of the root,
 and exits 0 when a manual entry is missing.
 """
@@ -132,18 +132,41 @@ def write_lock(root: Path, entries: dict[str, str]) -> None:
     print(f"LOCK      {LOCK}: {len(entries)} entries")
 
 
+def merge_settings(path: Path, lines: list[str]) -> None:
+    """Add the missing ALLOW and DENY lines to an existing settings file; keep everything else."""
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        perms = data.setdefault("permissions", {})
+        if not isinstance(perms, dict):
+            raise ValueError("permissions is not an object")
+        for key, wanted in (("allow", ALLOW), ("deny", DENY)):
+            have = perms.setdefault(key, [])
+            if not isinstance(have, list):
+                raise ValueError(f"permissions.{key} is not a list")
+            have.extend(r for r in wanted if r not in have)
+    except (OSError, ValueError):
+        print(f"SETTINGS  {SETTINGS} is not a JSON object of the expected form; not written. Lines to merge by hand:")
+        print("\n".join("  " + l for l in lines))
+        return
+    text = json.dumps(data, indent=2) + "\n"
+    if path.read_text() != text:
+        path.write_text(text)
+    print(f"SETTINGS  {SETTINGS} exists; permissions merged (missing lines added, other entries kept)")
+
+
 def settings_step(root: Path) -> None:
     path = root / SETTINGS
     lines = (["Merge into permissions.allow:"] + [f"  {r}" for r in ALLOW]
              + ["Merge into permissions.deny:"] + [f"  {r}" for r in DENY])
-    if path.exists() or path.is_symlink():
-        print(f"SETTINGS  {SETTINGS} exists; not changed. Lines to merge by hand:")
-        print("\n".join("  " + l for l in lines))
-        return
     link = symlink_in_path(root, SETTINGS)
     if link:
         print(f"REFUSED   {SETTINGS}: {link} is a symlink; nothing written. Lines to merge by hand:")
         print("\n".join("  " + l for l in lines))
+        return
+    if path.exists():
+        merge_settings(path, lines)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"permissions": {"allow": ALLOW, "deny": DENY}}, indent=2) + "\n")

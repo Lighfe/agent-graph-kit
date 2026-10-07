@@ -35,7 +35,7 @@ Run these steps in the root of the project (the git root).
    /agk:setup
    ```
 
-   The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file.
+   The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file. It also merges the permission lines into `.claude/settings.json`, which `claude plugin install --scope project` has already created, and keeps every other entry of that file.
 3. Do the remaining manual steps:
    1. Check the `gh` login. If the check fails, log in:
 

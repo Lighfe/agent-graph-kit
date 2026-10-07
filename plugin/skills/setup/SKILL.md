@@ -21,7 +21,7 @@ This skill turns a mostly fresh project into a project in which the loop can run
 3. Show the owner the output of the script, and name what is left:
    - each file that already existed with other content: the script did not touch it and printed a diff. The owner decides whether to merge by hand.
    - each manual check with the status `MISSING` or `CHECK BY HAND`, with its fix. The three Auto mode entries are always `CHECK BY HAND`: the owner sets them in `/permissions`, in the Auto mode tab. This skill never sets them.
-   - when `.claude/settings.json` already existed, the permission lines the owner merges by hand
+   - when `.claude/settings.json` could not be merged (invalid JSON or a symlink), the permission lines the owner adds by hand
 
 A missing manual entry does not make the script fail: it never blocks the install.
 
@@ -29,7 +29,7 @@ A missing manual entry does not make the script fail: it never blocks the instal
 
 - `docs/process.md`, `docs/team/`, `docs/task-template.md`, `docs/checks/`, `scripts/qa-codex`, `scripts/codex_exec.py`, `scripts/qa-result.schema.json`, and `AGENTS.md`
 - `.agent-graph-kit.lock`: the sha256 of each file as copied (a later drift check reads it)
-- `.claude/settings.json` with only the `permissions` block, when the file does not exist. The plugin delivers the hooks.
+- `.claude/settings.json` with only the `permissions` block, when the file does not exist. When it exists (for example after `claude plugin install --scope project`), the script merges the missing `permissions.allow` and `permissions.deny` lines into it and keeps every other entry. The plugin delivers the hooks.
 
 ## Lovable lane
 

@@ -143,15 +143,69 @@ def test_settings_file_is_created_with_the_permission_block(project, tmp_path):
         "deny": ["Edit(/.claude/settings*.json)"]}}
 
 
-def test_existing_settings_file_is_not_changed_and_the_rules_are_printed(project, tmp_path):
-    (project / ".claude").mkdir()
-    original = b'{"model": "x"}\n'
-    (project / ".claude/settings.json").write_bytes(original)
+ALLOW = ["Bash(scripts/qa-codex ROLE=qa ISSUE=*)", "Bash(gh issue close *)"]
+DENY = ["Edit(/.claude/settings*.json)"]
+
+
+def write_settings(project, text):
+    (project / ".claude").mkdir(exist_ok=True)
+    f = project / ".claude/settings.json"
+    f.write_text(text)
+    return f
+
+
+def test_existing_settings_with_only_enabled_plugins_gets_the_permissions(project, tmp_path):
+    f = write_settings(project, json.dumps({"enabledPlugins": {"agk@x": True}, "model": "m"}))
     r = run(project, tmp_path)
-    assert (project / ".claude/settings.json").read_bytes() == original
-    assert "permissions.allow" in r.stdout and "permissions.deny" in r.stdout
-    for rule in ("Bash(scripts/qa-codex ROLE=qa ISSUE=*)", "Bash(gh issue close *)", "Edit(/.claude/settings*.json)"):
+    assert r.returncode == 0
+    assert json.loads(f.read_text()) == {"enabledPlugins": {"agk@x": True}, "model": "m",
+                                         "permissions": {"allow": ALLOW, "deny": DENY}}
+    assert "permissions merged" in r.stdout
+    assert "exists; not changed" not in r.stdout
+
+
+def test_existing_permissions_are_kept_in_order_without_duplicates(project, tmp_path):
+    f = write_settings(project, json.dumps({"permissions": {
+        "allow": ["Bash(ls)", ALLOW[1]], "ask": ["Bash(rm *)"], "defaultMode": "plan"}}))
+    run(project, tmp_path)
+    perms = json.loads(f.read_text())["permissions"]
+    assert perms["allow"] == ["Bash(ls)", ALLOW[1], ALLOW[0]]
+    assert perms["deny"] == DENY
+    assert perms["ask"] == ["Bash(rm *)"] and perms["defaultMode"] == "plan"
+
+
+def test_second_run_on_merged_settings_changes_nothing(project, tmp_path):
+    f = write_settings(project, json.dumps({"enabledPlugins": {"a": True}}))
+    run(project, tmp_path)
+    first = f.read_bytes()
+    run(project, tmp_path)
+    assert f.read_bytes() == first
+
+
+def test_invalid_json_settings_is_not_written_and_rules_are_printed(project, tmp_path):
+    f = write_settings(project, "{not json")
+    r = run(project, tmp_path)
+    assert r.returncode == 0
+    assert f.read_text() == "{not json"
+    for rule in ALLOW + DENY:
         assert rule in r.stdout
+
+
+def test_symlinked_settings_is_not_written_and_rules_are_printed(project, tmp_path):
+    (project / ".claude").mkdir()
+    target = tmp_path / "elsewhere.json"
+    target.write_text("{}")
+    (project / ".claude/settings.json").symlink_to(target)
+    r = run(project, tmp_path)
+    assert target.read_text() == "{}"
+    for rule in ALLOW + DENY:
+        assert rule in r.stdout
+
+
+def test_skill_and_readme_no_longer_tell_the_owner_to_merge_by_hand_for_an_existing_file():
+    skill = (SETUP.parent / "SKILL.md").read_text()
+    assert "already existed, the permission lines" not in skill
+    assert "merges the missing" in skill and "merges the permission lines" in README
 
 
 def status_line(out, label):
