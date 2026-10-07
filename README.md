@@ -22,6 +22,32 @@ v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Insta
 
 Run these steps in the root of the project (the git root).
 
+Before step 1, check that the plugin commits are on the `main` branch on GitHub. Run this in a clone of the kit repo:
+
+```bash
+git status -sb
+```
+
+The first line must not show `ahead`. It must look like this, with no `[ahead N]`:
+
+```text
+## main...origin/main
+```
+
+If it shows `[ahead N]`, push first:
+
+```bash
+git push origin main
+```
+
+Without the push, the marketplace add fails with this text (the path differs):
+
+```text
+Failed to add marketplace: Marketplace file not found at .../.claude-plugin/marketplace.json
+```
+
+The cause is an unpushed `main`: the marketplace file is not on GitHub. The next command (`claude plugin install agk@agent-graph-kit`) then also fails, with `Plugin "agk" not found in marketplace`.
+
 1. Add the marketplace and install the plugin:
 
    ```bash
