@@ -35,7 +35,7 @@ Run these steps in the root of the project (the git root).
    /agk:setup
    ```
 
-   The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file. It also merges the permission lines into `.claude/settings.json`, which `claude plugin install --scope project` has already created, and keeps every other entry of that file.
+   The skill (`plugin/skills/setup/SKILL.md`) asks for the project name and the test command, then copies the kit files and writes the lock file. It also writes `CLAUDE.md` (the line `@AGENTS.md`) and adds the lines `.claude/settings.local.json` and `__pycache__/` to `.gitignore`. It never overwrites an existing `CLAUDE.md`, and it only adds missing lines to an existing `.gitignore`. It also merges the permission lines into `.claude/settings.json`, which `claude plugin install --scope project` has already created, and keeps every other entry of that file.
 
    Merge by hand only when the setup output shows a `SETTINGS` line ("not a JSON object of the expected form; not written") or a `REFUSED` line (symlink). The setup prints the same lines after that line. Do the merge in an editor, in a terminal outside Claude Code, or with the Write tool. In a Claude Code session, `printf` or `cat >` commands that name `.claude/settings.json` are denied by the kit's guard (`G8:`). The lines to merge:
 
@@ -69,6 +69,22 @@ Run these steps in the root of the project (the git root).
       ```text
       scripts/qa-codex ROLE=qa ISSUE=<number>
       ```
+
+4. Create the four labels on the GitHub repo of the project, before the first `ready` issue. Setup does not run `gh`:
+
+   ```bash
+   gh label create ready --description "Orchestrator may work on this issue" --color 1D76DB --force
+   gh label create needs-owner --description "Escalated: the orchestrator waits for the owner" --color FBCA04 --force
+   gh label create later --description "Out of scope for the current implementation" --color BFD4F2 --force
+   gh label create stage --description "Stage issue: purpose and context for its sub-issues; never ready" --color 5319E7 --force
+   ```
+
+   `--force` updates a label that already exists instead of failing.
+
+5. Close the setup, in this order:
+   1. Commit the setup files and push them to `main` (`git push -u origin main` for the first push).
+   2. Open the project in Claude Code and accept the trust dialog. Without it, the project `permissions.allow` entries are ignored ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)).
+   3. Run the hook activation check in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
 
 To see which copied files changed since the setup, run `/agk:drift` (`plugin/skills/drift/SKILL.md`).
 

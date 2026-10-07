@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the agent-graph-kit loop in the current project. Use when the owner types /agk:setup, or asks to install the kit into a project. Copies the process documents and the Codex QA launcher, writes AGENTS.md, and reports the manual steps that are left.
+description: Set up the agent-graph-kit loop in the current project. Use when the owner types /agk:setup, or asks to install the kit into a project. Copies the process documents and the Codex QA launcher, writes `AGENTS.md`, `CLAUDE.md` and the `.gitignore` lines, and reports the manual steps that are left.
 ---
 
 # Setup
@@ -27,7 +27,8 @@ A missing manual entry does not make the script fail: it never blocks the instal
 
 ## What the script writes
 
-- `docs/process.md`, `docs/team/`, `docs/task-template.md`, `docs/checks/`, `scripts/qa-codex`, `scripts/codex_exec.py`, `scripts/qa-result.schema.json`, and `AGENTS.md`
+- `docs/process.md`, `docs/team/`, `docs/task-template.md`, `docs/checks/`, `scripts/qa-codex`, `scripts/codex_exec.py`, `scripts/qa-result.schema.json`, `AGENTS.md`, and `CLAUDE.md` (exactly the line `@AGENTS.md`; a `CLAUDE.md` with other content is not changed, and a diff is printed)
+- `.gitignore`: created with the lines `.claude/settings.local.json` and `__pycache__/`. When it exists, only the missing lines are added and every existing line is kept
 - `.agent-graph-kit.lock`: the sha256 of each file as copied (a later drift check reads it)
 - `.claude/settings.json` with only the `permissions` block, when the file does not exist. When it exists (for example after `claude plugin install --scope project`), the script merges the missing `permissions.allow` and `permissions.deny` lines into it and keeps every other entry. The plugin delivers the hooks.
 

@@ -125,7 +125,7 @@ def test_lock_file_matches_the_files_and_a_second_run_changes_nothing(project, t
     lock_text = (project / ".agent-graph-kit.lock").read_text()
     lock = json.loads(lock_text)
     assert lock["version"] == 1
-    assert set(lock["files"]) == set(COPIED) | {"AGENTS.md"}
+    assert set(lock["files"]) == set(COPIED) | {"AGENTS.md", "CLAUDE.md"}
     for rel, digest in lock["files"].items():
         assert digest == hashlib.sha256((project / rel).read_bytes()).hexdigest(), rel
     snap = {p: p.read_bytes() for p in project.rglob("*") if p.is_file() and ".git" not in p.parts}
@@ -313,3 +313,52 @@ def test_templates_are_checked_by_the_build(monkeypatch, tmp_path):
     assert "extra: plugin/templates/docs/team/stray.md" in got
     assert "extra: plugin/templates/scripts/other.py" in got
     assert "missing: plugin/templates/docs/checks/hook-activation.md" in got
+
+
+GI_LINES = [".claude/settings.local.json", "__pycache__/"]
+
+
+def test_claude_md_is_written_and_listed_in_the_lock(project, tmp_path):
+    run(project, tmp_path)
+    assert (project / "CLAUDE.md").read_text() == "@AGENTS.md\n"
+    assert (project / "CLAUDE.md").read_bytes() == (ROOT / "CLAUDE.md").read_bytes()
+    assert "CLAUDE.md" in json.loads((project / ".agent-graph-kit.lock").read_text())["files"]
+
+
+def test_gitignore_is_created_with_the_two_lines(project, tmp_path):
+    run(project, tmp_path)
+    assert (project / ".gitignore").read_text().splitlines() == GI_LINES
+
+
+def test_second_run_changes_neither_claude_md_nor_gitignore(project, tmp_path):
+    run(project, tmp_path)
+    snap = ((project / "CLAUDE.md").read_bytes(), (project / ".gitignore").read_bytes())
+    assert run(project, tmp_path).returncode == 0
+    assert ((project / "CLAUDE.md").read_bytes(), (project / ".gitignore").read_bytes()) == snap
+
+
+def test_existing_claude_md_is_kept_and_a_diff_is_printed(project, tmp_path):
+    (project / "CLAUDE.md").write_text("my own notes\n")
+    r = run(project, tmp_path)
+    assert (project / "CLAUDE.md").read_text() == "my own notes\n"
+    assert "CONFLICT  CLAUDE.md" in r.stdout and "+@AGENTS.md" in r.stdout
+    assert "CLAUDE.md" not in json.loads((project / ".agent-graph-kit.lock").read_text())["files"]
+
+
+def test_existing_gitignore_gets_only_the_missing_lines(project, tmp_path):
+    (project / ".gitignore").write_text("node_modules/\n__pycache__/")
+    run(project, tmp_path)
+    assert (project / ".gitignore").read_text() == "node_modules/\n__pycache__/\n.claude/settings.local.json\n"
+    (project / ".gitignore").write_text("a\n.claude/settings.local.json\n__pycache__/\n")
+    run(project, tmp_path)
+    assert (project / ".gitignore").read_text() == "a\n.claude/settings.local.json\n__pycache__/\n"
+
+
+def test_v2_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
+    v2 = README.split("## Install the kit as a plugin (v2)")[1].split("## Lovable frontend lane")[0]
+    for label in ("ready", "needs-owner", "later", "stage"):
+        assert f"gh label create {label} " in v2
+    assert v2.index("gh label create ready") < v2.index("git push") < v2.index("trust dialog") < v2.index("hook-activation.md")
+    assert "ignored" in v2 and "permissions.allow" in v2
+    skill = (ROOT / "plugin/skills/setup/SKILL.md").read_text().split("## What the script writes")[1]
+    assert "`CLAUDE.md`" in skill and "`.gitignore`" in skill

@@ -30,7 +30,7 @@ HAND_SKILLS = ["setup", "drift"]  # written by hand in plugin/skills/, not built
 TEMPLATE_FILES = ["docs/process.md", "docs/task-template.md", "scripts/qa-codex", "scripts/codex_exec.py",
                   "scripts/qa-result.schema.json"]
 TEMPLATE_DIRS = ["docs/team", "docs/checks"]
-HAND_TEMPLATES = {"AGENTS.md.tmpl"}  # written by hand in plugin/templates/
+HAND_TEMPLATES = {"AGENTS.md.tmpl", "CLAUDE.md.tmpl"}  # written by hand in plugin/templates/
 IGNORED = {"__pycache__", ".pytest_cache"}
 
 

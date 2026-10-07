@@ -6,7 +6,7 @@
 
   uv run --script setup.py --root <project root> --name <project name> --test-command <test command> [--home <dir>]
 
-Copies the files of `plugin/templates/` into the project, writes AGENTS.md from its template,
+Copies the files of `plugin/templates/` into the project, writes AGENTS.md from its template, writes CLAUDE.md (`@AGENTS.md`), adds two lines to `.gitignore`,
 writes `.agent-graph-kit.lock`, creates `.claude/settings.json` when it does not exist (or merges the permission lines into it), and
 prints the manual checks. It never overwrites a file, never follows a symlink out of the root,
 and exits 0 when a manual entry is missing.
@@ -26,6 +26,9 @@ from pathlib import Path
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 AGENTS_TEMPLATE = "AGENTS.md.tmpl"
+CLAUDE_TEMPLATE = "CLAUDE.md.tmpl"  # copied as CLAUDE.md
+GITIGNORE = ".gitignore"
+GITIGNORE_LINES = [".claude/settings.local.json", "__pycache__/"]
 LOCK = ".agent-graph-kit.lock"
 SETTINGS = ".claude/settings.json"
 
@@ -57,6 +60,8 @@ def template_files(name: str, test_command: str) -> list[tuple[str, bytes, int]]
         rel = p.relative_to(TEMPLATES).as_posix()
         if not p.is_file() or rel == AGENTS_TEMPLATE or "__pycache__" in p.parts:
             continue
+        if rel == CLAUDE_TEMPLATE:
+            rel = "CLAUDE.md"
         out.append((rel, p.read_bytes(), p.stat().st_mode & 0o777))
     text = (TEMPLATES / AGENTS_TEMPLATE).read_text()
     text = text.replace("{{PROJECT_NAME}}", name).replace("{{TEST_COMMAND}}", test_command)
@@ -130,6 +135,28 @@ def write_lock(root: Path, entries: dict[str, str]) -> None:
     if not path.exists() or path.read_text() != text:
         path.write_text(text)
     print(f"LOCK      {LOCK}: {len(entries)} entries")
+
+
+def gitignore_step(root: Path) -> None:
+    """Create `.gitignore` with the two lines, or add the missing lines to an existing one. Never removes a line."""
+    path = root / GITIGNORE
+    link = symlink_in_path(root, GITIGNORE)
+    if link:
+        print(f"REFUSED   {GITIGNORE}: {link} is a symlink; nothing written. Lines to add by hand:")
+        print("\n".join("  " + l for l in GITIGNORE_LINES))
+        return
+    if path.exists() and not path.is_file():
+        print(f"CONFLICT  {GITIGNORE}: exists and is not a file; not changed")
+        return
+    have = path.read_text() if path.exists() else ""
+    present = {l.strip() for l in have.splitlines()}
+    missing = [l for l in GITIGNORE_LINES if l not in present]
+    if not missing:
+        print(f"IDENTICAL {GITIGNORE}: already has the lines")
+        return
+    sep = "" if not have or have.endswith("\n") else "\n"
+    path.write_text(have + sep + "\n".join(missing) + "\n")
+    print(f"GITIGNORE {GITIGNORE}: added {', '.join(missing)}")
 
 
 def merge_settings(path: Path, lines: list[str]) -> None:
@@ -249,6 +276,7 @@ def main(argv: list[str]) -> int:
     files = template_files(a.name, a.test_command)
     entries = copy_files(root, files)
     write_lock(root, entries)
+    gitignore_step(root)
     settings_step(root)
     manual_checks(root, Path(a.home))
     return 0
