@@ -20,3 +20,17 @@ def test_v2_credit_checkin_and_synthetic_id():
 
 def test_steps_written_once():
     assert README.count("git submodule add -b main") == 1
+
+
+def test_v2_project_knowledge_step():
+    keys = ["Lovable project: <project id>", "Set the Lovable project knowledge",
+            "Install the `lovable` plugin"]
+    pos = [V2.index(k) for k in keys]
+    assert pos == sorted(pos)
+    step = V2.split("Set the Lovable project knowledge")[1].split("Install the `lovable` plugin")[0]
+    assert "has no tool to set project knowledge" in step
+    for k in ["drawing library", "random-number library", "`@playwright/test` dev dependency",
+              "only after the frontend-engineer has confirmed"]:
+        assert k in step
+    for bad in ["auto-approve", "implement right away", "no need to wait"]:
+        assert bad not in step.lower()

@@ -147,7 +147,21 @@ The base kit works without this lane. To add it, do these steps in order. No MCP
    Lovable project: 00000000-0000-4000-8000-000000000000
    ```
 
-9. Install the `lovable` plugin.
+9. Set the Lovable project knowledge once per Lovable project (project settings in the Lovable editor). You set it yourself: the `frontend-engineer` has no tool to set project knowledge. The entry holds the standing constraints for all frontend work and the way Lovable works with the `frontend-engineer`, so the loop does not repeat them in every message. Example with a synthetic text:
+
+   ```
+   Standing constraints for all work in this project:
+   - Do not add a new drawing library.
+   - Do not add a new random-number library.
+   - Keep the `@playwright/test` dev dependency.
+
+   How you work with the frontend-engineer, who supervises your work:
+   - Write a plan first and stop. Do not change code at this point.
+   - Implement the plan only after the frontend-engineer has confirmed it.
+   - If the frontend-engineer asks for corrections, send a new plan and wait again.
+   ```
+
+10. Install the `lovable` plugin.
 
 Nobody edits `frontend/` locally. All frontend changes go through Lovable.
 
