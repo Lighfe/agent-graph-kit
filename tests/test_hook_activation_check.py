@@ -105,6 +105,7 @@ def test_all_checks_ok_in_a_set_up_project_and_nothing_is_written(tmp_path):
 
 def test_missing_module_fails_check_3_and_the_last_line(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env)
     proj = _project(tmp_path, env)
     plugin = tmp_path / "plugin-copy"
     shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
