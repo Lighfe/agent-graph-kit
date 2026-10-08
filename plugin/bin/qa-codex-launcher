@@ -779,6 +779,12 @@ def main(argv: list[str], sleep=time.sleep) -> int:
     docs/specs/agent-graph-kit.md#valid-result-pending-and-current-result). A signal
     during the cleanup lets the cleanup finish first."""
     global _posted
+    if argv == ["--self-check"]:  # the modules are loaded (imports above); no gh or codex process starts (#176)
+        if not SCHEMA.is_file():
+            print(f"qa-codex: self-check failed: missing file {SCHEMA.name}", file=sys.stderr)
+            return 1
+        print("qa-codex: self-check ok")
+        return 0
     _posted = False
     old = codex_exec.catch_signals()
     try:
