@@ -269,9 +269,24 @@ def test_auto_mode_entries_are_always_check_by_hand(project, tmp_path):
         assert status_line(r.stdout, f"Auto mode entry {n}").startswith("CHECK BY HAND")
         assert "OK" not in status_line(r.stdout, f"Auto mode entry {n}")
     assert "scripts/qa-codex ROLE=qa ISSUE=<number>" in r.stdout
-    flat = " ".join(r.stdout.split())
-    for entry in (setup_entry(2), setup_entry(3)):
-        assert entry in flat
+
+
+def test_auto_mode_entries_print_as_three_paste_blocks(project, tmp_path):
+    r = run(project, tmp_path)
+    parts = r.stdout.split("```text\n")
+    assert len(parts) == 4
+    blocks = [p.split("```")[0].rstrip("\n") for p in parts[1:]]
+    sys.path.insert(0, str(SETUP.parent))
+    try:
+        import setup as s
+    finally:
+        sys.path.pop(0)
+    assert blocks == [s.ENTRY_1, s.ENTRY_2, s.ENTRY_3]
+    for b in blocks:
+        assert "\n" not in b and not b.startswith("Entry")
+    steps = r.stdout.split("Auto mode entries:")[1].split("```text")[0]
+    assert "1. Open `/permissions`" in steps and "$defaults" in steps and "4. Add each block" in steps
+    assert setup_entry(1) == " ".join(s.ENTRY_1.split())
 
 
 def setup_entry(n):

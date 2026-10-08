@@ -46,7 +46,12 @@ ENTRY_3 = ("In a repo set up with agent-graph-kit, the main session working as t
            "stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's "
            "instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh "
            "issue close, and no sub-issue or blocker link.")
-AUTO_HOW = "In a session run /permissions, open the Auto mode tab, keep $defaults, and add the entry."
+AUTO_STEPS = [
+    "Open `/permissions` in Claude Code.",
+    "Open the Auto mode tab.",
+    "Keep the `$defaults` line.",
+    "Add each block below as one new entry.",
+]
 
 
 def sha256(data: bytes) -> str:
@@ -257,8 +262,17 @@ def manual_checks(root: Path, home: Path) -> None:
     else:
         show("MISSING", "Codex trust entry",
              f"fix: add to {home / '.codex' / 'config.toml'}:\n[projects.\"{gr}\"]\ntrust_level = \"trusted\"")
-    for n, text in ((1, ENTRY_1), (2, ENTRY_2), (3, ENTRY_3)):
-        show("CHECK BY HAND", f"Auto mode entry {n}", f"fix: {AUTO_HOW}\nentry {n}:\n{text}")
+    for n in (1, 2, 3):
+        show("CHECK BY HAND", f"Auto mode entry {n}", "fix: add the entry as described below")
+    print()
+    print("Auto mode entries:")
+    for i, step in enumerate(AUTO_STEPS, 1):
+        print(f"{i}. {step}")
+    for text in (ENTRY_1, ENTRY_2, ENTRY_3):
+        print()
+        print("```text")
+        print(text)
+        print("```")
 
 
 def main(argv: list[str]) -> int:

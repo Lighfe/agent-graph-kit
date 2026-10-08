@@ -20,7 +20,7 @@ This skill turns a mostly fresh project into a project in which the loop can run
 
 3. Show the owner the output of the script, and name what is left:
    - each file that already existed with other content: the script did not touch it and printed a diff. The owner decides whether to merge by hand.
-   - each manual check with the status `MISSING` or `CHECK BY HAND`, with its fix. The three Auto mode entries are always `CHECK BY HAND`: the owner sets them in `/permissions`, in the Auto mode tab. This skill never sets them.
+   - each manual check with the status `MISSING` or `CHECK BY HAND`, with its fix. The three Auto mode entries are always `CHECK BY HAND`: the owner sets them in `/permissions`, in the Auto mode tab. This skill never sets them. The output lists the steps as a numbered list and prints each entry in its own fenced block; show the steps and the three blocks as the script prints them, with nothing added inside a block.
    - when `.claude/settings.json` could not be merged (invalid JSON or a symlink), the permission lines the owner adds by hand
 
 A missing manual entry does not make the script fail: it never blocks the install.

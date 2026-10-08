@@ -293,7 +293,18 @@ trust_level = "trusted"
 
 The loop runs in Auto mode. Three agent calls need an allow entry for the Auto mode classifier. The entries are user-level: in a session, run `/permissions`, open the **Auto mode** tab, and add each entry (keep `$defaults`). Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
 
-Entry 1 (QA): allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo. This is the Codex QA launch command (see `docs/checks/hook-activation.md`, "Set-up" step 2).
+Steps (the setup output prints the same steps and blocks):
+
+1. Open `/permissions` in Claude Code.
+2. Open the Auto mode tab.
+3. Keep the `$defaults` line.
+4. Add each block below as one new entry.
+
+Entry 1 (QA): the Codex QA launch command (see `docs/checks/hook-activation.md`, "Set-up" step 2).
+
+```text
+allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo
+```
 
 Entry 2 (PM edits): copy this text as is:
 
