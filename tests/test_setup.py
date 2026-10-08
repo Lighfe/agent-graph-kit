@@ -224,6 +224,15 @@ def test_manual_checks_all_ok(project, tmp_path):
         assert status_line(r.stdout, label).startswith("OK"), label
 
 
+def trust_cmd(out):
+    return out.split("```bash\n")[1].split("\n```")[0]
+
+
+def run_trust_cmd(cmd, home):
+    return subprocess.run(["sh", "-c", cmd], capture_output=True, text=True,
+                          env={"PATH": os.environ["PATH"], "HOME": str(home)})
+
+
 def test_manual_checks_missing(project, tmp_path):
     b = fake_bin(tmp_path, gh=False, uv=False, codex=False)
     r = run(project, tmp_path, bin_dir=b)
@@ -233,8 +242,8 @@ def test_manual_checks_missing(project, tmp_path):
     assert "gh auth login" in r.stdout
     assert "README.md, Prerequisites" in r.stdout
     assert "codex login" in r.stdout
-    assert f'[projects."{os.path.realpath(project)}"]\n' in r.stdout.replace("              ", "")
-    assert 'trust_level = "trusted"' in r.stdout
+    assert "```bash\n" in r.stdout and "project folder only" in r.stdout
+    assert os.path.realpath(project) in trust_cmd(r.stdout)
 
 
 def test_codex_missing_program_is_missing(project, tmp_path):
@@ -409,3 +418,50 @@ def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
         assert f"{i}. {step}" in out
     for e in (s.ENTRY_1, s.ENTRY_2, s.ENTRY_3):
         assert f"```text\n{e}\n```" in skill
+
+
+def test_trust_command_makes_the_check_ok_and_toml_valid(project, tmp_path):
+    import tomllib
+    home = tmp_path / "home"
+    r = run(project, tmp_path, home=home)
+    assert not (home / ".codex").exists()  # setup itself writes nothing into home
+    assert run_trust_cmd(trust_cmd(r.stdout), home).returncode == 0
+    data = tomllib.loads((home / ".codex/config.toml").read_text())
+    assert data["projects"][os.path.realpath(project)]["trust_level"] == "trusted"
+    again = run(project, tmp_path, home=home)
+    assert status_line(again.stdout, "Codex trust entry").startswith("OK")
+    assert "```bash" not in again.stdout
+
+
+def test_trust_command_with_file_without_final_newline(project, tmp_path):
+    import tomllib
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    old = '[projects."/somewhere/else"]\ntrust_level = "trusted"'
+    (home / ".codex/config.toml").write_text(old)
+    r = run(project, tmp_path, home=home)
+    assert run_trust_cmd(trust_cmd(r.stdout), home).returncode == 0
+    text = (home / ".codex/config.toml").read_text()
+    assert text.startswith(old + "\n")
+    data = tomllib.loads(text)
+    assert data["projects"]["/somewhere/else"]["trust_level"] == "trusted"
+    assert status_line(run(project, tmp_path, home=home).stdout, "Codex trust entry").startswith("OK")
+
+
+@pytest.mark.parametrize("dirname", ["my project", "it's here", 'qu"ote'])
+def test_trust_command_with_odd_git_root(tmp_path, dirname):
+    import tomllib
+    proj = tmp_path / dirname
+    proj.mkdir()
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+    home = tmp_path / "home"
+    r = run(proj, tmp_path, home=home)
+    assert run_trust_cmd(trust_cmd(r.stdout), home).returncode == 0
+    tomllib.loads((home / ".codex/config.toml").read_text())
+    assert status_line(run(proj, tmp_path, home=home).stdout, "Codex trust entry").startswith("OK")
+
+
+def test_skill_and_readme_describe_the_trust_command():
+    skill = (SETUP.parent / "SKILL.md").read_text()
+    assert "fenced block" in skill and "project folder only" in skill
+    assert "prints one command" in README and "project folder only" in README

@@ -114,12 +114,7 @@ The cause is an unpushed `main`: the marketplace file is not on GitHub. The next
       codex login
       ```
 
-   3. Add the Codex trust entry to `$HOME/.codex/config.toml`. Use the absolute path of the project (`git rev-parse --show-toplevel`):
-
-      ```toml
-      [projects."/home/you/projects/example-app"]
-      trust_level = "trusted"
-      ```
+   3. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it. It appends the trust entry of this project to `$HOME/.codex/config.toml` (the git root of the project, `git rev-parse --show-toplevel`) and creates the file when it does not exist. The entry is for this project folder only; no other project changes. See [Codex trust entry](#codex-trust-entry).
 
    4. Add the three Auto mode entries in `/permissions`, in the Auto mode tab. The texts of entry 2 and entry 3 are in [Auto mode allow entries](#auto-mode-allow-entries). Entry 1 allows exactly this command in the project repo:
 
@@ -282,7 +277,7 @@ __pycache__/
 
 ### Codex trust entry
 
-Add the trust entry for the project to `$HOME/.codex/config.toml`. Otherwise Codex writes it there during the loop. The path is the git root of the project (`git rev-parse --show-toplevel`), as an absolute path:
+The setup output prints a command that adds the trust entry for the project to `$HOME/.codex/config.toml`, when the entry is missing. Run it once. Otherwise Codex writes the entry there during the loop. The entry is for this project folder only (the git root, `git rev-parse --show-toplevel`): no other project changes. The command creates the file and the folder `~/.codex` when they do not exist. Setup itself writes nothing into your home folder. The command appends this to the file:
 
 ```toml
 [projects."/home/you/projects/example-app"]

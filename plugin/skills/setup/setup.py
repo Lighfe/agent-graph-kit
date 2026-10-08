@@ -18,6 +18,7 @@ import difflib
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -233,6 +234,17 @@ def trusted(home: Path, gitroot: str) -> bool:
     return False
 
 
+def trust_command(gitroot: str) -> str:
+    """One shell command that appends the trust entry of this project to ~/.codex/config.toml.
+
+    It starts with a newline, so the new table begins on its own line even when the file has no final newline.
+    """
+    key = gitroot.replace("\\", "\\\\").replace('"', '\\"')
+    table = shlex.quote(f'[projects."{key}"]')
+    return ('mkdir -p "$HOME/.codex" && printf \'\\n%s\\n%s\\n\' ' + table
+            + ' \'trust_level = "trusted"\' >> "$HOME/.codex/config.toml"')
+
+
 def manual_checks(root: Path, home: Path) -> None:
     def show(status: str, label: str, fix: str | None = None) -> None:
         print(f"{status:<14}{label}")
@@ -261,7 +273,13 @@ def manual_checks(root: Path, home: Path) -> None:
         show("OK", "Codex trust entry")
     else:
         show("MISSING", "Codex trust entry",
-             f"fix: add to {home / '.codex' / 'config.toml'}:\n[projects.\"{gr}\"]\ntrust_level = \"trusted\"")
+             f"fix: run this command. It adds the entry to {home / '.codex' / 'config.toml'}.\n"
+             "The entry is for this project folder only. No other project changes.")
+        print()
+        print("```bash")
+        print(trust_command(gr))
+        print("```")
+        print()
     for n in (1, 2, 3):
         show("CHECK BY HAND", f"Auto mode entry {n}", "fix: add the entry as described below")
     print()
