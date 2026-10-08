@@ -17,6 +17,7 @@ This skill runs 4 checks and prints one line per check, then one result line. It
 
 2. Show the owner the output. Each line starts with `OK` or `FAILED`:
    - Check 1: every event of the plugin `hooks.json` (`PreToolUse`, `SubagentStop`, `PermissionDenied`) is registered
+     The evidence is an `enabledPlugins` entry `agk@<marketplace>` set to `true`, or the event in the `hooks` of a settings file (user, project or local). `disableAllHooks: true` in any of them fails the check.
    - Check 2: the guard denies `gh issue close 1 && true` with a `G1` message (a synthetic input, no GitHub call)
    - Check 3: `scripts/qa-codex --self-check` loads all its modules and ends without `gh` or `codex`
    - Check 4: `gh`, `uv` and `codex` are on the path, and `gh` and `codex` are logged in

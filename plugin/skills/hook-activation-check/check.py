@@ -52,9 +52,15 @@ def check_hooks(root: Path, home: Path) -> str:
     active: set[str] = set()
     for c in configs:
         active |= _events(c)
-    disabled = any(isinstance(c.get("enabledPlugins"), dict) and any(
-        k.split("@")[0] == PLUGIN_NAME and v is False for k, v in c["enabledPlugins"].items()) for c in configs)
-    if not disabled:  # the plugin is loaded (this skill runs from it), so its hooks.json is active
+    # Evidence that the plugin is on: an enabledPlugins entry "agk@<marketplace>" set to true. The files are
+    # read in order user, project, local; a later explicit value wins.
+    enabled: dict[str, bool] = {}
+    for c in configs:
+        if isinstance(c.get("enabledPlugins"), dict):
+            for k, v in c["enabledPlugins"].items():
+                if k.split("@")[0] == PLUGIN_NAME and isinstance(v, bool):
+                    enabled[k] = v
+    if any(enabled.values()):
         active |= plugin_events
     missing = [e for e in required if e not in active]
     if missing:

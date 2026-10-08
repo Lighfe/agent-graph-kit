@@ -64,8 +64,35 @@ def test_skill_is_built_and_named():
     assert build_plugin.differences() == []
 
 
+def _enable_plugin(env, value=True):
+    """The evidence of an installed plugin: an enabledPlugins entry in the user settings."""
+    folder = Path(env["HOME"]) / ".claude"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "settings.json").write_text(json.dumps({"enabledPlugins": {"agk@kit": value}}))
+
+
+def test_no_registration_evidence_fails_check_1_naming_every_event(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    proj = _project(tmp_path, env)
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0].startswith("FAILED check 1")
+    for event in ("PreToolUse", "SubagentStop", "PermissionDenied"):
+        assert event in lines[0]
+    assert lines[-1].startswith("FAILED") and r.returncode == 1
+
+
+def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    proj = _project(tmp_path, env)
+    local = proj / ".claude" / "settings.local.json"
+    local.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": []}], "SubagentStop": [{"hooks": [{}]}]}}))
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0] == "FAILED check 1: hooks not registered: PermissionDenied"
+
+
 def test_all_checks_ok_in_a_set_up_project_and_nothing_is_written(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env)
     proj = _project(tmp_path, env)
     before = _snapshot(proj)
     r, lines = _check(PLUGIN, proj, env)
@@ -91,6 +118,7 @@ def test_missing_module_fails_check_3_and_the_last_line(tmp_path):
 
 def test_disabled_plugin_fails_check_1_and_missing_codex_fails_check_4(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env)  # enabled for the user, switched off for this project
     proj = _project(tmp_path, env)
     local = proj / ".claude" / "settings.local.json"
     local.write_text(json.dumps({"enabledPlugins": {"agk@kit": False}}))
