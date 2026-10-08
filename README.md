@@ -330,7 +330,7 @@ Create the four labels with the labels step of [Start a new project](#start-a-ne
 1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
 2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)). The hooks apply from the next tool call after `.claude/settings.json` is in place.
 3. Run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
-4. Final step: run `/stage-start` in the project to plan the first stage (intake). The main session is then the planner (`docs/team/planner.md`). The planner ends set-up with a `/goal …` line: run it in the same or a new session to start the loop.
+4. Final step: plan the first stage with `/stage-start`, as in the last step of [Start a new project](#start-a-new-project).
 
 ## Update the kit in a project
 
