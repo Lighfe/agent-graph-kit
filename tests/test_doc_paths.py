@@ -8,8 +8,8 @@ never meaning.
 Files read (INSTRUCTION_FILES below): AGENTS.md, CLAUDE.md, docs/process.md,
 docs/task-template.md, every .md file in docs/team/ and .claude/agents/, every
 .md file under .agents/skills/, the living spec docs/specs/agent-graph-kit.md,
-and of README.md only four sections (README_SECTIONS below: the new-project
-section, the v2 install section, the Lovable section and the v1 section), each from its heading to the
+and of README.md only three sections (README_SECTIONS below: the new-project
+section, the Lovable section and the v1 section), each from its heading to the
 next "## " heading.
 
 Candidates: the inline code spans with single backticks and the markdown link
@@ -61,7 +61,6 @@ INSTRUCTION_FILES = [
 README = "README.md"
 README_SECTIONS = [
     "## Start a new project",
-    "## Install the kit as a plugin (v2)",
     "## Lovable frontend lane (optional, v2)",
     "## Set up the kit in a project",
 ]
@@ -324,3 +323,16 @@ def test_without_the_skip_list_entry_the_path_is_checked():
 def test_section_ends_at_the_next_level_two_heading():
     text = "# T\n## A\nx `a/b`\n### sub\ny\n## B\nz\n"
     assert section(text, "## A") == "## A\nx `a/b`\n### sub\ny"
+
+
+def test_readme_route_anchor_links_point_to_headings():
+    readme = (ROOT / README).read_text(encoding="utf-8")
+    route = section(readme, "## Start a new project")
+    slugs = set()
+    for line in outside_fences(readme):
+        m = re.match(r"^#+\s+(.*)$", line)
+        if m:
+            slugs.add(re.sub(r"[^\w\- ]", "", m.group(1).lower()).replace(" ", "-"))
+    anchors = re.findall(r"\]\(#([^)\s]+)\)", "\n".join(outside_fences(route)))
+    assert anchors
+    assert [a for a in anchors if a not in slugs] == []

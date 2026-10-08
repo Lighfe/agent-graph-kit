@@ -429,7 +429,7 @@ The kit is installed as a Claude Code plugin `agk` ([plugin/](../../plugin/), li
 - **Skills**: `stage-start`, `codex-review`, `setup` and `drift`, from `plugin/skills/`.
 - **Project templates**: the files that `/agk:setup` copies into a project, in `plugin/templates/`.
 
-The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. The steps are in "Install the kit as a plugin (v2)" in the README. The manual copy of v1 stays as the manual route.
+The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. The steps are in "Start a new project" in the README. The manual copy of v1 stays as the manual route.
 
 ## Doc lifecycles
 

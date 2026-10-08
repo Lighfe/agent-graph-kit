@@ -16,77 +16,67 @@ Later, this repo becomes a Claude Code plugin.
 
 v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. You set up the kit in a project by hand with the steps in "Set up the kit in a project". The first project that uses these steps is the paint-math demo.
 
-v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Install the kit as a plugin (v2)" below.
+v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Start a new project" below.
 
 ## Start a new project
 
-Follow these steps in order, from an empty folder to a first working loop. Each step is one line with a link to the place that holds it.
-
-Create the project folder, then the public GitHub repo, and push `main` (the first push of `main` needs a first commit):
-
-```bash
-gh repo create example-app --public --source . --push
-```
+One route, from an empty folder to a first working loop. Do the steps in order. Each step needs only what the steps before it gave.
 
 Public repo rule: no secrets, no real account data and no full third-party articles in commits, issues or comments. Keys stay in the user environment.
 
-1. Install the plugin: [Install the kit as a plugin (v2)](#install-the-kit-as-a-plugin-v2).
-2. Run the setup in Claude Code ([step 2 of the install section](#install-the-kit-as-a-plugin-v2)):
+### Prerequisites
 
-   ```text
-   /agk:setup
+- Claude Code (`claude`)
+- `gh`, logged in (`gh auth status`; if it fails, run `gh auth login`)
+- `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
+- Codex CLI, logged in (`codex login`)
+
+The setup checks for `gh`, `uv` and Codex were run only on a machine that has them. The output on a machine without them is not tested.
+
+Optional, needed only for the frontend lane (skip this block when you do not use Lovable):
+
+- The Claude Code plugin `lovable`. The tool names in `.claude/agents/frontend-engineer.md` depend on it.
+- The tools for the install command of `frontend/`. The QA pre-step picks it from the lockfile in `frontend/`: with an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) it runs `npm ci`, else with a bun lockfile (`bun.lock` or `bun.lockb`) it runs `bun install --frozen-lockfile`, else it posts `## QA: UNAVAILABLE`. So an npm frontend needs `npm` and `npx`, and a bun frontend needs `bun` on `PATH`.
+- A Lovable workspace with enough credits, and a Playwright dependency in the frontend (step 9 below links the steps).
+
+### Steps
+
+1. Create the project folder and the public GitHub repo. The first push of `main` needs a first commit, so make one before `gh repo create`:
+
+   ```bash
+   mkdir example-app && cd example-app
+   git init -b main
+   touch README.md
+   git add README.md
+   git commit -m "First commit"
+   gh repo create example-app --public --source . --push
    ```
 
-3. Do the manual steps (`gh` login, Codex login, Codex trust entry, the three Auto mode entries): [step 3 of the install section](#install-the-kit-as-a-plugin-v2), with the entry texts in [Auto mode allow entries](#auto-mode-allow-entries).
-4. Create the labels: [Labels](#labels).
-5. Commit and push: [Close the setup](#install-the-kit-as-a-plugin-v2) (step 5 there).
-6. Accept the trust dialog: [Close the setup](#install-the-kit-as-a-plugin-v2) (step 5.2 there).
-7. Run the hook activation check: [docs/checks/hook-activation.md](docs/checks/hook-activation.md).
-8. Optional: set up the Lovable lane: [Lovable frontend lane (optional, v2)](#lovable-frontend-lane-optional-v2).
-9. Plan the first stage with `/stage-start`: [Start](#start).
+   Or on the GitHub web page: create the public repo with a README, then clone it and go into the folder:
 
-Quota: the Codex QA run (the loop, after step 7) spends Codex quota, and the Lovable lane (step 8) spends Lovable credits. Writes to GitHub: creating the repo (the `gh repo create` line), the labels (step 4) and the push (step 5).
+   ```bash
+   git clone https://github.com/<owner>/example-app.git
+   cd example-app
+   ```
 
-Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.
+   The repo must be owned by your GitHub user account, and `gh` must be logged in as that user: see [Project repo](#project-repo).
 
-## Install the kit as a plugin (v2)
+2. Open Claude Code in the project folder and accept the trust dialog:
 
-Run these steps in the root of the project (the git root).
+   ```bash
+   claude
+   ```
 
-Before step 1, check that the plugin commits are on the `main` branch on GitHub. Run this in a clone of the kit repo:
+   Without the trust, the project `permissions.allow` entries are ignored ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)).
 
-```bash
-git status -sb
-```
-
-The first line must not show `ahead`. It must look like this, with no `[ahead N]`:
-
-```text
-## main...origin/main
-```
-
-If it shows `[ahead N]`, push first:
-
-```bash
-git push origin main
-```
-
-Without the push, the marketplace add fails with this text (the path differs):
-
-```text
-Failed to add marketplace: Marketplace file not found at .../.claude-plugin/marketplace.json
-```
-
-The cause is an unpushed `main`: the marketplace file is not on GitHub. The next command (`claude plugin install agk@agent-graph-kit`) then also fails, with `Plugin "agk" not found in marketplace`.
-
-1. Add the marketplace and install the plugin:
+3. Install the plugin, in a terminal in the project folder (the git root), then start Claude Code in the folder again so that it loads the plugin:
 
    ```bash
    claude plugin marketplace add Lighfe/agent-graph-kit
    claude plugin install agk@agent-graph-kit --scope project
    ```
 
-2. Run the setup in a Claude Code session in the project:
+4. Run the setup in Claude Code:
 
    ```text
    /agk:setup
@@ -100,29 +90,16 @@ The cause is an unpushed `main`: the marketplace file is not on GitHub. The next
    permissions.allow gets: Bash(scripts/qa-codex ROLE=qa ISSUE=*) and Bash(gh issue close *)
    permissions.deny gets:  Edit(/.claude/settings*.json)
    ```
-3. Do the remaining manual steps:
-   1. Check the `gh` login. If the check fails, log in:
 
-      ```bash
-      gh auth status
-      gh auth login
-      ```
-
-   2. Log in to Codex:
-
-      ```bash
-      codex login
-      ```
-
-   3. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it. It appends the trust entry of this project to `$HOME/.codex/config.toml` (the git root of the project, `git rev-parse --show-toplevel`) and creates the file when it does not exist. The entry is for this project folder only; no other project changes. See [Codex trust entry](#codex-trust-entry).
-
-   4. Add the three Auto mode entries in `/permissions`, in the Auto mode tab. The texts of entry 2 and entry 3 are in [Auto mode allow entries](#auto-mode-allow-entries). Entry 1 allows exactly this command in the project repo:
+5. Do the manual steps that the setup output names:
+   1. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it. It appends the trust entry of this project to `$HOME/.codex/config.toml` (the git root of the project, `git rev-parse --show-toplevel`) and creates the file when it does not exist. The entry is for this project folder only; no other project changes. See [Codex trust entry](#codex-trust-entry).
+   2. Add the three Auto mode entries in `/permissions`, in the Auto mode tab. The texts are in [Auto mode allow entries](#auto-mode-allow-entries). Entry 1 allows exactly this command in the project repo:
 
       ```text
       scripts/qa-codex ROLE=qa ISSUE=<number>
       ```
 
-4. Create the four labels on the GitHub repo of the project, before the first `ready` issue. Setup does not run `gh`:
+6. Create the four labels on the GitHub repo of the project, before the first `ready` issue. Setup does not run `gh`:
 
    ```bash
    gh label create ready --description "Orchestrator may work on this issue" --color 1D76DB --force
@@ -133,12 +110,28 @@ The cause is an unpushed `main`: the marketplace file is not on GitHub. The next
 
    `--force` updates a label that already exists instead of failing.
 
-5. Close the setup, in this order:
-   1. Commit the setup files and push them to `main` (`git push -u origin main` for the first push).
-   2. Open the project in Claude Code and accept the trust dialog. Without it, the project `permissions.allow` entries are ignored ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)).
-   3. Run the hook activation check in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
+7. Commit the setup files and push them to `main`:
+
+   ```bash
+   git add -A
+   git commit -m "Set up agent-graph-kit"
+   git push
+   ```
+
+8. Run the hook activation check in Claude Code, before the first issue gets the label `ready`. If a line says `FAILED`, the loop does not start:
+
+   ```text
+   /agk:hook-activation-check
+   ```
+
+9. Optional: set up the Lovable lane: [Lovable frontend lane (optional, v2)](#lovable-frontend-lane-optional-v2).
+10. Plan the first stage with `/stage-start`. The main session is then the planner (`docs/team/planner.md`). The planner ends set-up with a `/goal …` line: run it in the same or a new session to start the loop.
 
 To see which copied files changed since the setup, run `/agk:drift` (`plugin/skills/drift/SKILL.md`).
+
+Quota: the Codex QA run (the loop, after step 8) spends Codex quota, and the Lovable lane (step 9) spends Lovable credits. Writes to GitHub: creating the repo (step 1), the labels (step 6) and the push (step 7).
+
+Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.
 
 ## Lovable frontend lane (optional, v2)
 
@@ -197,18 +190,13 @@ The QA pre-step and its accepted risk are in "Frontend lane (optional)" below.
 
 ## Set up the kit in a project
 
-This is the manual route (v1). For v2 use the section "Install the kit as a plugin (v2)" above.
+This is the manual route (v1). For v2 use the section "Start a new project" above.
 
 Run these steps in the root of the new project (the git root; see "Project repo" for a new, empty repo), in a terminal outside Claude Code. Do not run them from a Claude Code session: the kit's guard hooks deny the `cp` of `.claude/settings.json` (`G8:`), and the Auto mode classifier denies the copy into `.claude/` and the `git submodule add`. The examples use a synthetic project `example-app` at `/home/you/projects/example-app` and a clone of this repo next to it at `../agent-graph-kit`.
 
 ### Prerequisites
 
-- `gh`, logged in (`gh auth status`)
-- `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
-- Codex CLI, logged in (`codex login`)
-- Frontend lane only: the Claude Code plugin `lovable`. The tool names in `.claude/agents/frontend-engineer.md` depend on it.
-- Frontend lane only: the tools for the install command of `frontend/`. The QA pre-step picks it from the lockfile in `frontend/`: with an npm lockfile (`package-lock.json` or `npm-shrinkwrap.json`) it runs `npm ci`, else with a bun lockfile (`bun.lock` or `bun.lockb`) it runs `bun install --frozen-lockfile`, else it posts `## QA: UNAVAILABLE`. So an npm frontend needs `npm` and `npx`, and a bun frontend needs `bun` on `PATH` (it no longer needs `npx`: its browser step runs through `bun`)
-- Frontend lane only: a Playwright dependency in the frontend: `@playwright/test` as a dev dependency in `frontend/package.json` and its lockfile (see "Frontend lane" below). Without it, the QA pre-step posts `## QA: UNAVAILABLE`
+The prerequisites are in "Prerequisites" of [Start a new project](#start-a-new-project), including the optional block for the frontend lane. The frontend lane also needs a Playwright dependency in the frontend: `@playwright/test` as a dev dependency in `frontend/package.json` and its lockfile (see "Frontend lane" below). Without it, the QA pre-step posts `## QA: UNAVAILABLE`.
 
 ### Project repo
 
@@ -335,14 +323,7 @@ Accepted risk ("Worktree and pre-step" in [docs/specs/agent-graph-kit.md](docs/s
 
 ### Labels
 
-```bash
-gh label create ready --description "Orchestrator may work on this issue" --color 1D76DB --force
-gh label create needs-owner --description "Escalated: the orchestrator waits for the owner" --color FBCA04 --force
-gh label create later --description "Out of scope for the current implementation" --color BFD4F2 --force
-gh label create stage --description "Stage issue: purpose and context for its sub-issues; never ready" --color 5319E7 --force
-```
-
-`--force` updates a label that already exists instead of failing.
+Create the four labels with the labels step of [Start a new project](#start-a-new-project).
 
 ### Start
 

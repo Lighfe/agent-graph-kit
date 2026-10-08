@@ -385,24 +385,29 @@ def test_gitignore_line_with_leading_space_is_not_the_required_line(project, tmp
     assert (project / ".gitignore").read_text() == " __pycache__/\n" + GI_LINES[0] + "\n__pycache__/\n"
 
 
-def test_v2_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
-    v2 = README.split("## Install the kit as a plugin (v2)")[1].split("## Lovable frontend lane")[0]
+def route_section():
+    return README.split("## Start a new project")[1].split("## Lovable frontend lane")[0]
+
+
+def test_route_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
+    route = route_section()
     for label in ("ready", "needs-owner", "later", "stage"):
-        assert f"gh label create {label} " in v2
-    assert v2.index("gh label create ready") < v2.index("git push", v2.index("gh label create ready")) < v2.index("trust dialog") < v2.index("hook-activation.md")
-    assert "ignored" in v2 and "permissions.allow" in v2
+        assert f"gh label create {label} " in route
+    # order: trust dialog, plugin, setup, labels, push, hook check, Lovable, stage-start
+    order = ["trust dialog", "claude plugin install", "/agk:setup", "gh label create ready",
+             "git push", "/agk:hook-activation-check", "Lovable frontend lane", "/stage-start"]
+    positions = [route.index(x) for x in order]
+    assert positions == sorted(positions)
+    assert "ignored" in route and "permissions.allow" in route
     skill = (ROOT / "plugin/skills/setup/SKILL.md").read_text().split("## What the script writes")[1]
     assert "`CLAUDE.md`" in skill and "`.gitignore`" in skill
 
 
-def test_v2_readme_says_to_push_main_before_the_marketplace_add():
-    v2 = README.split("## Install the kit as a plugin (v2)")[1].split("## Lovable frontend lane")[0]
-    before = v2.split("1. Add the marketplace")[0]
-    for text in ("git status -sb", "[ahead N]", "git push origin main",
-                 "Failed to add marketplace: Marketplace file not found at",
-                 ".claude-plugin/marketplace.json", "unpushed",
-                 "claude plugin install agk@agent-graph-kit", 'Plugin "agk" not found in marketplace'):
-        assert text in before
+def test_route_readme_has_a_runnable_repo_creation_and_no_kit_repo_lines():
+    route = route_section()
+    assert route.index("git init") < route.index("git commit") < route.index("gh repo create example-app")
+    assert "git status" not in route and "main...origin/main" not in route
+    assert "manual steps of" not in route and "## Install the kit as a plugin" not in README
 
 
 def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
