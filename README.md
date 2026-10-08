@@ -133,6 +133,10 @@ Quota: the Codex QA run (the loop, after step 8) spends Codex quota, and the Lov
 
 Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.
 
+## How the hooks work (optional)
+
+[docs/checks/hook-activation.md](docs/checks/hook-activation.md) explains the guard, not-started and outage stop hooks, shows what a deny looks like, and has optional steps to see a deny yourself.
+
 ## Lovable frontend lane (optional, v2)
 
 The base kit works without this lane. To add it, do these steps in order. No MCP tool can make the GitHub connection of a Lovable project, so you do steps 2 to 4 by hand:
@@ -283,7 +287,7 @@ Steps (the setup output prints the same steps and blocks):
 3. Keep the `$defaults` line.
 4. Add each block below as one new entry.
 
-Entry 1 (QA): the Codex QA launch command (see `docs/checks/hook-activation.md`, "Set-up" step 2).
+Entry 1 (QA): the Codex QA launch command (the QA step of the loop calls it).
 
 ```text
 allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo
@@ -329,7 +333,7 @@ Create the four labels with the labels step of [Start a new project](#start-a-ne
 
 1. Commit the copied and adjusted files (with `.gitignore` and, for the frontend lane, `.gitmodules` and `frontend`), and push them to `main` on GitHub (`git push -u origin main` for the first push).
 2. Open the project folder in Claude Code and trust the folder. The project allow rules for `scripts/qa-codex` and for `gh issue close` apply only in a trusted folder ([G8](docs/specs/agent-graph-kit.md#g8-settings-protection)). The hooks apply from the next tool call after `.claude/settings.json` is in place.
-3. Run the acceptance test in [docs/checks/hook-activation.md](docs/checks/hook-activation.md) before the first issue gets the label `ready`. If a step fails, the loop does not start.
+3. Run `/agk:hook-activation-check` before the first issue gets the label `ready`. If a line says `FAILED`, the loop does not start.
 4. Final step: plan the first stage with `/stage-start`, as in the last step of [Start a new project](#start-a-new-project).
 
 ## Update the kit in a project
