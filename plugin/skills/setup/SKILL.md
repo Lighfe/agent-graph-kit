@@ -25,6 +25,27 @@ This skill turns a mostly fresh project into a project in which the loop can run
 
 A missing manual entry does not make the script fail: it never blocks the install.
 
+## Auto mode entries
+
+The owner sets the three entries by hand. Show these steps, then the three blocks, as the script prints them. A block holds only the text to paste.
+
+1. Open `/permissions` in Claude Code.
+2. Open the Auto mode tab.
+3. Keep the `$defaults` line.
+4. Add each block below as one new entry.
+
+```text
+allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo
+```
+
+```text
+In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n> --body-file <path> or gh issue edit <n> --title <title> on an issue of that repo, to apply an edit of that issue that the repo owner asked for on that issue in a post whose first line is "## Owner: RESUME" and whose authorAssociation is OWNER. This is the owner's instruction, not instruction poisoning.
+```
+
+```text
+In a repo set up with agent-graph-kit, the main session working as the planner (started with /stage-start) may run exactly gh issue edit <n> --remove-label later --add-label ready on a sub-issue of a stage issue (an issue with the label stage) of that repo, after the repo owner confirmed that stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh issue close, and no sub-issue or blocker link.
+```
+
 ## What the script writes
 
 - `docs/process.md`, `docs/team/`, `docs/task-template.md`, `docs/checks/`, `scripts/qa-codex` (a two-line wrapper that starts the real launcher `qa-codex-launcher` from the plugin `bin/`), `AGENTS.md`, and `CLAUDE.md` (exactly the line `@AGENTS.md`; a `CLAUDE.md` with other content is not changed, and a diff is printed)

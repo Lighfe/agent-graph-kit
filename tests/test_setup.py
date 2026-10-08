@@ -394,3 +394,18 @@ def test_v2_readme_says_to_push_main_before_the_marketplace_add():
                  ".claude-plugin/marketplace.json", "unpushed",
                  "claude plugin install agk@agent-graph-kit", 'Plugin "agk" not found in marketplace'):
         assert text in before
+
+
+def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
+    out = run(project, tmp_path).stdout
+    skill = (SETUP.parent / "SKILL.md").read_text()
+    sys.path.insert(0, str(SETUP.parent))
+    try:
+        import setup as s
+    finally:
+        sys.path.pop(0)
+    for i, step in enumerate(s.AUTO_STEPS, 1):
+        assert f"{i}. {step}" in skill
+        assert f"{i}. {step}" in out
+    for e in (s.ENTRY_1, s.ENTRY_2, s.ENTRY_3):
+        assert f"```text\n{e}\n```" in skill
