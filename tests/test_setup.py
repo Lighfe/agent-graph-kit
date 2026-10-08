@@ -17,8 +17,7 @@ SETUP = ROOT / "plugin" / "skills" / "setup" / "setup.py"
 TEMPLATES = ROOT / "plugin" / "templates"
 README = (ROOT / "README.md").read_text()
 
-COPIED = (["docs/process.md", "docs/task-template.md", "scripts/qa-codex", "scripts/codex_exec.py",
-           "scripts/qa-result.schema.json"]
+COPIED = (["docs/process.md", "docs/task-template.md", "scripts/qa-codex"]
           + [p.relative_to(TEMPLATES).as_posix() for d in ("docs/team", "docs/checks")
              for p in sorted((TEMPLATES / d).rglob("*")) if p.is_file()])
 
@@ -69,8 +68,10 @@ def test_fresh_directory_copies_every_file(project, tmp_path):
     assert agents.startswith("# example-app\n")
     assert "Test command: make test." in agents
     assert "{{" not in agents and "}}" not in agents
-    # a plain copy, not the thin wrapper
-    assert (project / "scripts/qa-codex").read_bytes() == (ROOT / "scripts/qa-codex").read_bytes()
+    # the thin wrapper, not the launcher (issue #165): the launcher and its helpers stay in the plugin bin/
+    assert (project / "scripts/qa-codex").read_text() == '#!/bin/sh\nexec qa-codex-launcher "$@"\n'
+    assert not (project / "scripts/codex_exec.py").exists()
+    assert not (project / "scripts/qa-result.schema.json").exists()
 
 
 def test_no_overwrite_reports_a_diff_and_keeps_the_entry_out(project, tmp_path):

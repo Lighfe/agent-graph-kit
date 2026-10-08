@@ -1525,6 +1525,10 @@ def _wait_for_pid(path, proc, limit=20):
 
 def _interrupt(qa_env, pid_file, sig):
     """Run qa-codex as a subprocess, send `sig` to it once the fake child runs. The child's PID."""
+    # the launcher reads the role file from the project root (the repo it runs in), as in a set-up project (#165)
+    role = qa_env.repo / "docs" / "team" / "qa-engineer.md"
+    role.parent.mkdir(parents=True, exist_ok=True)
+    role.write_text((ROOT / "docs" / "team" / "qa-engineer.md").read_text())
     proc = subprocess.Popen([sys.executable, str(SCRIPT), "ROLE=qa", "ISSUE=7"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:

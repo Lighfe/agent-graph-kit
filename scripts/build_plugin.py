@@ -6,9 +6,9 @@
 
 The v1 files stay the only source of the hook scripts, the agents and the skills.
 `plugin/hooks/*.py`, `plugin/agents/` and `plugin/skills/` are generated copies:
-do not edit them. `plugin/templates/` (docs, role files, QA launcher) is built the same way.
+do not edit them. `plugin/templates/` (docs, role files) and `plugin/bin/` (QA launcher and helpers) is built the same way.
 The hand-written files are `plugin/.claude-plugin/plugin.json`, `plugin/hooks/hooks.json`,
-`plugin/skills/setup/` and `plugin/templates/AGENTS.md.tmpl`.
+`plugin/skills/setup/`, `plugin/templates/AGENTS.md.tmpl` and the wrapper `plugin/templates/scripts/qa-codex`.
 
   scripts/build_plugin.py          write the copies
   scripts/build_plugin.py --check  list copies that differ from the source, exit 1 when any
@@ -27,10 +27,12 @@ AGENTS = ["pm", "software-engineer", "frontend-engineer", "qa-engineer", "planne
 SKILLS = ["stage-start", "codex-review"]
 HAND_SKILLS = ["setup", "drift"]  # written by hand in plugin/skills/, not built (issues #160, #161)
 # plugin/templates/: the files that /agk:setup copies into a project (issue #160)
-TEMPLATE_FILES = ["docs/process.md", "docs/task-template.md", "scripts/qa-codex", "scripts/codex_exec.py",
-                  "scripts/qa-result.schema.json"]
+TEMPLATE_FILES = ["docs/process.md", "docs/task-template.md"]
 TEMPLATE_DIRS = ["docs/team", "docs/checks"]
-HAND_TEMPLATES = {"AGENTS.md.tmpl", "CLAUDE.md.tmpl"}  # written by hand in plugin/templates/
+HAND_TEMPLATES = {"AGENTS.md.tmpl", "CLAUDE.md.tmpl", "scripts/qa-codex"}  # written by hand in plugin/templates/
+# plugin/bin/: the real QA launcher and its two helpers; the project gets only the wrapper scripts/qa-codex (issue #165)
+BIN_FILES = {"scripts/qa-codex": "qa-codex-launcher", "scripts/codex_exec.py": "codex_exec.py",
+             "scripts/qa-result.schema.json": "qa-result.schema.json"}
 IGNORED = {"__pycache__", ".pytest_cache"}
 
 
@@ -50,6 +52,7 @@ def mapping() -> list[tuple[Path, Path]]:
     pairs = [(ROOT / ".claude" / "hooks" / n, PLUGIN / "hooks" / n) for n in HOOK_SCRIPTS]
     pairs += [(ROOT / ".claude" / "agents" / f"{n}.md", PLUGIN / "agents" / f"{n}.md") for n in AGENTS]
     pairs += [(ROOT / ".agents" / "skills" / n, PLUGIN / "skills" / n) for n in SKILLS]
+    pairs += [(ROOT / src, PLUGIN / "bin" / name) for src, name in BIN_FILES.items()]
     for rel in TEMPLATE_FILES + TEMPLATE_DIRS:
         pairs.append((ROOT / rel, PLUGIN / "templates" / rel))
     return pairs
@@ -78,6 +81,11 @@ def differences() -> list[str]:
         for p in sorted(d.iterdir()) if d.exists() else []:
             if p.name not in known:
                 out.append(f"extra: {p.relative_to(PLUGIN.parent).as_posix()}")
+    # a file in plugin/bin/ that no source names
+    bdir = PLUGIN / "bin"
+    for rel in sorted(_tree(bdir)) if bdir.exists() else []:
+        if rel not in BIN_FILES.values():
+            out.append(f"extra: plugin/bin/{rel}")
     # a file in plugin/templates/ that no source names
     tdir = PLUGIN / "templates"
     wanted = set(TEMPLATE_FILES) | HAND_TEMPLATES
