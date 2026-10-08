@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import build_plugin
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +101,23 @@ def test_disabled_plugin_fails_check_1_and_missing_codex_fails_check_4(tmp_path)
     for event in ("PreToolUse", "SubagentStop", "PermissionDenied"):
         assert event in lines[0]
     assert lines[3].startswith("FAILED check 4") and "codex" in lines[3]
+    assert lines[-1].startswith("FAILED") and r.returncode == 1
+
+
+@pytest.mark.parametrize("where", ["home", "project", "local"])
+def test_disable_all_hooks_fails_check_1(tmp_path, where):
+    env = _env(tmp_path, _stubs(tmp_path))
+    proj = _project(tmp_path, env)
+    folder = Path(env["HOME"]) / ".claude" if where == "home" else proj / ".claude"
+    folder.mkdir(parents=True, exist_ok=True)
+    name = "settings.local.json" if where == "local" else "settings.json"
+    target = folder / name
+    cfg = json.loads(target.read_text()) if target.exists() else {}
+    target.write_text(json.dumps({**cfg, "disableAllHooks": True}))
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0].startswith("FAILED check 1") and "disableAllHooks" in lines[0]
+    for event in ("PreToolUse", "SubagentStop", "PermissionDenied"):
+        assert event in lines[0]
     assert lines[-1].startswith("FAILED") and r.returncode == 1
 
 

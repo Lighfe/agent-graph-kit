@@ -47,6 +47,8 @@ def check_hooks(root: Path, home: Path) -> str:
     required = sorted(plugin_events)
     configs = [_read_json(p) for p in (home / ".claude" / "settings.json", root / ".claude" / "settings.json",
                                        root / ".claude" / "settings.local.json")]
+    if any(c.get("disableAllHooks") is True for c in configs):
+        return "FAILED check 1: disableAllHooks is true in a settings file, so no hook runs: " + ", ".join(required)
     active: set[str] = set()
     for c in configs:
         active |= _events(c)
