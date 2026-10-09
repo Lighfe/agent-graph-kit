@@ -201,7 +201,7 @@ Prompt audit:
 4. Run `git status --porcelain` after the two runs. When the output is not empty, name the changed files in the review. Do not clean them up
 5. When a run fails or times out, report it under "Doc drift" as "could not run" and quote the message, with secrets redacted
 6. When a run is denied with a verdict, follow "Denied calls" below: quote the deny message under "Run notes", and report the run under "Doc drift" as "could not run". Still post the review
-7. After a run that could not run, write that the owner's `/stage-start` session runs the prompt audit at set-up
+7. After a run that could not run, write that the prompt audit did not run, and that the owner can run `claude -p "/doctor prompt-audit docs/"` by hand
 8. When a run gets an outage deny, follow "Denied calls" below: post nothing and end
 
 Denied calls: follow the rule "Denied action" in `## Rules` of `docs/process.md`. Here it means:
