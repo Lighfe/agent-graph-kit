@@ -6,8 +6,8 @@
 
   uv run --script check.py --root <project root> [--home <home>]
 
-Prints one line per check (`OK ...` or `FAILED ...`) and a last line with the result of the run.
-Exit code 0 when all checks are OK, otherwise 1. It writes no file in the project and starts no
+Prints one line per check (`OK ...`, `FAILED ...`, or for check 1 `UNPROVEN ...`) and a last line with the result of the run.
+Exit code 0 when all checks are OK (check 1 may be UNPROVEN), otherwise 1. It writes no file in the project and starts no
 `gh` or `codex` process except the read-only login commands of Check 4.
 """
 from __future__ import annotations
@@ -64,7 +64,19 @@ def check_hooks(root: Path, home: Path) -> str:
         active |= plugin_events
     missing = [e for e in required if e not in active]
     if missing:
-        return "FAILED check 1: hooks not registered: " + ", ".join(missing)
+        failed = "FAILED check 1: hooks not registered: " + ", ".join(missing)
+        if enabled:  # an agk entry exists and none is true: the plugin is switched off
+            return failed
+        try:
+            in_cache = PLUGIN.resolve().is_relative_to((home / ".claude" / "plugins" / "cache").resolve())
+        except (OSError, ValueError):
+            in_cache = False
+        if in_cache:  # a normal install must show an enabledPlugins entry
+            return failed
+        return ("UNPROVEN check 1: the registration of the plugin hooks cannot be proven from files ("
+                + ", ".join(missing) + "); the session may have loaded the plugin with --plugin-dir. "
+                "To confirm by hand, run /hooks in the session and look for the plugin events, "
+                "or try a call the guard must deny")
     return "OK check 1: hooks registered: " + ", ".join(required)
 
 
@@ -131,10 +143,17 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     root, home = Path(args.root).resolve(), Path(args.home)
     lines = [check_hooks(root, home), check_guard(), check_qa_codex(root), check_tools()]
-    ok = all(line.startswith("OK") for line in lines)
-    lines.append("OK all 4 checks passed" if ok else "FAILED at least one check failed")
+    if lines[0].startswith("UNPROVEN") and all(line.startswith("OK") for line in lines[1:]):
+        lines.append("OK all checks passed, check 1 unproven")
+        code = 0
+    elif all(line.startswith("OK") for line in lines):
+        lines.append("OK all 4 checks passed")
+        code = 0
+    else:
+        lines.append("FAILED at least one check failed")
+        code = 1
     print("\n".join(lines))
-    return 0 if ok else 1
+    return code
 
 
 if __name__ == "__main__":

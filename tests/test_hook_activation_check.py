@@ -71,14 +71,56 @@ def _enable_plugin(env, value=True):
     (folder / "settings.json").write_text(json.dumps({"enabledPlugins": {"agk@kit": value}}))
 
 
-def test_no_registration_evidence_fails_check_1_naming_every_event(tmp_path):
+def test_no_registration_evidence_is_unproven_check_1_naming_every_event(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
     r, lines = _check(PLUGIN, proj, env)
-    assert lines[0].startswith("FAILED check 1")
+    assert lines[0].startswith("UNPROVEN check 1:")
+    assert "--plugin-dir" in lines[0] and "/hooks" in lines[0]
     for event in ("PreToolUse", "SubagentStop", "PermissionDenied"):
         assert event in lines[0]
-    assert lines[-1].startswith("FAILED") and r.returncode == 1
+    assert lines[-1] == "OK all checks passed, check 1 unproven" and r.returncode == 0
+
+
+def _cache_copy(env):
+    plugin = Path(env["HOME"]) / ".claude" / "plugins" / "cache" / "kit" / "agk" / "1.0.0"
+    shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
+    return plugin
+
+
+def test_cache_install_without_registration_fails_check_1(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    proj = _project(tmp_path, env)
+    r, lines = _check(_cache_copy(env), proj, env)
+    assert lines[0].startswith("FAILED check 1:")
+    assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
+
+
+def test_enabled_plugin_in_a_cache_folder_is_ok(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env)
+    proj = _project(tmp_path, env)
+    r, lines = _check(_cache_copy(env), proj, env)
+    assert lines[0].startswith("OK check 1:")
+    assert lines[-1] == "OK all 4 checks passed" and r.returncode == 0
+
+
+def test_real_off_agk_entry_false_fails_check_1_outside_the_cache(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env, False)
+    proj = _project(tmp_path, env)
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0].startswith("FAILED check 1:")
+    assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
+
+
+def test_unproven_check_1_with_another_failed_check_gives_failed_last_line(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    proj = _project(tmp_path, env)
+    (proj / "scripts" / "qa-codex").unlink()
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0].startswith("UNPROVEN check 1:") and lines[2].startswith("FAILED check 3")
+    assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
 def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_path):
@@ -87,7 +129,8 @@ def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_
     local = proj / ".claude" / "settings.local.json"
     local.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": []}], "SubagentStop": [{"hooks": [{}]}]}}))
     r, lines = _check(PLUGIN, proj, env)
-    assert lines[0] == "FAILED check 1: hooks not registered: PermissionDenied"
+    assert lines[0].startswith("UNPROVEN check 1:") and "PermissionDenied" in lines[0]
+    assert "PreToolUse" not in lines[0]
 
 
 def test_all_checks_ok_in_a_set_up_project_and_nothing_is_written(tmp_path):
