@@ -3,7 +3,7 @@
 - Date: 2026-10-07
 - Status: written for the owner's review.
 - Input: the stage review on #157 (`## Planner: STAGE REVIEW`), the plugin trial report `docs/reviews/plugin-trial.md` (#163), and the owner's choice of a hybrid between its options 1 and 2.
-- Builds on: `docs/specs/2026-10-05-agent-graph-kit-v2-plugin.md` (decisions D1 to D9 stay valid).
+- Builds on: `docs/archive/2026-10-05-agent-graph-kit-v2-plugin-spec.md` (decisions D1 to D9 stay valid).
 
 ---
 
