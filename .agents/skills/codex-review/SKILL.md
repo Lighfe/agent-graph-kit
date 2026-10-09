@@ -11,14 +11,22 @@ Codex reviews one target read-only. `review.py` writes the review to
 ## Steps
 
 1. Derive one target and a topic slug from the conversation.
-   - The target is one file, one folder or one commit range (for example `abc123..HEAD`). Paths are relative to the repo root.
+   - The target is one file, one folder or one commit range (for example `abc123..HEAD`). Paths are relative to the project root (the git root of the working directory).
    - Use one target per run. A large review stalls more often, so split it into several runs with narrow targets.
    - The topic slug has lowercase letters, digits and single hyphens, for example `hook-guard`.
-2. Run the script from the repo root:
+2. Run the script from inside the project (it takes the project root from `git rev-parse --show-toplevel`):
 
-   ```bash
-   uv run --script .agents/skills/codex-review/review.py --target <path-or-range> --topic <slug>
-   ```
+   - In a project that has the kit as a plugin:
+
+     ```bash
+     uv run --script "${CLAUDE_PLUGIN_ROOT}/skills/codex-review/review.py" --target <path-or-range> --topic <slug>
+     ```
+
+   - In the kit repo itself, or a project with a copy of the skill:
+
+     ```bash
+     uv run --script .agents/skills/codex-review/review.py --target <path-or-range> --topic <slug>
+     ```
 
    On success it prints only the path of the review file.
 3. If it fails (exit code not 0), show the owner the reason it printed. Do not write a review file by hand.

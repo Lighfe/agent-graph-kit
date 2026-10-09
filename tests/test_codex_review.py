@@ -7,6 +7,7 @@ the real `codex`, writes into the real `docs/reviews/` or uses the network. All 
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -159,6 +160,7 @@ def env(tmp_path, monkeypatch):
     """Reviews folder in tmp_path, and a run_codex that fails the test unless a test replaces it."""
     reviews = tmp_path / "reviews"
     monkeypatch.setattr(review, "REVIEWS_DIR", reviews)
+    monkeypatch.chdir(ROOT)
 
     def forbidden(*a, **kw):
         raise AssertionError("run_codex must not be called")
@@ -208,9 +210,14 @@ def test_success_writes_file_and_prints_path(env, monkeypatch, capsys):
         DATA, topic="demo", target="AGENTS.md", date=DATE)
 
 
-def test_default_reviews_dir_and_date():
-    assert review.REVIEWS_DIR == ROOT / "docs" / "reviews"
-    assert review.ROOT == ROOT
+def test_default_reviews_dir_is_under_the_project_root(monkeypatch, tmp_path):
+    project = _git_project(tmp_path)
+    monkeypatch.chdir(project)
+    _fake(monkeypatch, CodexRun("ok", DATA, ""))
+    assert review.REVIEWS_DIR is None
+    assert _main("--target", "AGENTS.md", "--topic", "demo") == 0
+    assert review.ROOT == project.resolve()
+    assert (project / "docs" / "reviews" / f"{DATE}-demo-codex-review.md").is_file()
 
 
 def test_date_defaults_to_local_today(env, monkeypatch, capsys):
@@ -372,6 +379,98 @@ def test_script_header():
     assert "# dependencies = []" in text
 
 
+# --- in a project that has the kit as a plugin (#180) --------------------------------------
+
+
+def _git_project(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    (project / "AGENTS.md").write_text("# demo\n", encoding="utf-8")
+    return project
+
+
+def _plugin_copy(tmp_path):
+    """The plugin layout: the skill and `bin/` side by side, with no `scripts/` anywhere near."""
+    plugin = tmp_path / "plugin"
+    shutil.copytree(ROOT / "plugin" / "skills" / "codex-review", plugin / "skills" / "codex-review",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(ROOT / "plugin" / "bin", plugin / "bin", ignore=shutil.ignore_patterns("__pycache__"))
+    return plugin / "skills" / "codex-review" / "review.py"
+
+
+def _fake_codex(tmp_path):
+    """A `codex` on PATH that writes DATA to the file given with -o."""
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    exe = bindir / "codex"
+    exe.write_text("#!%s\nimport json, sys\na = sys.argv\n"
+                   "open(a[a.index('-o') + 1], 'w').write(%r)\n" % (sys.executable, json.dumps(DATA)),
+                   encoding="utf-8")
+    exe.chmod(0o755)
+    return bindir
+
+
+def _run_script(script, cwd, *args, path_prefix=None):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    if path_prefix:
+        env["PATH"] = f"{path_prefix}{os.pathsep}{env['PATH']}"
+    return subprocess.run([sys.executable, str(script), *args], cwd=cwd, env=env, capture_output=True,
+                          text=True, stdin=subprocess.DEVNULL)
+
+
+def test_plugin_copy_runs_in_a_plugin_project(tmp_path):
+    script = _plugin_copy(tmp_path)
+    project = _git_project(tmp_path)
+    assert not (project / "scripts" / "codex_exec.py").exists()
+    p = _run_script(script, project, "--target", "AGENTS.md", "--topic", "demo",
+                    path_prefix=_fake_codex(tmp_path))
+    assert p.returncode == 0, p.stderr
+    assert "ModuleNotFoundError" not in p.stderr
+    written = list((project / "docs" / "reviews").glob("*-demo-codex-review.md"))
+    assert [str(w) for w in written] == [p.stdout.strip()]
+    assert not (script.parents[3] / "docs").exists()  # nothing written next to the plugin
+
+
+def test_outside_a_git_repository_exits_2_and_writes_no_file(tmp_path):
+    script = _plugin_copy(tmp_path)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "AGENTS.md").write_text("x\n", encoding="utf-8")
+    env_ceiling = {"GIT_CEILING_DIRECTORIES": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(script), "--target", "AGENTS.md", "--topic", "demo"], cwd=plain,
+                       env={**os.environ, **env_ceiling}, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+    assert p.returncode == 2
+    assert "not inside a git repository" in p.stderr
+    assert p.stdout == ""
+    assert not (plain / "docs").exists()
+
+
+def test_target_outside_the_project_root_is_refused(tmp_path):
+    script = _plugin_copy(tmp_path)
+    project = _git_project(tmp_path)
+    (tmp_path / "other.md").write_text("x\n", encoding="utf-8")
+    p = _run_script(script, project, "--target", "../other.md", "--topic", "demo")
+    assert p.returncode == 2
+    assert "outside the project root" in p.stderr
+    assert not (project / "docs").exists()
+
+
+def test_plugin_copy_finds_codex_exec_in_plugin_bin(tmp_path):
+    script = _plugin_copy(tmp_path)
+    code = ("import importlib.util as u, sys; s = u.spec_from_file_location('r', sys.argv[1]); "
+            "m = u.module_from_spec(s); s.loader.exec_module(m); print(m.codex_exec.__file__)")
+    p = subprocess.run([sys.executable, "-c", code, str(script)], cwd=tmp_path, capture_output=True, text=True,
+                       env={**os.environ, "PYTHONPATH": ""})
+    assert p.returncode == 0, p.stderr
+    assert Path(p.stdout.strip()).resolve() == (script.parents[2] / "bin" / "codex_exec.py").resolve()
+
+
+def test_kit_copy_finds_codex_exec_in_scripts():
+    assert Path(review.codex_exec.__file__).resolve() == (ROOT / "scripts" / "codex_exec.py").resolve()
+
+
 # --- prose -------------------------------------------------------------------------------
 
 
@@ -380,6 +479,7 @@ def test_skill_md():
     front = text.split("---")[1]
     assert "\nname: codex-review\n" in front
     assert "/codex-review" in front
+    assert "${CLAUDE_PLUGIN_ROOT}/skills/codex-review/review.py" in text
     for needle in ("review.py", "one target", "Decision: open", "Decision: taken - <reason>",
                    "Decision: partly taken - <reason>", "Decision: rejected - <reason>",
                    "/codex:adversarial-review", "commit"):

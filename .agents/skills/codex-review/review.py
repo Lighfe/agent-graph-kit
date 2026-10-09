@@ -3,13 +3,13 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Codex review (.agents/skills/codex-review/SKILL.md): `uv run --script .agents/skills/codex-review/review.py --target <path-or-range> --topic <slug>`.
+"""Codex review (.agents/skills/codex-review/SKILL.md): `uv run --script <skill folder>/review.py --target <path-or-range> --topic <slug>`.
 
 Runs `codex exec` read-only on one file, folder or commit range, with a normal (not adversarial)
 review prompt and review.schema.json. On success it writes
 `docs/reviews/<YYYY-MM-DD>-<topic>-codex-review.md` (redacted, every finding with `Decision: open`),
 prints only its path and exits 0. On a failed run or an output of the wrong shape it writes no file,
-prints the reason on stderr and exits 1. Bad arguments exit 2. An interrupt exits 128 + the signal.
+prints the reason on stderr and exits 1. Bad arguments, or a working directory outside a git repository, exit 2. An interrupt exits 128 + the signal.
 Stdlib only.
 """
 
@@ -23,12 +23,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "scripts"))
+HERE = Path(__file__).resolve().parent
+# `codex_exec` sits in the plugin `bin/` (plugin/skills/codex-review -> plugin/bin) or in `scripts/` of the
+# kit repo (.agents/skills/codex-review -> <repo>/scripts). The skill's own place says nothing about the
+# project, so the project root comes from git (#180).
+sys.path[:0] = [str(d) for d in (HERE.parents[1] / "bin", HERE.parents[2] / "scripts") if (d / "codex_exec.py").is_file()]
 import codex_exec  # noqa: E402
 
-SCHEMA = Path(__file__).resolve().parent / "review.schema.json"
-REVIEWS_DIR = ROOT / "docs" / "reviews"
+SCHEMA = HERE / "review.schema.json"
+ROOT: Path | None = None  # the project root, set by main() from the working directory
+REVIEWS_DIR: Path | None = None  # None: <project root>/docs/reviews (a test may set it)
 
 MODEL = "gpt-6-astra"  # the same as QA_MODEL in scripts/qa-codex
 EFFORT = "medium"
@@ -142,15 +146,25 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def project_root() -> Path | None:
+    """The git root of the working directory, or None when it is not inside a git repository."""
+    try:
+        p = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+    except OSError:
+        return None
+    return Path(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else None
+
+
 def check_target(target: str) -> str | None:
-    """None if `target` is an existing path under the repo root or a commit range that
+    """None if `target` is an existing path under the project root or a commit range that
     `git rev-list` accepts, else the reason."""
     if not target or target.startswith("-"):
         return f"target {target!r} is not a path or a commit range"
     path = (ROOT / target).resolve()
     if path.exists():
         if path != ROOT and ROOT not in path.parents:
-            return f"target {target} is outside the repo root {ROOT}"
+            return f"target {target} is outside the project root {ROOT}"
         return None
     p = subprocess.run(["git", "rev-list", "--quiet", "--end-of-options", target, "--"], cwd=ROOT,
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -205,12 +219,18 @@ def _main(argv: list[str], today: str | None) -> int:
     if not TOPIC_RE.fullmatch(args.topic):
         print(f"{USAGE}\ncodex-review: topic {args.topic!r} must match {TOPIC_RE.pattern}", file=sys.stderr)
         return 2
+    global ROOT
+    ROOT = project_root()
+    if ROOT is None:
+        print(f"{USAGE}\ncodex-review: the working directory is not inside a git repository", file=sys.stderr)
+        return 2
     error = check_target(args.target)
     if error is not None:
         print(f"{USAGE}\ncodex-review: {error}", file=sys.stderr)
         return 2
     date = today or datetime.date.today().isoformat()
-    path = REVIEWS_DIR / f"{date}-{args.topic}-codex-review.md"
+    reviews_dir = REVIEWS_DIR or ROOT / "docs" / "reviews"
+    path = reviews_dir / f"{date}-{args.topic}-codex-review.md"
     if path.exists():
         print(f"codex-review: {path} already exists; choose another topic", file=sys.stderr)
         return 1
@@ -227,7 +247,7 @@ def _main(argv: list[str], today: str | None) -> int:
         return 1
 
     text = codex_exec.redact(render_review(run.output, topic=args.topic, target=args.target, date=date))
-    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    reviews_dir.mkdir(parents=True, exist_ok=True)
     try:
         _write(path, text)
     except FileExistsError:
