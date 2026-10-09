@@ -381,7 +381,7 @@ From a valid result, the script derives the marker from the criterion verdicts; 
 | The issue read, a GitHub state read or the pre-step fails | `## QA: UNAVAILABLE`, no Codex run |
 | No criteria, no valid DONE, no `Commits:` line, a DONE head or base that does not resolve, a DONE head that is not an ancestor of `HEAD`, a worktree that cannot be created or reset for a retry | `## QA: INVALID` |
 
-The errors are classified by the S2 error table in `codex_exec.py` (`FAILURE_PATTERNS`; source: `docs/research/spike-codex-cli.md`). Before each retry, the worktree and every initialized submodule are reset to `HEAD` and cleaned of untracked files; ignored files stay. The retry limits hold for one launch.
+The errors are classified by the patterns in `codex_exec.py` (`FAILURE_PATTERNS`; source: section "Error table" of `docs/research/spike-codex-cli.md`). Before each retry, the worktree and every initialized submodule are reset to `HEAD` and cleaned of untracked files; ignored files stay. The retry limits hold for one launch.
 
 `## QA: UNAVAILABLE` leads to the fallback (G5); `## QA: INVALID` is a stop result; `## QA: UNVERIFIABLE` is a return to the PM.
 

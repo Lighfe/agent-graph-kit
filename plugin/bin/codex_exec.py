@@ -1,7 +1,7 @@
 """Shared runner for `codex exec` (used by qa-codex, Task 6, and the review skill, Task 8).
 
-Flags, error texts and regexes come from spike S2 (docs/research/spike-codex-cli.md:
-error table and "Consequences for the plan", #6). Stdlib only.
+Flags, error texts and regexes come from the Codex CLI spike report (docs/research/spike-codex-cli.md,
+sections "Error table" and "Consequences for the plan", #6). Stdlib only.
 """
 
 from __future__ import annotations
@@ -26,14 +26,15 @@ class CodexRun:
 
 
 # Keep the user config, AGENTS.md, skills, hooks and apps out of the run, report errors as
-# JSON events on stdout, and end a network outage after a few minutes (S2 Q5, Q8).
+# JSON events on stdout, and end a network outage after a few minutes (sections
+# docs/research/spike-codex-cli.md#q5-errors and docs/research/spike-codex-cli.md#q8-instruction-and-config-files).
 BASE_FLAGS: list[str] = [
     "--json", "--ephemeral", "--ignore-user-config",
     "--disable", "hooks", "--disable", "apps", "--disable", "unbounded_connection_retries",
     "-c", "project_doc_max_bytes=0", "-c", "skills.include_instructions=false",
 ]
 
-# S2 error table, rows E1-E9 in order; the first match wins, no match is "unknown" (E10).
+# Rows E1-E9 of the section "Error table" in docs/research/spike-codex-cli.md, in order; the first match wins, no match is "unknown" (E10).
 FAILURE_PATTERNS: list[tuple[str, re.Pattern]] = [(status, re.compile(rx, re.MULTILINE)) for status, rx in [
     ("unavailable", r"codex'?: (?:(?:command )?not found|No such file or directory)|No such file or directory: 'codex'"),
     ("unavailable", r"^(?:ERROR: )?(?:unexpected status 401 Unauthorized|Not logged in$)"),
@@ -47,7 +48,7 @@ FAILURE_PATTERNS: list[tuple[str, re.Pattern]] = [(status, re.compile(rx, re.MUL
     ("transient", r"^(?:ERROR: )?(?:Connection failed: |stream disconnected before completion: )"),
 ]]
 
-# docs/specs/agent-graph-kit.md#failure-rules lists a crashed process as transient. The S2 table has no crash row, so a crash is
+# docs/specs/agent-graph-kit.md#failure-rules lists a crashed process as transient. The section "Error table" of docs/research/spike-codex-cli.md has no crash row, so a crash is
 # checked after the table: a death by signal (the npm wrapper `codex.js` re-raises the signal of
 # the native binary, so Popen sees a negative code; a shell reports 128 + n), or a Rust panic line.
 PANIC_PATTERN = re.compile(r"^thread '[^'\n]*' panicked at.*$", re.MULTILINE)
@@ -146,7 +147,7 @@ def _crash(returncode: int, text: str) -> str | None:
 
 
 def classify_failure(returncode: int, text: str) -> str:
-    """"transient" | "unavailable" | "unknown": the S2 error table first (first match wins), then a
+    """"transient" | "unavailable" | "unknown": the section "Error table" of docs/research/spike-codex-cli.md first (first match wins), then a
     crashed process (transient, docs/specs/agent-graph-kit.md#failure-rules), else unknown."""
     status = _table_status(text)
     if status is not None:
@@ -190,7 +191,7 @@ def _duration(seconds: int) -> str:
 def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str, effort: str,
               timeout_s: int, cwd: Path) -> CodexRun:
     tmp = Path(tempfile.mkdtemp(prefix="codex-"))
-    out = tmp / "last.json"  # fresh path per run: failed runs leave an old file in place (S2 Q1)
+    out = tmp / "last.json"  # fresh path per run: failed runs leave an old file in place (docs/research/spike-codex-cli.md#q1---output-schema-and--o)
     cmd = ["codex", "exec", *BASE_FLAGS, "-m", model, "-c", f'model_reasoning_effort="{effort}"',
            *sandbox_args, "-C", str(cwd), "--output-schema", str(schema), "-o", str(out), "-"]
     try:

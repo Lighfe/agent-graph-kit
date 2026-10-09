@@ -65,7 +65,7 @@ ROLE_FILE = ROOT / "docs" / "team" / "qa-engineer.md"
 # --ignore-user-config also drops the user's model and effort (docs/specs/agent-graph-kit.md#codex-run).
 QA_MODEL = "gpt-6-astra"
 QA_EFFORT = "medium"
-# Localhost-only sandbox profile (S2 Q4; experimental feature network_proxy, docs/specs/agent-graph-kit.md#codex-run).
+# Localhost-only sandbox profile (docs/research/spike-codex-cli.md#q4-headless-browser; experimental feature network_proxy, docs/specs/agent-graph-kit.md#codex-run).
 QA_SANDBOX = [
     "--enable", "network_proxy",
     "-c", 'permissions.qa={extends=":workspace",network={enabled=true,allow_local_binding=true,'
