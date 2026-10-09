@@ -62,6 +62,9 @@ def check_hooks(root: Path, home: Path) -> str:
                     enabled[k] = v
     if any(enabled.values()):
         active |= plugin_events
+    elif enabled:  # an agk entry exists and none is true: the plugin is switched off, whatever else registers
+        return ("FAILED check 1: the plugin is switched off (enabledPlugins entry set to false): "
+                + ", ".join(sorted(enabled)) + "; hooks off: " + ", ".join(required))
     missing = [e for e in required if e not in active]
     if missing:
         failed = "FAILED check 1: hooks not registered: " + ", ".join(missing)

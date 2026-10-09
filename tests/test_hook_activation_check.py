@@ -123,6 +123,18 @@ def test_unproven_check_1_with_another_failed_check_gives_failed_last_line(tmp_p
     assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
+def test_agk_entry_false_fails_check_1_even_when_settings_hooks_register_all_events(tmp_path):
+    env = _env(tmp_path, _stubs(tmp_path))
+    _enable_plugin(env, False)
+    proj = _project(tmp_path, env)
+    events = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+    local = proj / ".claude" / "settings.local.json"
+    local.write_text(json.dumps({"hooks": {e: [{"hooks": [{}]}] for e in events}}))
+    r, lines = _check(PLUGIN, proj, env)
+    assert lines[0].startswith("FAILED check 1:")
+    assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
+
+
 def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
