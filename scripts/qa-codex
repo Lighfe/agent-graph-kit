@@ -79,8 +79,12 @@ QA_SANDBOX = [
 # The fill runs outside the sandbox, so it must not touch the reviewed project (#49): `--no-project`
 # and `--no-config` stop uv from discovering, reading or building the project and its uv config
 # (`pyproject.toml`, `uv.toml`), and its working directory is the run temp folder, not the worktree
-# (uv searches a `.venv` upward, never down into `worktree/`). Repository code runs only in the sandbox.
+# (uv searches a `.venv` upward, never down into `worktree/`).
+# One exception (#47): a checkout with a `uv.lock` also gets `UV_SYNC`, run in the checkout, outside the
+# sandbox, so the cache holds the locked dependencies. It reads `pyproject.toml` and the uv config of
+# the reviewed project and may run its build backend. Everything else of the project runs only in the sandbox.
 UV_CACHE = "uv-cache"
+UV_SYNC = ["uv", "sync", "--frozen"]
 UV_FILL = ["uv", "run", "--no-project", "--no-config", "--with", "pytest", "pytest", "--version"]
 DEFAULT_TIMEOUT_S = 1800
 DEFAULT_PRESTEP_TIMEOUT_S = 1800
@@ -178,14 +182,16 @@ def comment_block(comments: tuple[str, ...] | list[str], done_index: int | None)
     return "\n".join([COMMENTS_BEGIN, *[(COMMENTS_PREFIX + line).rstrip() for line in data], COMMENTS_END])
 
 
-def uv_rule(uv_cache: Path | str) -> str:
+def uv_rule(uv_cache: Path | str, locked: bool = False) -> str:
     """The prompt rule for the pre-filled uv cache (#68). Codex set a `UV_CACHE_DIR` of its own,
     which replaced the one from `shell_environment_policy.set` and had no pytest. The rule is in
     the prompt, not in the role file: the Claude QA fallback reads the role file too and has no
-    such cache."""
+    such cache. With `locked` (the checkout has a `uv.lock`, #47), the cache also holds the locked
+    dependencies of the project."""
+    holds = "pytest and the locked dependencies of the project" if locked else "pytest"
     return ("Test environment: `UV_CACHE_DIR` and `UV_OFFLINE` are already set in the environment of "
             f"every command you run: `UV_CACHE_DIR={uv_cache}` and `UV_OFFLINE=1`. This cache already "
-            "holds pytest, and the environment is offline. Run the test command with these variables "
+            f"holds {holds}, and the environment is offline. Run the test command with these variables "
             "as given. Do not set, change or unset `UV_CACHE_DIR` or `UV_OFFLINE`: not inline before a "
             "command, not with `export`, `unset` or `env`. Do not use another cache folder. If the "
             "test command still fails with this cache, report the command you ran and the error in "
@@ -212,13 +218,13 @@ def github_rule(folder: Path | str, window: tuple[str, str]) -> str:
 
 def build_prompt(criteria: list[str], base: str, head: str, comments: tuple[str, ...] | list[str] = (),
                  done_index: int | None = None, uv_cache: Path | None = None,
-                 github: tuple[Path | str, tuple[str, str]] | None = None) -> str:
+                 github: tuple[Path | str, tuple[str, str]] | None = None, uv_locked: bool = False) -> str:
     """The QA role file, the numbered criteria, the range and the comment data block (#51).
     Nothing else of the issue body. With `uv_cache` (the same value that `codex_env_args` gets),
     also the rule for the pre-filled uv cache (#68); without it, no such rule. With `github`
     (the folder of the GitHub state files and the window), the text that names those files (#89)."""
     blocks = [f"Criterion {i}:\n- [ ] {text}" for i, text in enumerate(criteria, 1)]
-    env_rule = "" if uv_cache is None else uv_rule(uv_cache) + "\n\n"
+    env_rule = "" if uv_cache is None else uv_rule(uv_cache, uv_locked) + "\n\n"
     github_text = "" if github is None else github_rule(*github) + "\n\n"
     return (
         ROLE_FILE.read_text(encoding="utf-8").strip() + "\n\n---\n\n"
@@ -432,9 +438,11 @@ def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> st
     has a Playwright dependency, then the browser with that dependency's CLI through the same
     package manager (`NPX_BROWSER` or `BUN_BROWSER`). With `uv_cache` (uv is
     on PATH): fill that cache with pytest for the test command in the sandbox, with `UV_FILL` run in
-    the run temp folder (the parent of the worktree), not in the worktree. The fill does not
-    discover, read or build the reviewed project or its uv config, so that code runs only in the
-    sandbox."""
+    the run temp folder (the parent of the worktree), not in the worktree. That fill does not
+    discover, read or build the reviewed project or its uv config. When the worktree has a `uv.lock`,
+    `UV_SYNC` (`uv sync --frozen`) then runs in the worktree, outside the sandbox (#47): it reads the
+    project's `pyproject.toml` and uv config and may run its build backend. This is the one step that
+    runs reviewed-project code outside the sandbox; the project's own commands run only in the sandbox."""
 
     def step(cmd: list[str], cwd: Path, env: dict | None = None, label: str | None = None) -> str | None:
         error = _run_step(cmd, cwd, timeout_s, env)
@@ -457,7 +465,11 @@ def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> st
             if error is not None:
                 return error
     if uv_cache is not None:
-        return step(UV_FILL, worktree.parent, {**os.environ, "UV_CACHE_DIR": str(uv_cache)})
+        env = {**os.environ, "UV_CACHE_DIR": str(uv_cache)}
+        error = step(UV_FILL, worktree.parent, env)
+        if error is None and (worktree / "uv.lock").is_file():
+            error = step(UV_SYNC, worktree, env)
+        return error
     return None
 
 
@@ -877,7 +889,8 @@ def _main(argv: list[str], sleep) -> int:
         # newest_done returns the last comment whose first line is the DONE marker, so no later
         # comment can have the same body: the last equal comment is that one
         done_index = max(i for i, body in enumerate(issue.comments) if body == done)
-        prompt = build_prompt(criteria, base, head, issue.comments, done_index, uv_cache, (github_dir, window))
+        prompt = build_prompt(criteria, base, head, issue.comments, done_index, uv_cache, (github_dir, window),
+                              uv_cache is not None and (worktree / "uv.lock").is_file())
         used: Counter = Counter()
         retries: list[str] = []
         while True:

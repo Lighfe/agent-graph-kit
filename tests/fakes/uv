@@ -5,6 +5,8 @@ FAKE_TOOL_LOG=<path>   each call appends {"tool", "argv", "cwd", "files", "cache
                        "cache" is the value of UV_CACHE_DIR
 Each call creates UV_CACHE_DIR with a file in it, as the real `uv` fills its cache.
 FAKE_UV_FAIL=1         each call prints an error on stderr and exits 2
+FAKE_UV_SYNC_FAIL=1    a `uv sync` call prints an error on stderr and exits 2 (other calls succeed)
+FAKE_UV_SYNC_HANG=1    a `uv sync` call sleeps 30 s (for the timeout of the pre-step)
 FAKE_UV_WAIT=<path>    each call starts a child `sleep 30`, writes its PID to <path> and waits for it
 """
 import json
@@ -21,6 +23,12 @@ if cache:
     os.makedirs(os.path.join(cache, "wheels-v6"), exist_ok=True)
     with open(os.path.join(cache, "wheels-v6", "pytest.whl"), "w", encoding="utf-8") as f:
         f.write("synthetic\n")
+if sys.argv[1:2] == ["sync"] and os.environ.get("FAKE_UV_SYNC_FAIL") == "1":
+    sys.stderr.write("error: Failed to download `synthetic-dependency`\n")
+    sys.exit(2)
+if sys.argv[1:2] == ["sync"] and os.environ.get("FAKE_UV_SYNC_HANG") == "1":
+    import time
+    time.sleep(30)
 if os.environ.get("FAKE_UV_FAIL") == "1":
     sys.stderr.write("\nerror: Failed to fetch: `https://pypi.org/simple/pytest/`\n  Caused by: second line\n")
     sys.exit(2)

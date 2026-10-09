@@ -1341,6 +1341,105 @@ def test_no_uv_runs_as_before(qa_env, monkeypatch):
     assert not any("UV_" in a for a in argv)
 
 
+def _commit_lock(env, name="uv.lock"):
+    """Add a `uv.lock` to the checkout under QA (a synthetic uv project)."""
+    (env.repo / name).write_text("version = 1\n")
+    git(env.repo, "add", ".")
+    git(env.repo, "commit", "-q", "-m", "lock")
+    env.head = git(env.repo, "rev-parse", "HEAD")
+    env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer", env.done()])
+
+
+UV_SYNC = ["sync", "--frozen"]  # the fake `uv` logs argv without the program
+
+
+def test_uv_sync_runs_after_the_fill_in_the_checkout(qa_env):
+    _commit_lock(qa_env)
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert [c["tool"] for c in qa_env.calls()] == ["uv", "uv", "codex"]  # the sync is before the sandbox
+    fill, sync = qa_env.calls("uv")
+    argv = _codex_argv(qa_env)
+    worktree = Path(argv[argv.index("-C") + 1])
+    assert fill["argv"] == UV_FILL
+    assert sync["argv"] == UV_SYNC
+    assert Path(sync["cwd"]) == worktree  # the checkout
+    assert "uv.lock" in sync["files"]
+    assert sync["cache"] == fill["cache"] == _env_table(argv)["UV_CACHE_DIR"]
+
+
+def test_uv_sync_is_skipped_without_a_lock(qa_env):
+    (qa_env.repo / "pyproject.toml").write_text('[project]\nname = "synthetic"\nversion = "0.0.1"\n')
+    git(qa_env.repo, "add", ".")
+    git(qa_env.repo, "commit", "-q", "-m", "pyproject only")
+    qa_env.head = git(qa_env.repo, "rev-parse", "HEAD")
+    qa_env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer", qa_env.done()])
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    (uv,) = qa_env.calls("uv")  # exactly as before: one call, the fill
+    assert uv["argv"] == UV_FILL
+
+
+def test_uv_sync_failure_is_unavailable(qa_env, monkeypatch):
+    _commit_lock(qa_env)
+    monkeypatch.setenv("FAKE_UV_SYNC_FAIL", "1")
+    comment, _ = qa_env.with_uv().run(["ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: UNAVAILABLE"
+    reason = next(line for line in lines if line.startswith("Reason:"))
+    assert "pre-step `uv sync --frozen` failed: error: Failed to download" in reason
+    assert qa_env.calls("codex") == []
+    assert [c["argv"] for c in qa_env.calls("uv")] == [UV_FILL, UV_SYNC]
+
+
+def test_uv_sync_timeout_is_a_failed_pre_step(tmp_path, monkeypatch):
+    run = tmp_path / "run"
+    worktree = run / "worktree"
+    worktree.mkdir(parents=True)
+    (worktree / "uv.lock").write_text("version = 1\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").symlink_to(FAKES / "uv")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_UV_SYNC_HANG", "1")
+    reason = qa.pre_step(worktree, 1, run / "uv-cache")
+    assert reason == "pre-step `uv sync --frozen` failed: no result after 1 s"
+
+
+@pytest.mark.skipif(REAL_UV is None, reason="the real `uv` is not on PATH")
+def test_uv_sync_leaves_the_checkout_clean(tmp_path, monkeypatch):
+    run = tmp_path / "run"
+    worktree = run / "worktree"
+    worktree.mkdir(parents=True)
+    (worktree / "pyproject.toml").write_text(
+        '[project]\nname = "synthetic-project"\nversion = "0.0.1"\nrequires-python = ">=3.9"\ndependencies = []\n')
+    for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_CONFIG_FILE", "UV_NO_CONFIG", "UV_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("UV_OFFLINE", "1")
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "lock-cache"))
+    subprocess.run(["uv", "lock"], cwd=worktree, check=True, capture_output=True)
+    git(worktree, "init", "-q")
+    git(worktree, "add", ".")
+    git(worktree, "commit", "-q", "-m", "synthetic project")
+    cache = run / "uv-cache"
+    cache.mkdir()
+    monkeypatch.setattr(qa, "UV_FILL", ["uv", "--version"])  # the pytest fill needs the network
+    assert qa.pre_step(worktree, 120, cache) is None
+    assert (worktree / ".venv").is_dir()
+    assert git(worktree, "status", "--porcelain") == ""
+
+
+def test_prompt_says_the_cache_holds_the_locked_dependencies(qa_env):
+    _commit_lock(qa_env)
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    table = _env_table(_codex_argv(qa_env))
+    outside = _outside_block(_prompt(qa_env))
+    assert qa.uv_rule(table["UV_CACHE_DIR"], True) in outside
+    assert "holds pytest and the locked dependencies of the project" in outside
+
+
 def _without_uv(monkeypatch):
     path = os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "uv").exists())
     monkeypatch.setenv("PATH", path)
