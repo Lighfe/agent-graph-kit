@@ -1,6 +1,6 @@
 # agent-graph-kit
 
-This repo will become a Claude Code plugin for multi-agent Graph Engineering.
+This repo is the agent-graph-kit, a Claude Code plugin for multi-agent Graph Engineering. It ships the plugin `agk` in `plugin/`.
 Hooks in `.claude/hooks/` check the handoff calls (see `docs/process.md`).
 
 ## Documents

@@ -2,7 +2,7 @@
 
 This document tells how work is organized in this repo.
 
-Status: hooks in `.claude/hooks/` check the guarded calls and deny a call that is not allowed (the list is in "Guarded calls" of `docs/specs/agent-graph-kit.md`). This prose stays the main description. There are no Jev gates yet.
+Status: hooks in `.claude/hooks/` check the guarded calls and deny a call that is not allowed (the list is in "Guarded calls" of `docs/specs/agent-graph-kit.md`). This prose stays the main description.
 
 ## Work rules
 
