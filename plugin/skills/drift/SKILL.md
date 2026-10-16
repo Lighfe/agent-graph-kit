@@ -1,11 +1,11 @@
 ---
 name: drift
-description: Show which copied kit files changed in this project or in the plugin. Use when the owner types /agk:drift, or asks whether the kit files in the project are up to date. Read-only.
+description: Show which copied kit files changed in this project or in the plugin. Use when the owner types /agk:drift, or asks whether the kit files in the project are up to date. Read-only unless the owner adds --update.
 ---
 
 # Drift
 
-This skill compares each file that `/agk:setup` copied with the file in the project and with the plugin template. It writes nothing and overwrites nothing.
+This skill compares each file that `/agk:setup` copied with the file in the project and with the plugin template. Plain `/agk:drift` is read-only: it writes nothing and overwrites nothing.
 
 ## Steps
 
@@ -27,4 +27,16 @@ This skill compares each file that `/agk:setup` copied with the file in the proj
 
 `AGENTS.md` is filled in with project facts at setup, so it is the only file compared with the lock only: `unchanged` or `changed in this project`. `CLAUDE.md` is compared with its template `CLAUDE.md.tmpl` like the other files.
 
-The skill does not merge, update or print a diff. The owner decides what to do with each answer.
+## Update with `--update`
+
+Add `--update` to take the new plugin files:
+
+```bash
+uv run --script "${CLAUDE_SKILL_DIR}/drift.py" --root "<project root>" --update
+```
+
+Rule: only files that are `newer in the plugin` are replaced by the new template, and their lock entries get the new sha256. A file the project changed is never overwritten. The output is `updated: <path>` per replaced file and `not touched (changed in both): <path>` per `changed in both` file; every other line is as without the flag. Nothing else changes: no other file and no other lock entry, and `AGENTS.md` is never written. The owner merges a `changed in both` file by hand. On a missing or invalid lock the script prints `not set up:`, exits with 1 and writes nothing.
+
+Writes into `.claude/` are denied inside a Claude Code session, so tell the owner to run the `--update` command in a terminal outside Claude Code.
+
+The skill does not merge or print a diff. The owner decides what to do with each answer.

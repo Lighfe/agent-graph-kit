@@ -349,6 +349,8 @@ The kit raises the plugin version once per stage, so a new version is a released
 
 ## Update the kit in a project
 
+This is the route for a project that copied the kit from a clone of this repo. A project that has the kit as a plugin uses the section "Update a plugin project" below.
+
 The kit still changes (new hooks, role rules, QA launcher fixes). A project does not get these changes by itself: you copy them in by hand. In the paint-math demo this was needed several times during the run, for example for the QA launcher fix of [#67](https://github.com/Lighfe/agent-graph-kit/issues/67) and [#68](https://github.com/Lighfe/agent-graph-kit/issues/68).
 
 1. Update only while no role agent runs, for example while the issue waits for you with the label `needs-owner`. Run the steps in the root of the project, in a terminal outside Claude Code, for the same reason as in "Copy": the guard hooks and the Auto mode classifier deny writes into `.claude/` and commands that name `scripts/qa-codex`.
@@ -369,6 +371,25 @@ The kit still changes (new hooks, role rules, QA launcher fixes). A project does
 5. Commit and push to `main`. Name the kit issues in the message, for example `git commit -m "Update QA launcher (agent-graph-kit #67, #68)"`.
 
 The orchestrator closes an issue only if the SHA that QA verified is the current `HEAD`. Your update commit moves `HEAD`, so an issue that is in progress needs a new `## Engineer: DONE` and a new QA run that end at the new `HEAD`. In paint-math #1, the update commit moved `HEAD`, and the issue went through PM, engineer and QA again before it was closed.
+
+## Update a plugin project
+
+A plugin project has no clone of the kit and no `.claude/hooks` of its own to copy from. The kit files that `/agk:setup` copied are recorded in `.agent-graph-kit.lock`. `/agk:drift` compares them with the new plugin files, and `--update` takes the safe cases. Nothing is overwritten without you.
+
+1. Update the plugin first, so the plugin templates are new (see "Update the plugin in a project" above).
+2. Run `/agk:drift`. It prints one line `<state>: <path>` per file and writes nothing.
+3. Run the update in a terminal outside Claude Code, in the root of the project. The guard hooks and the Auto mode classifier deny writes into `.claude/` from a session.
+
+   ```bash
+   uv run --script <plugin folder>/skills/drift/drift.py --root . --update
+   ```
+
+   The plugin folder is the folder of `agk` under the plugin cache (usually `~/.claude/plugins/cache/`).
+4. Read the result:
+   - `newer in the plugin`: replaced by the new template (`updated: <path>`), and the lock holds the new state
+   - `changed in this project`: kept as it is
+   - `changed in both`: shown as `not touched (changed in both): <path>`. Merge it by hand: compare the plugin template with the project file (for example `diff <plugin folder>/templates/<path> <path>`)
+5. Commit the updated files and `.agent-graph-kit.lock`.
 
 ## Background
 

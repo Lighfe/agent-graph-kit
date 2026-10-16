@@ -47,8 +47,8 @@ def write_lock(project, files):
     (project / LOCK).write_text(json.dumps({"version": 1, "files": files}))
 
 
-def run(plugin, project):
-    return subprocess.run([sys.executable, str(plugin / "skills" / "drift" / "drift.py"), "--root", str(project)],
+def run(plugin, project, *extra):
+    return subprocess.run([sys.executable, str(plugin / "skills" / "drift" / "drift.py"), "--root", str(project), *extra],
                           capture_output=True, text=True, timeout=60)
 
 
@@ -176,4 +176,68 @@ def test_writes_nothing(env, case):
         (project / LOCK).write_text("nope")
     before = snapshot(project)
     run(plugin, project)
+    assert snapshot(project) == before
+
+
+def test_update_replaces_newer_file_and_keeps_mode(env):
+    plugin, project = env
+    files = {"docs/a.md": setup_file(plugin, project, "docs/a.md", b"a", b"a", b"a2"),
+             "docs/z.md": setup_file(plugin, project, "docs/z.md", b"z", b"z", b"z")}
+    write_lock(project, files)
+    (project / "docs/a.md").chmod(0o755)
+    r = run(plugin, project, "--update")
+    assert r.returncode == 0
+    assert "updated: docs/a.md" in lines(r)
+    assert (project / "docs/a.md").read_bytes() == b"a2"
+    assert (project / "docs/a.md").stat().st_mode & 0o777 == 0o755
+    text = (project / LOCK).read_text()
+    assert json.loads(text) == {"version": 1, "files": {"docs/a.md": sha(b"a2"), "docs/z.md": sha(b"z")}}
+    assert text.endswith("}\n") and text.startswith('{\n  "version"')
+    assert "unchanged: docs/a.md" in lines(run(plugin, project))
+
+
+def test_update_leaves_every_other_state_alone(env):
+    plugin, project = full_case(env)
+    before = snapshot(project)
+    r = run(plugin, project, "--update")
+    assert r.returncode == 0
+    assert "updated: docs/c.md" in lines(r)
+    after = snapshot(project)
+    lock = json.loads((project / LOCK).read_text())["files"]
+    old = json.loads(before[LOCK][1])["files"]
+    assert {k: v for k, v in lock.items() if k != "docs/c.md"} == {k: v for k, v in old.items() if k != "docs/c.md"}
+    assert lock["docs/c.md"] == sha(b"c2")
+    for rel in before:
+        if rel not in (LOCK, "docs/c.md"):
+            assert after[rel] == before[rel]
+
+
+def test_update_lists_changed_in_both_untouched(env):
+    plugin, project = full_case(env)
+    r = run(plugin, project, "--update")
+    assert "not touched (changed in both): docs/d.md" in lines(r)
+    assert (project / "docs/d.md").read_bytes() == b"d2"
+    assert json.loads((project / LOCK).read_text())["files"]["docs/d.md"] == sha(b"d")
+    assert "changed in this project: docs/b.md" in lines(r)
+
+
+def test_update_with_invalid_lock_writes_nothing(env):
+    plugin, project = env
+    (project / LOCK).write_text("not json")
+    before = snapshot(project)
+    r = run(plugin, project, "--update")
+    assert r.returncode == 1
+    assert lines(r)[0].startswith("not set up:")
+    assert snapshot(project) == before
+    (project / LOCK).unlink()
+    r = run(plugin, project, "--update")
+    assert r.returncode == 1 and lines(r)[0].startswith("not set up:")
+    assert not (project / LOCK).exists()
+
+
+def test_without_flag_writes_nothing_even_with_newer_file(env):
+    plugin, project = full_case(env)
+    before = snapshot(project)
+    r = run(plugin, project)
+    assert "newer in the plugin: docs/c.md" in lines(r)
     assert snapshot(project) == before
