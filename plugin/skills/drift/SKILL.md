@@ -20,10 +20,11 @@ This skill compares each file that `/agk:setup` copied with the file in the proj
    - `changed in this project`: the owner edited the file; the plugin did not change
    - `newer in the plugin`: the plugin has a new version; the project file is as copied
    - `changed in both`: both changed; the owner merges by hand
-   - `deleted from this project`: the file is gone from the project
+   - `deleted from this project`: the file is gone from the project, and the plugin still has a template for it
+   - `dropped (gone from both)`: the file is gone from the project and the plugin has no template for it. The owner can delete such an entry from `.agent-graph-kit.lock` by hand
    - `no longer in the plugin`: the plugin has no template for this path any more
 3. When the script prints `not set up:` (exit code 1), tell the owner to run `/agk:setup` first.
 
-`AGENTS.md` is filled in with project facts at setup, so it is compared with the lock only: `unchanged` or `changed in this project`.
+`AGENTS.md` is filled in with project facts at setup, so it is the only file compared with the lock only: `unchanged` or `changed in this project`. `CLAUDE.md` is compared with its template `CLAUDE.md.tmpl` like the other files.
 
 The skill does not merge, update or print a diff. The owner decides what to do with each answer.

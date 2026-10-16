@@ -114,6 +114,26 @@ def test_agents_md_unchanged_even_with_template(env):
     assert lines(run(plugin, project)) == ["unchanged: AGENTS.md"]
 
 
+def test_claude_md_untouched_is_unchanged(env):
+    plugin, project = env
+    write_lock(project, {"CLAUDE.md": setup_file(plugin, project, "CLAUDE.md.tmpl", b"@AGENTS.md\n", None, b"@AGENTS.md\n")})
+    (project / "CLAUDE.md").write_bytes(b"@AGENTS.md\n")
+    assert lines(run(plugin, project)) == ["unchanged: CLAUDE.md"]
+
+
+def test_claude_md_changed_in_project(env):
+    plugin, project = env
+    write_lock(project, {"CLAUDE.md": setup_file(plugin, project, "CLAUDE.md.tmpl", b"@AGENTS.md\n", None, b"@AGENTS.md\n")})
+    (project / "CLAUDE.md").write_bytes(b"@AGENTS.md\nmore\n")
+    assert lines(run(plugin, project)) == ["changed in this project: CLAUDE.md"]
+
+
+def test_dropped_gone_from_both(env):
+    plugin, project = env
+    write_lock(project, {"scripts/old.py": sha(b"old")})
+    assert lines(run(plugin, project)) == ["dropped (gone from both): scripts/old.py"]
+
+
 def test_no_template_prints_one_line_only(env):
     plugin, project = env
     write_lock(project, {"docs/g.md": setup_file(plugin, project, "docs/g.md", b"g", b"changed", None)})

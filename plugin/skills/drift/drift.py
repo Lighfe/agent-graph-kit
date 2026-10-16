@@ -21,6 +21,7 @@ from pathlib import Path
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 LOCK = ".agent-graph-kit.lock"
 AGENTS = "AGENTS.md"
+CLAUDE = "CLAUDE.md"
 
 
 def sha256_of(path: Path) -> str | None:
@@ -41,14 +42,23 @@ def read_lock(path: Path) -> dict[str, str] | None:
         return None
 
 
+def template_path(rel: str) -> Path:
+    """The plugin template of a locked path. AGENTS.md and CLAUDE.md are copied from a `.tmpl` file."""
+    if rel in (AGENTS, CLAUDE):
+        return TEMPLATES / f"{rel}.tmpl"
+    return TEMPLATES / rel
+
+
 def state(root: Path, rel: str, lock_sha: str) -> str:
     target = root / rel
+    template = template_path(rel)
     if not target.exists() and not target.is_symlink():
+        if not template.is_file():
+            return f"dropped (gone from both): {rel}"
         return f"deleted from this project: {rel}"
     if rel == AGENTS:
         template_sha = lock_sha  # filled in at setup: no plugin value to compare
     else:
-        template = TEMPLATES / rel
         if not template.is_file():
             return f"no longer in the plugin: {rel}"
         template_sha = sha256_of(template)
