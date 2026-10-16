@@ -101,7 +101,7 @@ def test_denied_relabel_rule_covers_verdict_partial_check_and_outage():
     assert "secrets redacted" in rule
     assert "still has `later`" in rule
     assert RELABEL in rule
-    assert '"Auto mode allow entries"' in rule and "entry 3" in rule
+    assert "Auto mode allow entry that allows the relabel" in rule
     assert "Do not retry in a loop" in rule
     assert "another command form" in rule
     # partial deny

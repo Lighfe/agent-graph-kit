@@ -10,7 +10,6 @@ PHRASES = [
     "Auto mode",
     "/permissions",
     "$defaults",
-    "Auto mode allow entries",
     "temporary",
 ]
 

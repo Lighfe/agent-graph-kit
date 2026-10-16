@@ -1,14 +1,14 @@
 # How the hooks work
 
-This document is optional background. You do not need it to start a project. The check that the hooks are active is run for you by `/agk:hook-activation-check` (a step of the route in the README, `## Start a new project`). Read this when you want to know what the hooks do, or see a deny yourself. Spec: `docs/specs/agent-graph-kit.md`, heading "G8 Settings protection".
+This document is optional background. You do not need it to start a project. The check that the hooks are active is run for you by `/agk:hook-activation-check` (a step of the route in the README, `## Start a new project`). Read this when you want to know what the hooks do, or see a deny yourself.
 
 ## The three hooks
 
 The hooks are registered in `.claude/settings.json` and apply from the next tool call after that file is in place.
 
-- **Guard hook** (`.claude/hooks/guard.py`, a `PreToolUse` hook with the matcher `Agent|Bash|SendMessage`). It checks every launch of a role, every `SendMessage` continuation, the `qa-codex` call and the `gh issue close` call against the state of the issue. It also denies writes to the settings files and to `.claude/hooks/`. A call that breaks a rule is denied before it runs, and the deny message tells why.
-- **Not-started hook** (`.claude/hooks/not_started.py`, a `PermissionDenied` hook). When Claude Code or the Auto mode classifier denies a guarded launch before it ran, this hook posts `## Launch not started: …` on the issue. A launch that did not start is not a pending launch and not a return.
-- **Outage stop hook** (`.claude/hooks/outage_stop.py`, a `SubagentStop` hook). When an Auto mode outage stopped a role agent, this hook posts `## Launch stopped by outage: …` on the issue. The orchestrator then launches the same step again, without the owner.
+- **Guard hook** (`guard.py`, a `PreToolUse` hook with the matcher `Agent|Bash|SendMessage`). It checks every launch of a role, every `SendMessage` continuation, the `qa-codex` call and the `gh issue close` call against the state of the issue. It also denies writes to the settings files and to the hooks. A call that breaks a rule is denied before it runs, and the deny message tells why.
+- **Not-started hook** (`not_started.py`, a `PermissionDenied` hook). When Claude Code or the Auto mode classifier denies a guarded launch before it ran, this hook posts `## Launch not started: …` on the issue. A launch that did not start is not a pending launch and not a return.
+- **Outage stop hook** (`outage_stop.py`, a `SubagentStop` hook). When an Auto mode outage stopped a role agent, this hook posts `## Launch stopped by outage: …` on the issue. The orchestrator then launches the same step again, without the owner.
 
 If hooks are off (`{"disableAllHooks": true}` in `.claude/settings.local.json`), none of this runs, and there is no warning. `/agk:hook-activation-check` fails when that file turns the hooks off.
 
@@ -26,7 +26,7 @@ The call does not run, and the issue gets no new comment. Fix the call as the me
 
 You do not have to do this. The check skill already does the check. Run these steps by hand only to see the hooks work. Use an interactive session in the Claude Code VS Code extension, in the repo root, in Auto mode. Use a throwaway issue; replace `<N>` with its number and close it when you are done.
 
-1. Check that the guard is listed. Run `/hooks`. Expected: a `PreToolUse` hook with the matcher `Agent|Bash|SendMessage` that runs `.claude/hooks/guard.py`.
+1. Check that the guard is listed. Run `/hooks`. Expected: a `PreToolUse` hook with the matcher `Agent|Bash|SendMessage` that runs `guard.py`.
 2. A launch without a launch line is denied. Prompt:
 
    ````

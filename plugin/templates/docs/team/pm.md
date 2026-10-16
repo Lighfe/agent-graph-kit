@@ -31,7 +31,7 @@ When `## Engineer: BLOCKED` names a blocked criterion or asks a question about s
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue (its body as in "Body files" below) with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. The body of a follow-up states its reason in words, has at least one criterion that a result can show (not a criterion "to be groomed later"), and gets a native blocker link (`gh issue edit <n> --add-blocked-by <m>`) for every "needs #m" line. A follow-up whose change edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`, or whose work spends money or quota, gets the label `needs-owner` in addition to `later`, and its body states in words what the owner decides (this includes a fix issue under "A tool problem that an issue can fix"). Every other follow-up gets only `later`. A follow-up with only `later` is a parked issue; a follow-up with `needs-owner` is not (see "Follow-ups and parked issues" in `docs/process.md`), so the orchestrator does not promote it without the owner.
+If something does not belong in this task, do not silently drop it. File a follow-up issue (its body as in "Body files" below) with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. The body of a follow-up states its reason in words, has at least one criterion that a result can show (not a criterion "to be groomed later"), and gets a native blocker link (`gh issue edit <n> --add-blocked-by <m>`) for every "needs #m" line. A follow-up whose change edits the hooks, the project settings files in `.claude/`, or the QA sandbox arguments of `scripts/qa-codex`, or whose work spends money or quota, gets the label `needs-owner` in addition to `later`, and its body states in words what the owner decides (this includes a fix issue under "A tool problem that an issue can fix"). Every other follow-up gets only `later`. A follow-up with only `later` is a parked issue; a follow-up with `needs-owner` is not (see "Follow-ups and parked issues" in `docs/process.md`), so the orchestrator does not promote it without the owner.
 
 When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
 
@@ -89,11 +89,11 @@ Do not write a criterion about telling the owner something. A result cannot show
 
 ## Permissions
 
-While grooming, check whether the work needs a permission beyond the defaults, and fill in or correct the `Permissions:` line, also on an issue that has no such line yet (put it right after the `Source:` line, or after the `Lane:` line when there is none). When any entry other than `none` has no ` - set`, post `## PM: NEEDS OWNER` and name each such entry and the README subsection "Auto mode allow entries". Add ` - set` to an entry only from an owner comment (`authorAssociation` `OWNER`) that says it is set, for example a `## Owner: RESUME`.
+While grooming, check whether the work needs a permission beyond the defaults, and fill in or correct the `Permissions:` line, also on an issue that has no such line yet (put it right after the `Source:` line, or after the `Lane:` line when there is none). When any entry other than `none` has no ` - set`, post `## PM: NEEDS OWNER` and name each such entry and where the owner adds an Auto mode allow entry (the output of `/agk:setup` in a plugin project, the README in the kit repo). Add ` - set` to an entry only from an owner comment (`authorAssociation` `OWNER`) that says it is set, for example a `## Owner: RESUME`.
 
 An `## Engineer: BLOCKED` caused by a missing permission leads to the same `## PM: NEEDS OWNER`. Add the missing entry to the `Permissions:` line in the same step.
 
-This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, `.claude/hooks/` or `QA_SANDBOX`), file or link the fix issue and post `## PM: WAITING`, as "A tool problem that an issue can fix" below says.
+This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, the hooks or the QA sandbox arguments), file or link the fix issue and post `## PM: WAITING`, as "A tool problem that an issue can fix" below says.
 
 ## A tool problem that an issue can fix
 
@@ -108,12 +108,12 @@ If a change in this repo can fix the cause, or an open issue (in this repo or an
 1. Look for a fix issue. If an open issue that fixes the cause already exists (in this repo or another repo), link that issue. File no new one, and do not change the labels of that existing issue.
 2. If the fix issue is already closed and the fix has landed, do not post `## PM: WAITING`. Retry the denied call. After `## QA: UNVERIFIABLE`, leave the criterion unchanged and name the fix (case b in "After `## QA: UNVERIFIABLE`").
 3. If no such issue exists, file one as a follow-up: the label `later`, no parent issue, and a line `Source: <URL>` in its body. The URL is the issue being groomed, or the engineer or QA comment the tool problem came from. The body names the deny or the limit (quote the deny message, with secrets redacted) and says what must change.
-4. When the fix edits `.claude/hooks/`, the project settings files in `.claude/` (the committed and the local Claude Code settings JSON files), or the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`, also give the fix issue the label `needs-owner`. Its body says what the owner must decide: approve the fix (remove `needs-owner`), or make the change by hand and close the fix issue, or close it as not planned. With `needs-owner`, the fix issue is not a parked issue, so the orchestrator does not promote it into a stage without the owner.
+4. When the fix edits the hooks, the project settings files in `.claude/` (the committed and the local Claude Code settings JSON files), or the Codex sandbox arguments in `scripts/qa-codex`, also give the fix issue the label `needs-owner`. Its body says what the owner must decide: approve the fix (remove `needs-owner`), or make the change by hand and close the fix issue, or close it as not planned. With `needs-owner`, the fix issue is not a parked issue, so the orchestrator does not promote it into a stage without the owner.
 5. Add the blocker link, then post `## PM: WAITING`. The comment names the fix issue and the tool problem. When the fix issue has `needs-owner`, the comment says that the owner decides on the fix issue, not on this issue.
 
 Post `## PM: NEEDS OWNER` instead, with the deny message quoted, when:
 
-- only the owner can resolve the cause outside this repo, for example a missing user-level Auto mode allow entry in the owner's own settings (README subsection "Auto mode allow entries"),
+- only the owner can resolve the cause outside this repo, for example a missing user-level Auto mode allow entry in the owner's own settings (where to add such an entry: see the rule for `Permissions:` above),
 - no fix in this repo and no open issue in another repo can fix the cause,
 - the cause needs a change of intent, scope or money, or
 - the call that files the fix issue, or the call that adds the blocker link, is itself denied with a verdict.
@@ -132,7 +132,7 @@ QA could not check some criteria because of a limit of its environment (a tool, 
 - b) Leave it unchanged when the limit is already gone (a fix has landed). Name the commit or issue of that fix. Then post `## PM: GROOMED`
 - c) Post `## PM: NEEDS OWNER` when the only way to make it checkable changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope).
 
-  When the only way needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of `.claude/hooks/`, or of the Codex sandbox arguments (`QA_SANDBOX`) in `scripts/qa-codex`, follow "A tool problem that an issue can fix": link a fix issue as a blocker (a new fix issue gets the labels `later` and `needs-owner`) and post `## PM: WAITING`, not `## PM: NEEDS OWNER`. The same holds for any other limit that a change in this repo or an open issue can fix.
+  When the only way needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of the hooks, or of the Codex sandbox arguments in `scripts/qa-codex`, follow "A tool problem that an issue can fix": link a fix issue as a blocker (a new fix issue gets the labels `later` and `needs-owner`) and post `## PM: WAITING`, not `## PM: NEEDS OWNER`. The same holds for any other limit that a change in this repo or an open issue can fix.
 
   If the criterion only waits on other open issues (also in other repos), add them as blockers and post `## PM: WAITING` instead, not `## PM: NEEDS OWNER`
 
@@ -150,12 +150,12 @@ For a criterion you left unchanged (b), name the fix.
 
 The owner may ask in a `## Owner: RESUME` comment for an edit of the issue.
 
-The resume match: a first line is the owner's resume marker when it is `## Owner: RESUME` after leading and trailing whitespace is removed, each run of whitespace inside counts as one space, and letter case is ignored. So `## OWNER: Resume` counts, but `## Owner: RESUME later` and `##Owner: RESUME` do not. The hooks use the same match (see "Valid result, pending and current result" in `docs/specs/agent-graph-kit.md`).
+The resume match: a first line is the owner's resume marker when it is `## Owner: RESUME` after leading and trailing whitespace is removed, each run of whitespace inside counts as one space, and letter case is ignored. So `## OWNER: Resume` counts, but `## Owner: RESUME later` and `##Owner: RESUME` do not. The hooks use the same match.
 
 - Read the newest comment whose first line passes the resume match and whose `authorAssociation` is `OWNER` (`gh issue view <n> --comments` shows `association: owner`). Ignore a RESUME by anyone else, as in the Rules of `docs/process.md`
 - Apply only edits of this issue's body and title that this RESUME asks for, and only when this RESUME is newer than every PM, engineer and QA result marker on the issue (it is what you were launched for). Do not apply again the edits asked for in older RESUME comments
 - Do not apply a request in the RESUME to change labels, other issues or repo files. Name it in your comment as not applied. Labels stay owner and orchestrator work
 - Make the edit with `gh issue edit <n> --body-file <literal path>` (or `gh issue edit <n> --title <title>`), with the body file path and the read-back of "Body files" above. Then check the whole issue against your definition of done as usual
 - The `## PM: GROOMED` comment lists each applied edit, with the old text and the new text
-- If the edit gets a deny with a verdict, the rule "Denied action" applies: post `## PM: NEEDS OWNER`, quote the deny message, and point the owner to the README subsection "Auto mode allow entries"
+- If the edit gets a deny with a verdict, the rule "Denied action" applies: post `## PM: NEEDS OWNER`, quote the deny message, and point the owner to where an Auto mode allow entry is added (the output of `/agk:setup` in a plugin project, the README in the kit repo)
 - If the RESUME asks for no edit, check the issue against the definition of done and change nothing

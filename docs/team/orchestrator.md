@@ -237,7 +237,7 @@ Do not work around a deny in any other way.
    Then remove the label `needs-owner` and add the label `ready`.
    ````
 
-   For a stage issue, the last sentence is: remove the label `needs-owner` and do not add `ready`. The escalation comment's own first line is never the marker: never post a comment whose first line passes the resume match (see "Valid result, pending and current result" in `docs/specs/agent-graph-kit.md`), so start the comment with another line, for example `Escalated: the PM asks for an owner decision`.
+   For a stage issue, the last sentence is: remove the label `needs-owner` and do not add `ready`. The escalation comment's own first line is never the marker: never post a comment whose first line passes the resume match (see the resume match in "Rules" of `docs/process.md`), so start the comment with another line, for example `Escalated: the PM asks for an owner decision`.
 2. Remove the label `ready` and add the label `needs-owner`.
 3. Continue with the next issue (see "Before each issue").
 

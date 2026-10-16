@@ -18,8 +18,8 @@ def test_hook_settings_sandbox_money_followup_gets_needs_owner():
     for p in COPIES:
         t = flat(p)
         assert (
-            "A follow-up whose change edits `.claude/hooks/`, the project settings files in `.claude/`, "
-            "or `QA_SANDBOX` in `scripts/qa-codex`, or whose work spends money or quota, "
+            "A follow-up whose change edits the hooks, the project settings files in `.claude/`, "
+            "or the QA sandbox arguments of `scripts/qa-codex`, or whose work spends money or quota, "
             "gets the label `needs-owner` in addition to `later`, "
             "and its body states in words what the owner decides"
         ) in t

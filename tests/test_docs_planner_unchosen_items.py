@@ -100,9 +100,9 @@ def needs_owner_bullet():
 def test_needs_owner_cases_and_source():
     rule = needs_owner_bullet()
     for case in (
-        "`.claude/hooks/`",
+        "edits the hooks",
         "the project settings files in `.claude/`",
-        "`QA_SANDBOX` in `scripts/qa-codex`",
+        "the QA sandbox arguments of `scripts/qa-codex`",
         "spends money or quota",
     ):
         assert case in rule, case
