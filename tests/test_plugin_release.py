@@ -106,6 +106,10 @@ def test_source_change_between_bumps_is_unreleased_and_tests_pass(tmp_path):
             shutil.copy2(ROOT / rel, repo / rel)
     script = repo / "scripts" / "build_plugin.py"
     run = lambda *a: subprocess.run([sys.executable, str(script), *a], cwd=repo, capture_output=True, text=True)
+    # The live repo may be unreleased (between bumps): start the copy as released from its own state.
+    version = json.loads((repo / "plugin" / MANIFEST).read_text())["version"]
+    (repo / "scripts" / "plugin-release.json").write_text(
+        json.dumps({"version": version, "sha256": run("--hash").stdout.strip()}))
     assert run("--release-status").stdout.strip() == "released"
     with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
         f.write("\n# change between bumps\n")
