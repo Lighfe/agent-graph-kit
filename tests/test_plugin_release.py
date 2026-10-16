@@ -1,6 +1,7 @@
 """Tests for the plugin release state (issue #187). All data is synthetic."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -89,3 +90,33 @@ def test_skill_and_docs_rules():
     assert "Bump the plugin version" in planner and "--release-status" in planner
     assert "unreleased changes" in planner
     assert "Do not bump the plugin version in a task" in (ROOT / "docs" / "team" / "software-engineer.md").read_text()
+
+
+def test_source_change_between_bumps_is_unreleased_and_tests_pass(tmp_path):
+    """A plugin source changes and `build_plugin.py` copies it; the stored hash stays. The status is
+    `unreleased changes`, and the copy-match test and the version-match test both pass.
+
+    A change of a generated copy without its source is a different failure (the copy-match test
+    `test_plugin_copies_match_the_v1_sources`) and not part of the release check."""
+    repo = tmp_path / "repo"
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True)
+    for rel in filter(None, tracked.stdout.split("\0")):
+        if (ROOT / rel).is_file():
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, repo / rel)
+    script = repo / "scripts" / "build_plugin.py"
+    run = lambda *a: subprocess.run([sys.executable, str(script), *a], cwd=repo, capture_output=True, text=True)
+    assert run("--release-status").stdout.strip() == "released"
+    with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
+        f.write("\n# change between bumps\n")
+    assert run().returncode == 0
+    r = run("--release-status")
+    assert r.returncode == 0 and r.stdout.strip() == "unreleased changes"
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    t = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "tests/test_plugin.py::test_plugin_copies_match_the_v1_sources",
+         "tests/test_plugin_release.py::test_stored_version_matches_manifest"],
+        cwd=repo, capture_output=True, text=True, env=env)
+    assert t.returncode == 0, t.stdout + t.stderr
+    assert "2 passed" in t.stdout
