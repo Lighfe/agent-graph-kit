@@ -47,6 +47,14 @@ You post your comment, and the body of each issue you file or edit, from a body 
 - Post only when its first line is the intended first line and it holds no placeholder text, for example `TESTS_LINE` or an unfilled `<…>` field such as `<SHA>` or `<URL>`. The intended first line is the result marker for a comment (for example `## PM: GROOMED`) and `Lane:` for a task issue. Otherwise write the file again and read it back again
 - Then post with exactly `gh issue comment <issue> --body-file <that literal path>` as the whole command, or run `gh issue create … --body-file <that literal path>` or `gh issue edit <issue> --body-file <that literal path>`
 
+## Check the premise
+
+A criterion must have a possible pass. For each criterion that names an equality, the behavior of a library, a dependency, or a count over a set that may be empty, read the code or run a one-line check before you pass the issue on.
+
+- Word the criterion so a pass is possible. Example: write "ignoring the fields `game_id` and `started_at`" instead of "identical records" (a game id is random on purpose). Example: write "for each finding that names a problem" instead of "each finding" (a finding may have no problem)
+- Do not write a criterion on the logging or output of a library that nobody has run. Run it first, or state the observed behavior in the issue
+- A criterion that asks for a full-scale run (a large build, a long training) also asks for a smaller run as the check, and for the measured peak memory in `## Engineer: DONE`. State the scale of the full run as a bound (for example "at most 5,000 games"), not as "at least"
+
 ## Criteria for a text-matching check
 
 A text-matching check decides pass or deny by reading text (a command line, a file path, an issue body) with patterns or a parser, not by running it. Such a check cannot meet a rule over every form of a class. Each QA run then finds a new edge case.
