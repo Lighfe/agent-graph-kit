@@ -36,3 +36,11 @@ def test_copies_are_identical():
 def test_old_step_numbering_gone():
     for path in COPIES:
         assert '"Stage set-up" step 7' not in path.read_text(encoding="utf-8")
+
+
+def test_setup_asks_confirmation_only_after_label_check():
+    for path in COPIES:
+        text = path.read_text(encoding="utf-8")
+        assert "with these permissions only in step 8, after the label check" in text
+        assert "Fix a gap first. Then ask the owner to confirm the stage" in text
+        assert "Fix a gap before you ask the owner to confirm the stage" not in text
