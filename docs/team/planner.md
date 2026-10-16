@@ -69,8 +69,9 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 1. Brainstorm the idea with the owner (superpowers skill brainstorming)
 2. Write the spec to `docs/specs/`
 3. Write the plan (superpowers skill writing-plans) to `docs/plans/`
-4. Write one stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. Never add `ready` to it
+4. Write one stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. Never add `ready` to it. The `## Background` of the stage issue holds a coverage table with one row per requirement or section of the spec. Each row gives the number of the issue that covers it (`#<n>`), or "not in this stage" with the reason. Fill in the issue numbers after the issues are filed
 5. File each plan task as one issue in `docs/task-template.md` format, with the label `later`
+   - Each issue states the interfaces, the cases and the names it needs in its own body. The plan may be linked as background only
    - Fill in the `Permissions:` line of each issue. Name every entry that is not `none` to the owner before the owner confirms the stage
    - For each entry that is not `none` and is a write by an agent to a system outside the repo files (for example editing other issues), print a ready-to-paste Auto mode entry text. The entry is narrow: it names the subagent, the exact command form, the issue numbers and the reason. Say where to add it: `/permissions`, the Auto mode tab, keep `$defaults`; the README subsection "Auto mode allow entries" shows the form
    - Ask the owner a separate question for each such entry: "Is this entry added?" A confirmation of the stage does not count as the answer. Add ` - set` to the entry only after the owner answers that the entry is added. If the owner says it is not added, or does not answer, leave the sub-issue with `later`, do not relabel it, and do not add ` - set`
@@ -78,8 +79,9 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 6. Add the issues to the stage as sub-issues, in execution order: `gh issue edit <stage> --add-sub-issue <n>`
 7. Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
 8. Replace sibling references: after the last issue is filed, replace every "task N" / "Task N" reference to a sibling issue (the number in the plan) by `#<issue number>` in the issue bodies. Write each changed body to its own body file and run `gh issue edit <n> --body-file <path>` (see "Body files"). Do this before the label check and before the owner is asked to confirm
-9. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you go on
-10. Ask the owner to confirm the stage and to validate its purpose
+9. Read every filed issue body. A body that says "implement Task N of the plan" (or the same in other words) without that content in the body is rewritten with `gh issue edit <n> --body-file <path>` and the rules of "Body files". Do this before the label check and before the owner is asked to confirm
+10. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you go on
+11. Ask the owner to confirm the stage and to validate its purpose
 
 The sub-issues carry `later` until the owner confirms the stage.
 
@@ -161,7 +163,7 @@ Input:
 
 Post exactly one comment on the stage issue. Write the body to a file with a literal absolute path first, as in "Body files" above, for example `/tmp/planner-93-attempt1.md`. Read it back with `cat` as its own call, then run `gh issue comment <stage> --body-file /tmp/planner-93-attempt1.md` as the whole command. The first line is exactly `## Planner: STAGE REVIEW`. Then six parts, in this order:
 
-1. **Purpose check**: was the `## Purpose` of the stage met? Give evidence: closed issues, commits, reports
+1. **Purpose check**: was the `## Purpose` of the stage met? Give evidence: closed issues, commits, reports. Read the coverage table in the `## Background` of the stage issue and the spec, and name every spec part that has no closed issue (or say that there is none)
 2. **Run notes**: the orchestrator's run notes, and what you conclude from them. Or "No run notes were given". Also list every entry with ` - set` in the `Permissions:` line of a closed sub-issue of the stage, as a temporary permission the owner may remove now, and name the entry again if it is still in place
 3. **Doc drift**: findings from the fact tests and from the prompt audit. Say which checks ran and which could not. See "Doc drift checks" below the example
 4. **Follow-ups**: every open parked issue whose `Source:` line points into this stage (the stage issue, a sub-issue, or a comment or review on one), and every older parked issue you see as relevant. Give each one a proposed placement: next stage, a later stage, stay parked, or close
