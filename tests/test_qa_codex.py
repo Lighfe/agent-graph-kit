@@ -2070,7 +2070,7 @@ def test_qa_role_file_has_qa_behavior():
         "When `scripts/qa-codex` runs you, return only the JSON that the schema asks for. Do not post a comment.",
         "Give each criterion's number as `id`",
         "Checker: claude (fallback)",
-        "Start the app and run the browser check in one command",
+        "If your tool list has a browser tool, start the app and run the browser check in one command",
     ]:
         assert needle in text, needle
     assert text.count("Checker: claude (fallback)") == 2  # the example and the definition of done

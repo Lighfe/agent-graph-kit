@@ -19,6 +19,9 @@ Definition of done:
 - The `Permissions:` line is filled in (see "Permissions" below)
 - Everything moved out of scope links to a follow-up issue
 - An engineer who has never spoken to you could implement it from the issue and the documents it links
+- The body states every fact the engineer needs in words. A link may point to background only. Do not use "see comment ...", a stage code or a line number as the only source of a reason
+- Every criterion can be checked by QA from the checkout, the newest `## Engineer: DONE` comment and the state files (see "Criteria QA can check" below)
+- The body has at most about 10 criteria and is not longer than about 5 KB. Otherwise split the issue, or state in the issue why it stays one issue
 
 When you finish, post a comment on the issue. The first line is exactly `## PM: GROOMED`, `## PM: NEEDS OWNER` or `## PM: WAITING`.
 
@@ -28,7 +31,7 @@ When `## Engineer: BLOCKED` names a blocked criterion or asks a question about s
 
 Your final message is only the first line of your comment and the URL of the comment. The full result is on the issue.
 
-If something does not belong in this task, do not silently drop it. File a follow-up issue (its body as in "Body files" below) with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
+If something does not belong in this task, do not silently drop it. File a follow-up issue (its body as in "Body files" below) with the label `later`, no parent issue, and a line `Source: <URL>` in its body, where the URL is the issue being groomed or the engineer or QA comment the point came from (not your own comment: it is not posted yet). List it under out of scope with a link to that issue, so it is clear what was moved and where it went. The body of a follow-up states its reason in words, has at least one criterion that a result can show (not a criterion "to be groomed later"), and gets a native blocker link (`gh issue edit <n> --add-blocked-by <m>`) for every "needs #m" line. A follow-up never gets the label `needs-owner`, with one exception: a fix issue under "A tool problem that an issue can fix" whose fix edits `.claude/hooks/`, the project settings files in `.claude/`, or `QA_SANDBOX` in `scripts/qa-codex`.
 
 When the issue is a sub-issue of a stage issue (label `stage`), read the stage issue (`## Purpose`, `## Background`) as context before you groom.
 
@@ -64,6 +67,17 @@ Example criterion:
 > - deny: `cp notes.csv ledger/2026.csv`
 >
 > Accepted false denies: a `tallyctl` call in a pipe or a subshell, or with a flag not listed above, may be denied without a QA FAIL.
+
+## Criteria QA can check
+
+QA has no GitHub access. QA works from the checkout, the newest `## Engineer: DONE` comment and the state files that the QA wrapper writes. Write every criterion so QA can check it from these. Do not rely on these four cases; write what is given instead:
+
+- a) A fact outside QA's world (a fact on GitHub, or in an older comment, such as "follow-up issue 76 exists" or a baseline in an earlier DONE comment): the criterion says the engineer states the fact inline in `## Engineer: DONE`
+- b) A folder that git ignores (it is absent in QA's checkout): write a command that creates the data
+- c) An optional dependency group (the QA sandbox does not install it): the criterion names the group with the install command, or is changed to need no group
+- d) A browser check (the fallback QA has no browser, and the Codex sandbox may block it): write a check that needs no browser, or the criterion says QA does not repeat it
+
+Do not write a criterion about telling the owner something. A result cannot show it.
 
 ## Permissions
 
