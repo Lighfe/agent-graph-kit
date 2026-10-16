@@ -336,6 +336,17 @@ Create the four labels with the labels step of [Start a new project](#start-a-ne
 3. Run `/agk:hook-activation-check` before the first issue gets the label `ready`. If a line says `FAILED`, the loop does not start.
 4. Final step: plan the first stage with `/stage-start`, as in the last step of [Start a new project](#start-a-new-project).
 
+## Update the plugin in a project
+
+A project with the plugin gets a new kit version in two commands, run in a terminal in the project folder:
+
+```bash
+claude plugin marketplace update agent-graph-kit
+claude plugin update agk@agent-graph-kit --scope project
+```
+
+The kit raises the plugin version once per stage, so a new version is a released stage. If the answer is "already at the latest version" although the kit repo has a newer released version, remove the cached copy of the plugin (the folder of `agk` under the plugin cache in your Claude Code user folder, usually `~/.claude/plugins/cache/`) and run `claude plugin install agk@agent-graph-kit --scope project`.
+
 ## Update the kit in a project
 
 The kit still changes (new hooks, role rules, QA launcher fixes). A project does not get these changes by itself: you copy them in by hand. In the paint-math demo this was needed several times during the run, for example for the QA launcher fix of [#67](https://github.com/Lighfe/agent-graph-kit/issues/67) and [#68](https://github.com/Lighfe/agent-graph-kit/issues/68).

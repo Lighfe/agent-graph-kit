@@ -12,9 +12,14 @@ The hand-written files are `plugin/.claude-plugin/plugin.json`, `plugin/hooks/ho
 
   scripts/build_plugin.py          write the copies
   scripts/build_plugin.py --check  list copies that differ from the source, exit 1 when any
+  scripts/build_plugin.py --hash   print the plugin hash (issue #187)
+  scripts/build_plugin.py --release-status  print `released` or `unreleased changes`, exit 0
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -34,6 +39,8 @@ HAND_TEMPLATES = {"AGENTS.md.tmpl", "CLAUDE.md.tmpl", "scripts/qa-codex"}  # wri
 BIN_FILES = {"scripts/qa-codex": "qa-codex-launcher", "scripts/codex_exec.py": "codex_exec.py",
              "scripts/qa-result.schema.json": "qa-result.schema.json"}
 IGNORED = {"__pycache__", ".pytest_cache"}
+RELEASE_FILE = ROOT / "scripts" / "plugin-release.json"
+VERSION_LINE = re.compile(rb'^[ \t]*"version"[ \t]*:.*\r?\n', re.M)
 
 
 def _tree(base: Path) -> dict[str, bytes]:
@@ -106,11 +113,45 @@ def build() -> None:
             shutil.copy2(src, dst)
 
 
+def plugin_hash(plugin: Path = PLUGIN) -> str:
+    """sha256 over each file under `plugin` (relative path and bytes, sorted path order).
+
+    Skips `__pycache__` folders and `.pyc` files. `plugin.json` is read without its `version` line,
+    so a version bump alone does not change the hash (issue #187)."""
+    h = hashlib.sha256()
+    for p in sorted(plugin.rglob("*"), key=lambda q: q.relative_to(plugin).as_posix()):
+        rel = p.relative_to(plugin)
+        if not p.is_file() or "__pycache__" in rel.parts or p.suffix == ".pyc":
+            continue
+        data = p.read_bytes()
+        if rel.as_posix() == ".claude-plugin/plugin.json":
+            data = VERSION_LINE.sub(b"", data)
+        h.update(rel.as_posix().encode() + b"\0" + data + b"\0")
+    return h.hexdigest()
+
+
+def release_status(plugin: Path = PLUGIN, release_file: Path = RELEASE_FILE) -> str:
+    """`released` when version and hash match the stored file, else `unreleased changes`."""
+    try:
+        stored = json.loads(release_file.read_text())
+        version = json.loads((plugin / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        return "unreleased changes"
+    same = stored.get("version") == version and stored.get("sha256") == plugin_hash(plugin)
+    return "released" if same else "unreleased changes"
+
+
 def main(argv: list[str]) -> int:
     if argv == ["--check"]:
         diffs = differences()
         print("\n".join(diffs) if diffs else "plugin copies match the v1 sources")
         return 1 if diffs else 0
+    if argv == ["--hash"]:
+        print(plugin_hash())
+        return 0
+    if argv == ["--release-status"]:
+        print(release_status())
+        return 0
     if argv:
         print(__doc__)
         return 2
