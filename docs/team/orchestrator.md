@@ -100,6 +100,7 @@ The planner prompt always has a section `Run notes`. It covers the current sessi
 - auto mode classifier denies
 - outages: `## Launch not started: …` and `## Launch stopped by outage: …` receipts
 - collisions
+- the number of `## QA: UNAVAILABLE` results of the stage, in one line (for example "QA: UNAVAILABLE 3 times in this stage")
 - anything else unusual in the run
 
 When nothing happened, the section says so in one line, for example "Nothing unusual in this run."

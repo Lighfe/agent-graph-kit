@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -97,6 +98,8 @@ class QaEnv:
             "FAKE_CODEX_PID": str(tmp / "child.pid"),
             "FAKE_TOOL_LOG": str(tmp / "tools.log"),
             "QA_CODEX_TIMEOUT": "1",
+            "QA_CODEX_LIMIT_FILE": str(tmp / "limit-state" / "reset"),
+            "TZ": "UTC",
         }
         for key, value in env.items():
             monkeypatch.setenv(key, value)
@@ -314,6 +317,108 @@ def test_unavailable_reason(qa_env):
     assert "You've hit your usage limit" in comment
     assert "OpenAI Codex" not in comment
     assert len(qa_env.calls("codex")) == 1
+
+
+# --- usage limit reset time (#203) -----------------------------------------------------
+
+
+def _at(text):
+    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+
+
+def _clock(monkeypatch, text):
+    monkeypatch.setattr(qa, "_now", lambda: _at(text))
+
+
+def _limit_file():
+    return Path(os.environ["QA_CODEX_LIMIT_FILE"])
+
+
+def test_usage_limit_with_date_time_is_stored_and_named(qa_env, monkeypatch):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    comment, _ = qa_env.run(["unavailable"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "2026-09-27 11:06" in comment
+    assert _limit_file().read_text().strip() == "2026-09-27T11:06:00+00:00"
+
+
+def test_usage_limit_with_time_only_is_stored_and_named(qa_env, monkeypatch):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    comment, _ = qa_env.run(["limit_time"])
+    assert "2026-09-26 15:26" in comment
+    assert _limit_file().read_text().strip() == "2026-09-26T15:26:00+00:00"
+
+
+def test_time_only_after_the_clock_time_means_tomorrow(monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    when = codex_exec.parse_reset_time("You've hit your usage limit. Try again at 3:26 PM.",
+                                       _at("2026-09-26T16:00:00"))
+    assert when == _at("2026-09-27T15:26:00")
+
+
+def test_state_file_holds_only_the_reset_time(qa_env, monkeypatch):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    qa_env.run(["limit_time"])
+    assert re.fullmatch(r"[0-9T:+\-]+\n?", _limit_file().read_text())
+
+
+def test_known_limit_posts_unavailable_without_codex(qa_env, monkeypatch):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    qa_env.run(["limit_time"])
+    before = len(qa_env.calls("codex"))
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "2026-09-26 15:26" in comment
+    assert "Codex was not started" in comment
+    assert len(qa_env.calls("codex")) == before
+
+
+def test_codex_runs_again_after_the_reset_time_and_state_is_cleared(qa_env, monkeypatch):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    qa_env.run(["limit_time"])
+    _clock(monkeypatch, "2026-09-26T15:27:00")
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert not _limit_file().exists()
+
+
+@pytest.mark.parametrize("mode", ["limit_notime", "limit_badtime"])
+def test_limit_without_a_usable_time_stores_nothing(qa_env, monkeypatch, mode):
+    time.tzset()
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    comment, _ = qa_env.run([mode])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert not _limit_file().exists()
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+
+
+def test_missing_state_file_runs_codex(qa_env):
+    assert not _limit_file().exists()
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+
+
+@pytest.mark.parametrize("content", ["not a time", "", "2026-09-30T10:00:00", "\xff\xfe"])
+def test_corrupt_state_file_runs_codex(qa_env, monkeypatch, content):
+    _clock(monkeypatch, "2026-09-26T12:00:00")
+    _limit_file().parent.mkdir(parents=True)
+    _limit_file().write_bytes(content.encode("latin-1"))
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+
+
+def test_unreadable_state_file_runs_codex(qa_env, monkeypatch):
+    _limit_file().parent.mkdir(parents=True)
+    _limit_file().mkdir()  # a directory cannot be read as a file
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
 
 
 def test_codex_not_installed_is_unavailable(qa_env):

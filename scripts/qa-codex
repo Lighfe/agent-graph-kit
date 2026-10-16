@@ -777,6 +777,10 @@ def write_github_state(folder: Path, repo: Path, number: int, labels, start: str
     return (start, end), ""
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _env_int(name: str, default: int) -> int:
     value = os.environ.get(name, "")
     return int(value) if value.strip() else default
@@ -869,6 +873,14 @@ def _main(argv: list[str], sleep) -> int:
     if start is None:
         return post(INVALID, reason)
 
+    # A known usage limit (#203): no Codex run until the reset time, so the fallback QA starts at once.
+    reset = codex_exec.read_limit()
+    if reset is not None:
+        if reset > _now():
+            return post(UNAVAILABLE, "Codex usage limit reached, resets "
+                                     f"{codex_exec.format_reset_time(reset)}; Codex was not started")
+        codex_exec.clear_limit()
+
     tmp = Path(tempfile.mkdtemp(prefix="qa-codex-"))
     worktree = tmp / "worktree"
     try:
@@ -903,6 +915,10 @@ def _main(argv: list[str], sleep) -> int:
                     break
                 status, reason = "invalid_output", "output does not match the schema: " + "; ".join(errors)
             if status == "unavailable":
+                when = codex_exec.parse_reset_time(reason, _now())
+                if when is not None and when > _now():
+                    codex_exec.write_limit(when)
+                    reason += f" (usage limit resets {codex_exec.format_reset_time(when)})"
                 return post(UNAVAILABLE, reason, retries=retries)
             if status not in LIMITS or used[status] >= LIMITS[status]:
                 return post(INVALID, reason, retries=retries)

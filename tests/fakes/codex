@@ -73,6 +73,9 @@ n = int(env("FAKE_CODEX_N", "2"))
 ERRORS = {
     "transient": "We're currently experiencing high demand, which may cause temporary errors.",
     "unavailable": "You've hit your usage limit. Try again at Sep 27th, 2026 11:06 AM.",
+    "limit_time": "You've hit your usage limit. Try again at 3:26 PM.",
+    "limit_notime": "You've hit your usage limit. Try again later.",
+    "limit_badtime": "You've hit your usage limit. Try again at 25:99 XM.",
     "nologin": ("unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, "
                 "url: https://api.openai.com/v1/responses, cf-ray: <redacted>, request id: <redacted>"),
     "unknown": ('{\n  "type": "error",\n  "error": {\n    "type": "invalid_request_error",\n'

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -223,6 +224,101 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
         return CodexRun("ok", data, "")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- the usage limit reset time (#203) ------------------------------------------------------------
+# When Codex says the usage limit is reached and names a reset time, the launcher remembers the time
+# in a small local file outside the git tree and skips the failed Codex call until then. The file holds
+# only the reset time (an ISO 8601 UTC timestamp), never output text.
+LIMIT_FILE_ENV = "QA_CODEX_LIMIT_FILE"
+_USAGE_LIMIT = re.compile(r"You've hit your usage limit", re.IGNORECASE)
+_TRY_AGAIN = re.compile(r"try again at ([^\n]*)", re.IGNORECASE)
+_DATE_TIME = re.compile(r"^([A-Za-z]{3})[A-Za-z]*\.? (\d{1,2})(?:st|nd|rd|th)?,? (?:(\d{4}),? )?"
+                        r"(\d{1,2}):(\d{2}) ?([AaPp][Mm])$")
+_TIME_ONLY = re.compile(r"^(\d{1,2}):(\d{2}) ?([AaPp][Mm])$")
+
+
+def _hour24(hour: int, meridiem: str) -> int | None:
+    if not 1 <= hour <= 12:
+        return None
+    return hour % 12 + (12 if meridiem.lower() == "pm" else 0)
+
+
+def parse_reset_time(text: str, now: datetime) -> datetime | None:
+    """The reset time of a usage limit message, as an aware datetime, or None. Local time of this
+    machine; a time-only value is the next occurrence of that clock time after `now`; a date without
+    a year is the next occurrence of that date. None for no usage limit, no time or an unparseable time."""
+    if not _USAGE_LIMIT.search(text):
+        return None
+    m = _TRY_AGAIN.search(text)
+    if m is None:
+        return None
+    value = " ".join(m.group(1).split()).rstrip(".").strip()
+    local_now = now.astimezone()
+    try:
+        d = _DATE_TIME.match(value)
+        if d is not None:
+            month = datetime.strptime(d.group(1).title(), "%b").month
+            hour = _hour24(int(d.group(4)), d.group(6))
+            if hour is None:
+                return None
+            if d.group(3):
+                return datetime(int(d.group(3)), month, int(d.group(2)), hour, int(d.group(5))).astimezone()
+            for year in (local_now.year, local_now.year + 1):
+                found = datetime(year, month, int(d.group(2)), hour, int(d.group(5))).astimezone()
+                if found > local_now:
+                    return found
+            return None
+        t = _TIME_ONLY.match(value)
+        if t is not None:
+            hour = _hour24(int(t.group(1)), t.group(3))
+            if hour is None:
+                return None
+            found = local_now.replace(hour=hour, minute=int(t.group(2)), second=0, microsecond=0)
+            if found <= local_now:
+                found = (found.replace(tzinfo=None) + timedelta(days=1)).astimezone()
+            return found
+    except ValueError:
+        return None
+    return None
+
+
+def format_reset_time(when: datetime) -> str:
+    return when.astimezone().strftime("%Y-%m-%d %H:%M %z")
+
+
+def limit_file() -> Path:
+    custom = os.environ.get(LIMIT_FILE_ENV)
+    if custom:
+        return Path(custom)
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "agent-graph-kit" / "codex-usage-reset"
+
+
+def read_limit() -> datetime | None:
+    """The stored reset time, or None for a missing, unreadable or corrupt file."""
+    try:
+        when = datetime.fromisoformat(limit_file().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError, UnicodeError, RuntimeError):
+        return None
+    return when if when.tzinfo is not None else None
+
+
+def write_limit(when: datetime) -> None:
+    """Store the reset time. A failed write is ignored: the next run just calls Codex."""
+    try:
+        path = limit_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(when.astimezone(timezone.utc).isoformat() + "\n", encoding="utf-8")
+    except (OSError, RuntimeError):
+        pass
+
+
+def clear_limit() -> None:
+    try:
+        limit_file().unlink()
+    except (OSError, RuntimeError):
+        pass
 
 
 def _kill_group(p: subprocess.Popen) -> None:
