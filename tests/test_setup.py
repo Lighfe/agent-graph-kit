@@ -470,3 +470,12 @@ def test_skill_and_readme_describe_the_trust_command():
     skill = (SETUP.parent / "SKILL.md").read_text()
     assert "fenced block" in skill and "project folder only" in skill
     assert "prints one command" in README and "project folder only" in README
+
+
+def test_generated_agents_md_makes_no_false_claim_about_agents_or_skills_link(project, tmp_path):
+    r = run(project, tmp_path)
+    assert r.returncode == 0, r.stderr
+    agents = (project / "AGENTS.md").read_text()
+    assert ".claude/agents" not in agents
+    assert "symlink" not in agents and ".claude/skills" not in agents
+    assert "come from the agk plugin" in agents and "`docs/team/`" in agents

@@ -21,8 +21,8 @@ Test command: {{TEST_COMMAND}}. Never report tests as passed if no test ran.
 
 ## Skills and subagents
 
-- Project skills go to `.agents/skills/<name>/SKILL.md`. `.claude/skills` is a symlink to `.agents/skills`.
-- Subagent definitions go to `.claude/agents/`. They point to the role files in `docs/team/`.
+- Project skills go to `.agents/skills/<name>/SKILL.md`.
+- The subagents (`agk:planner`, `agk:pm`, `agk:software-engineer`, `agk:qa-engineer`) come from the agk plugin. The role files they follow are in `docs/team/`.
 - When the owner asks for a Codex review, use the `codex-review` skill.
 
 ## Rules
