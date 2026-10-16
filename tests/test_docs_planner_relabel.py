@@ -126,4 +126,4 @@ def test_relabel_still_only_after_confirmation():
     assert "The sub-issues carry `later` until the owner confirms the stage." in intake
     assert "When the owner confirms in the session: on each sub-issue, remove `later` and add `ready`" in intake
     assert "Without confirmation: the sub-issues stay `later`." in intake
-    assert "7. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them" in setup
+    assert "9. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them" in setup

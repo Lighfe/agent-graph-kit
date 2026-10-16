@@ -74,11 +74,13 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
    - Fill in the `Permissions:` line of each issue. Name every entry that is not `none` to the owner before the owner confirms the stage. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Add the issues to the stage as sub-issues, in execution order: `gh issue edit <stage> --add-sub-issue <n>`
 7. Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
-8. Ask the owner to confirm the stage and to validate its purpose
+8. Replace sibling references: after the last issue is filed, replace every "task N" / "Task N" reference to a sibling issue (the number in the plan) by `#<issue number>` in the issue bodies. Write each changed body to its own body file and run `gh issue edit <n> --body-file <path>` (see "Body files"). Do this before the label check and before the owner is asked to confirm
+9. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you go on
+10. Ask the owner to confirm the stage and to validate its purpose
 
 The sub-issues carry `later` until the owner confirms the stage.
 
-- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then end with the last line of "Stage set-up" below; for an intake reached from stage set-up, first follow "Intake reached from stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
+- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then check the labels again: every sub-issue has `ready` and no `later`, and the stage issue has no `ready`. If the stage issue has `ready`, remove it (`gh issue edit <stage> --remove-label ready`) and tell the owner. Then end with the last line of "Stage set-up" below; for an intake reached from stage set-up, first follow "Intake reached from stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
 - Without confirmation: the sub-issues stay `later`. Say so, and end
 
 Intake reached from stage set-up: this part applies only when you came to "Intake" from "Stage set-up" step 3 (the owner chose no option of a stage review). A fresh intake, with no stage review, skips it.
@@ -103,7 +105,9 @@ Steps, in this order:
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
    - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions. Add ` - set` to an entry only when the owner says in the session that it is set
 6. Set the order: the add order, or `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
-7. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). If a relabel is denied, follow the rule "Denied relabel" below
+7. Replace sibling references: replace every "task N" / "Task N" reference to a sibling issue by `#<issue number>` in the issue bodies, with `gh issue edit <n> --body-file <path>` and the rules of "Body files". Do this before the label check and before the owner is asked to confirm
+8. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue, also an existing issue linked in step 5): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you ask the owner to confirm the stage
+9. Only after the owner has chosen and, when step 5 named permissions, has confirmed the stage with them: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). If a relabel is denied, follow the rule "Denied relabel" below. Then check the labels again: every sub-issue has `ready` and no `later`, and the stage issue has no `ready`. If the stage issue has `ready`, remove it (`gh issue edit <stage> --remove-label ready`) and tell the owner
 
 Then:
 
@@ -130,14 +134,14 @@ N is the number of the new stage issue. A session switches from planner to orche
 
 ### Denied relabel
 
-This rule applies to the relabel from `later` to `ready` in "Intake" and in "Stage set-up" step 7. It follows the rule "Denied action" in `## Rules` of `docs/process.md`, adapted to the main session: post no issue comment for it, and tell the owner in the session.
+This rule applies to the relabel from `later` to `ready` in "Intake" and in "Stage set-up" step 9. It follows the rule "Denied action" in `## Rules` of `docs/process.md`, adapted to the main session: post no issue comment for it, and tell the owner in the session.
 
 - A deny with a verdict (for example the Auto mode classifier judgment "External System Writes", or `Permission denied`): quote the deny message, with secrets redacted. Name each sub-issue that still has `later`, with its exact relabel command `gh issue edit <n> --remove-label later --add-label ready`. Point to entry 3 in the README subsection "Auto mode allow entries". Then wait for the owner. Do not retry in a loop, and do not try another command form
 - When only some relabels were denied, name only the sub-issues that still have `later`
 - When the owner says the labels are set by hand: check the labels of every sub-issue of the stage (`gh issue view <n> --json labels`)
 - When the owner has set entry 3 and asks for a retry: run the relabel again once on each sub-issue that still has `later`, then check the labels of every sub-issue of the stage as above
 - If any sub-issue still has `later` or lacks `ready` after the check, name those sub-issues again and wait for the owner
-- When every sub-issue has `ready`, go on where the step left off: in "Stage set-up" with the steps under "Then" and the last line; in "Intake" with the last line of "Stage set-up" (for an intake reached from stage set-up, first the steps under "Then", as in "Intake reached from stage set-up")
+- When every sub-issue has `ready`, run the second label check (no `ready` on the stage issue; if it has `ready`, remove it and tell the owner), then go on where the step left off: in "Stage set-up" with the steps under "Then" and the last line; in "Intake" with the last line of "Stage set-up" (for an intake reached from stage set-up, first the steps under "Then", as in "Intake reached from stage set-up")
 - An outage deny (the reason's first line starts with `Classifier unavailable`, `Auto mode could not evaluate this action and is blocking it for safety` or `Auto mode unavailable`): say that it is an Auto mode outage, do not point to the allow entry, and retry the relabel only when the owner asks
 
 ## Stage review
