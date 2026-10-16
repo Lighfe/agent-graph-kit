@@ -40,6 +40,15 @@ Read the entries one by one; never count them with `--jq 'length'` on a paginate
 - No qualifying stage issue: no stage is active for the whole run. Pick as above (any `ready` issue without an open blocker). Do not look for a stage again during the run.
 - Two or more qualifying stage issues: stop the loop and ask the owner.
 
+A stage issue never has the label `ready`. At the start of a `/goal` run, before you find the active stage, remove `ready` from each open stage issue that has it:
+
+```
+gh issue list --state open --label stage --label ready --json number --jq '.[].number'
+gh issue edit <n> --remove-label ready
+```
+
+Name each such issue in the final report as a stage issue with a wrong label. When no open stage issue has `ready`, do nothing.
+
 While a stage is active, a `ready` issue that is not a sub-issue of the active stage is never picked, also when the stage has no eligible sub-issue left. List it in the final report.
 
 An eligible sub-issue is open, has `ready`, has neither `later` nor `needs-owner`, and has no open blocker.
@@ -272,7 +281,7 @@ For an escalated issue:
 
 For the whole loop:
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the active stage has open sub-issues, none of them eligible, and the loop stopped, or the loop stopped because `git status --porcelain` was not empty
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner -label:stage"` shows no issue without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed) and the stage review was posted or the stage issue was escalated, or the active stage has open sub-issues, none of them eligible, and the loop stopped, or the loop stopped because `git status --porcelain` was not empty
 - Your final message lists the closed issues, the escalated issues with the reason, the `ready` issues skipped for an open blocker with their open blockers (mark each open blocker that has the label `needs-owner`, for example `#<number> (needs-owner)`, so the owner sees a fix issue that waits for them), the `ready` issues not picked because they are not sub-issues of the active stage, the promoted parked blockers, and the reason if the loop stopped early
 - When the stage review was posted (in this run or earlier), your final message has "Stage #<N> is finished", the URL of the stage review comment, and this exact sentence: "Start the next session with `/stage-start`."
 - When the stage issue was escalated instead, your final message names the stage issue and the reason

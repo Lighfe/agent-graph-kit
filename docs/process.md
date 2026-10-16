@@ -50,10 +50,10 @@ The planner (the main session, started with `/stage-start`) does intake and stag
 6. On FAIL, back to step 3 with the QA comment as input
 7. On `## QA: UNVERIFIABLE`, back to step 2 (PM) with the QA comment as input
 8. On PASS, close the issue
-9. Repeat until every open issue with the label `ready` has an open blocker, or none is left, or the active stage has ended, or the active stage has open sub-issues, none of them eligible
+9. Repeat until every open issue with the label `ready` (stage issues are not counted) has an open blocker, or none is left, or the active stage has ended, or the active stage has open sub-issues, none of them eligible
 10. When the active stage has ended, the orchestrator launches the planner for the stage review on the stage issue, and then stops (see "Stage end" below)
 
-Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker, or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below) and the loop stopped after the stage review (or after the stage issue was escalated), or the active stage has open sub-issues, none of them eligible, and the loop stopped.
+Stop condition for `/goal`: no open issue with the label `ready` is without an open blocker (stage issues are not counted among the `ready` issues for this clause), or the active stage has ended (every entry of its non-empty sub-issue list is closed, see "Stage end" below) and the loop stopped after the stage review (or after the stage issue was escalated), or the active stage has open sub-issues, none of them eligible, and the loop stopped.
 
 ## Stages
 
