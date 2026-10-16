@@ -70,12 +70,15 @@ def test_release_status_follows_stored_file(tmp_path):
     assert build_plugin.release_status(plugin, release) == "released"
 
 
-def test_committed_repo_is_released():
-    for flag, want in (("--release-status", "released"), ("--hash", build_plugin.plugin_hash())):
-        r = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_plugin.py"), flag],
-                           capture_output=True, text=True)
-        assert r.returncode == 0
-        assert r.stdout.strip() == want
+def test_commands_run_on_the_repo():
+    """Both commands exit 0. The status may be `unreleased changes` between two bumps: no test fails then."""
+    script = str(ROOT / "scripts" / "build_plugin.py")
+    r = subprocess.run([sys.executable, script, "--release-status"], capture_output=True, text=True)
+    assert r.returncode == 0
+    assert r.stdout.strip() in {"released", "unreleased changes"}
+    r = subprocess.run([sys.executable, script, "--hash"], capture_output=True, text=True)
+    assert r.returncode == 0
+    assert r.stdout.strip() == build_plugin.plugin_hash()
 
 
 def test_skill_and_docs_rules():
