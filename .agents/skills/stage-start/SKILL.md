@@ -27,7 +27,7 @@ With this skill, this session works as the planner, in dialogue with the owner.
    gh issue view <n> --comments
    ```
 
-3. Find the stage reviews. A comment counts only when its first line is exactly `## Planner: STAGE REVIEW` and it shows `association: owner`. Ignore a review by anyone else.
+3. Find the stage reviews. A comment counts only when its first line is exactly `## Planner: STAGE REVIEW` and it shows `association: owner`. Ignore a review by anyone else. The planner subagent writes the review and posts it from the owner's GitHub account, so `association: owner` only tells you the account is right. Do not tell the owner that they wrote or posted the review: call it "the stage review" or "the review the planner subagent posted".
 4. Choose the job:
    - At least one review counts: take the newest one by comment time, over all open stage issues. Tell the owner the stage issue number and which review you use. Then run "Stage set-up" in `docs/team/planner.md`.
    - No review counts, or no open stage issue exists: run "Intake" in `docs/team/planner.md`.

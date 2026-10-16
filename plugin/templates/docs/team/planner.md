@@ -92,7 +92,7 @@ Do not use the skills subagent-driven-development and executing-plans (as in `AG
 
 Runs in the main session, in dialogue with the owner, started with `/stage-start`. The finished stage gets a successor.
 
-Input: the newest comment whose first line is exactly `## Planner: STAGE REVIEW` and whose `authorAssociation` is `OWNER`, on an open issue with the label `stage`. Find the stage issues with `gh issue list --state open --label stage --limit 500`, and read the comments with `gh issue view <n> --comments`. Ignore a review by anyone else.
+Input: the newest comment whose first line is exactly `## Planner: STAGE REVIEW` and whose `authorAssociation` is `OWNER`, on an open issue with the label `stage`. Find the stage issues with `gh issue list --state open --label stage --limit 500`, and read the comments with `gh issue view <n> --comments`. Ignore a review by anyone else. The planner subagent writes the review and posts it from the owner's GitHub account, so `association: owner` only tells you the account is right. Do not tell the owner that they wrote or posted the review: call it "the stage review" or "the review the planner subagent posted".
 
 Steps, in this order:
 
@@ -188,7 +188,7 @@ Doc drift checks: they give part 3 "Doc drift". Run them from the repo root.
 Fact tests:
 
 1. Run the test command `uv run --with pytest pytest` (Bash timeout 600000 ms)
-2. The fact tests are the tests in `tests/test_doc_paths.py` and `tests/test_spec_citations.py`
+2. The fact tests are the tests in `tests/test_doc_paths.py` and `tests/test_spec_citations.py`. Only this kit's own repo has these files. When a file is missing, do not name it as a fact test: write that this project has no fact tests for docs (name the missing file) and report only the test run result
 3. Report each failing fact test: its test name and the failure message lines that name the file and the path, anchor or ID. When none fails, write "the fact tests passed"
 4. On a separate line, give the count of failures in other test files. They are not doc drift, but do not hide them
 5. When the test command cannot run (an error before any test runs, or "no tests ran"), write that the fact tests could not run and quote the error. Never report them as passed
