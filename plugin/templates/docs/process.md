@@ -82,7 +82,7 @@ Read the stage's sub-issues:
 gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state, labels: [.labels[].name]}'
 ```
 
-Take the first eligible entry in that list order. Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
+Take the first eligible entry in that list order. Read the entries one by one; never count them with `--jq 'length'` on a paginated call. `--jq` runs once for each page, so the count would be one number for each page.
 
 - The list order is the stored position on GitHub: the add order, then every reorder. New sub-issues go to the end of the list.
 - A closed sub-issue keeps its position, so the next pick is the first open, unblocked entry of the list.

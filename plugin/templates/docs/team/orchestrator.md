@@ -30,11 +30,11 @@ A stage issue has the label `stage`; its sub-issues are the work of the stage.
 Find the active stage once, at the start of a `/goal` run, and keep it for the whole run. A qualifying stage issue is an open issue with the label `stage` that has at least one sub-issue, open or closed, with the label `ready` (closing an issue does not remove its labels). List the open stage issues, then read the sub-issues of each one with their state and labels:
 
 ```
-gh issue list --state open --label stage --json number --jq '.[].number'
+gh issue list --state open --label stage --limit 500 --json number --jq '.[].number'
 gh api --paginate 'repos/{owner}/{repo}/issues/<stage>/sub_issues' --jq '.[] | {number, state, labels: [.labels[].name]}'
 ```
 
-Read the entries one by one; never count them with `--jq 'length'` on a paginated call.
+Read the entries one by one; never count them with `--jq 'length'` on a paginated call. `--jq` runs once for each page, so the count would be one number for each page.
 
 - One qualifying stage issue: it is the active stage for the whole run, also after its last `ready` sub-issue is closed or escalated.
 - No qualifying stage issue: no stage is active for the whole run. Pick as above (any `ready` issue without an open blocker). Do not look for a stage again during the run.
@@ -43,7 +43,7 @@ Read the entries one by one; never count them with `--jq 'length'` on a paginate
 A stage issue never has the label `ready`. At the start of a `/goal` run, before you find the active stage, remove `ready` from each open stage issue that has it:
 
 ```
-gh issue list --state open --label stage --label ready --json number --jq '.[].number'
+gh issue list --state open --label stage --label ready --limit 500 --json number --jq '.[].number'
 gh issue edit <n> --remove-label ready
 ```
 
