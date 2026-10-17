@@ -96,6 +96,32 @@ An `## Engineer: BLOCKED` caused by a missing permission leads to the same `## P
 
 This is for a permission that only the owner can set outside this repo (for example a user-level Auto mode allow entry, or an account outside GitHub); when a change in this repo can grant it (the project settings files, the hooks or the QA sandbox arguments), file or link the fix issue and post `## PM: WAITING`, as "A tool problem that an issue can fix" below says.
 
+## Add the plugin bump task
+
+Check this while you groom, before `## PM: GROOMED`. It applies when the issue is a sub-issue of a stage issue (label `stage`; find the stage with `gh api repos/{owner}/{repo}/issues/<n> --jq .parent_issue_url`, empty when there is none) and it changes anything under `plugin/` or its sources (`docs/team/`, `docs/checks/`, the hand-written template files, `scripts/build_plugin.py`). Decide this from the Files/Constraints and the criteria of the issue. Treat an unclear case as a change.
+
+Add nothing when:
+
+- the issue is not a sub-issue of a stage
+- the issue does not change the plugin
+- the issue is itself the task "Bump the plugin version"
+- the stage has an open sub-issue titled "Bump the plugin version" and it is already the last sub-issue (if it is not last, only move it, see below)
+
+When the stage has no open bump task (also when its earlier bump task is closed):
+
+1. File the sub-issue "Bump the plugin version" in `docs/task-template.md` format. Its body points to `.agents/skills/bump-plugin-version/SKILL.md`. Give it the label `ready`
+2. Link it to the stage: `gh issue edit <stage> --add-sub-issue <n>`. A newly linked sub-issue is already last in the stage list
+
+When the stage already has an open bump task, move it behind the last other sub-issue, so it stays the last task:
+
+```
+gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id of the bump task> -F after_id=<REST id of the last other sub-issue>
+```
+
+Name the bump task in your `## PM: GROOMED` comment: its number, and whether you added it or moved it.
+
+These GitHub writes of the PM (create an issue, link it as a sub-issue, reorder, add the label `ready`) need no `Permissions:` entry on the groomed issue. A denied call of this section follows the rule "Denied action" in `docs/process.md`: post `## PM: NEEDS OWNER` and quote the deny message (redact secrets).
+
 ## A tool problem that an issue can fix
 
 Use this rule when you would post `## PM: NEEDS OWNER` only because of a tool problem:
