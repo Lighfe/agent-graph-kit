@@ -206,8 +206,8 @@ Fact tests:
 
 Prompt audit:
 
-1. Run `claude -p "/doctor prompt-audit"` and then `claude -p "/doctor prompt-audit docs/"` (Bash timeout 600000 ms each)
-2. List their findings: file, line, and what the audit says
+1. Run `claude -p "/doctor prompt-audit"` and then `claude -p "/doctor prompt-audit docs/"` (Bash timeout 600000 ms each). Write the output of each run to its own file, a path in `/tmp` with the stage number, and read the whole file before the review lists findings. Never list findings from a cut-off tail of the output
+2. List their findings: file, line, and what the audit says. A finding that an earlier stage review or an open issue already has is listed as "known", with that issue or review named, not as new
 3. Apply none of the edits that the audit proposes
 4. Run `git status --porcelain` after the two runs. When the output is not empty, name the changed files in the review. Do not clean them up
 5. When a run fails or times out, report it under "Doc drift" as "could not run" and quote the message, with secrets redacted
