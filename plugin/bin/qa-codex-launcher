@@ -85,6 +85,8 @@ QA_SANDBOX = [
 # the reviewed project and may run its build backend. Everything else of the project runs only in the sandbox.
 UV_CACHE = "uv-cache"
 UV_SYNC = ["uv", "sync", "--frozen"]
+GROUP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+QA_GROUPS_LINE = re.compile(r"^QA groups:(.*)$", re.MULTILINE)
 UV_FILL = ["uv", "run", "--no-project", "--no-config", "--with", "pytest", "pytest", "--version"]
 DEFAULT_TIMEOUT_S = 1800
 DEFAULT_PRESTEP_TIMEOUT_S = 1800
@@ -465,12 +467,35 @@ def pre_step(worktree: Path, timeout_s: int, uv_cache: Path | None = None) -> st
             if error is not None:
                 return error
     if uv_cache is not None:
+        locked = (worktree / "uv.lock").is_file()
+        groups, bad = qa_groups(worktree) if locked else ([], None)
+        if bad is not None:
+            return bad
         env = {**os.environ, "UV_CACHE_DIR": str(uv_cache)}
         error = step(UV_FILL, worktree.parent, env)
-        if error is None and (worktree / "uv.lock").is_file():
-            error = step(UV_SYNC, worktree, env)
+        if error is None and locked:
+            error = step(UV_SYNC + [a for g in groups for a in ("--group", g)], worktree, env)
         return error
     return None
+
+
+def qa_groups(worktree: Path) -> tuple[list[str], str | None]:
+    """The optional dependency groups for `uv sync`, from the first line `QA groups: a, b` at the start
+    of a line in the `AGENTS.md` of the checkout. The line is untrusted text (the pre-step runs
+    outside the sandbox on a commit under review): a name that does not match `GROUP_NAME` gives
+    ([], the reason for `## QA: UNAVAILABLE`). The names go to uv as separate arguments."""
+    try:
+        text = (worktree / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], None
+    found = QA_GROUPS_LINE.search(text)
+    if found is None:
+        return [], None
+    names = [n.strip() for n in found.group(1).split(",") if n.strip()]
+    for name in names:
+        if not GROUP_NAME.fullmatch(name):
+            return [], f"the `QA groups:` line in AGENTS.md has a bad group name `{name}`"
+    return names, None
 
 
 def codex_env_args(uv_cache: Path | None) -> list[str]:

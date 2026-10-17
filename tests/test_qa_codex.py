@@ -2887,3 +2887,75 @@ def test_github_state_reads_come_after_the_range_checks(qa_env):
 def test_build_prompt_without_github_state_has_no_github_block():
     prompt = qa.build_prompt([CRIT_1], "b" * 40, "a" * 40)
     assert "into the folder" not in prompt and "The window starts at" not in prompt
+
+
+# --- QA groups: the optional dependency groups of the uv sync (#204) ---------------------
+
+
+def _commit_agents(env, text, lock=True):
+    """Put an `AGENTS.md` (and a `uv.lock`) into the checkout under QA."""
+    (env.repo / "AGENTS.md").write_text(text)
+    if lock:
+        (env.repo / "uv.lock").write_text("version = 1\n")
+    git(env.repo, "add", ".")
+    git(env.repo, "commit", "-q", "-m", "agents")
+    env.head = git(env.repo, "rev-parse", "HEAD")
+    env.write_issue(comments=["## Launch: engineer (attempt 1)\nAgent: software-engineer", env.done()])
+
+
+def _sync_argvs(env):
+    return [c["argv"] for c in env.calls("uv") if c["argv"][:1] == ["sync"]]
+
+
+def test_qa_groups_one_group_is_passed_to_the_sync(qa_env):
+    _commit_agents(qa_env, "# Project\n\nQA groups: train\n")
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _sync_argvs(qa_env) == [UV_SYNC + ["--group", "train"]]
+
+
+def test_qa_groups_two_groups_with_spaces(qa_env):
+    _commit_agents(qa_env, "QA groups:  train ,dev \nQA groups: other\n")  # the first line is used
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _sync_argvs(qa_env) == [UV_SYNC + ["--group", "train", "--group", "dev"]]
+
+
+@pytest.mark.parametrize("text", ["# Project\n", "QA groups:\n", "QA groups:  , \n", "  QA groups: train\n"])
+def test_qa_groups_without_a_usable_line_the_sync_is_unchanged(qa_env, text):
+    _commit_agents(qa_env, text)
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _sync_argvs(qa_env) == [UV_SYNC]
+
+
+def test_qa_groups_without_agents_md_the_sync_is_unchanged(qa_env):
+    _commit_lock(qa_env)
+    qa_env.with_uv().run(["ok"])
+    assert _sync_argvs(qa_env) == [UV_SYNC]
+
+
+def test_qa_groups_bad_name_is_unavailable_and_no_sync_runs(qa_env):
+    _commit_agents(qa_env, "QA groups: train, --index-url=x\n")
+    comment, _ = qa_env.with_uv().run(["ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: UNAVAILABLE"
+    assert "--index-url=x" in next(line for line in lines if line.startswith("Reason:"))
+    assert _sync_argvs(qa_env) == []
+    assert qa_env.calls("codex") == []
+
+
+def test_qa_groups_without_a_lock_no_sync_runs(qa_env):
+    _commit_agents(qa_env, "QA groups: train\n", lock=False)
+    comment, _ = qa_env.with_uv().run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _sync_argvs(qa_env) == []
+
+
+def test_qa_groups_failing_sync_shows_the_groups(qa_env, monkeypatch):
+    _commit_agents(qa_env, "QA groups: train\n")
+    monkeypatch.setenv("FAKE_UV_SYNC_FAIL", "1")
+    comment, _ = qa_env.with_uv().run(["ok"])
+    lines = comment.splitlines()
+    assert lines[0] == "## QA: UNAVAILABLE"
+    assert "pre-step `uv sync --frozen --group train` failed:" in next(l for l in lines if l.startswith("Reason:"))

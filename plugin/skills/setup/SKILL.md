@@ -54,6 +54,8 @@ In a repo set up with agent-graph-kit, the main session working as the planner (
 - `.agent-graph-kit.lock`: the sha256 of each file as copied (a later drift check reads it)
 - `.claude/settings.json` with only the `permissions` block, when the file does not exist. When it exists (for example after `claude plugin install --scope project`), the script merges the missing `permissions.allow` and `permissions.deny` lines into it and keeps every other entry. The plugin delivers the hooks.
 
+Optional, for a Python project with a `uv.lock` whose tests need optional dependency groups: add a line `QA groups: train, dev` (names comma separated) to the project's `AGENTS.md`. The Codex QA pre-step then runs `uv sync --frozen --group train --group dev`.
+
 ## Lovable lane
 
 The Lovable frontend lane is a separate, optional step. Do it after setup. The base kit works without it. This skill does not do it.
