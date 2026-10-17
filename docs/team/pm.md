@@ -6,6 +6,7 @@ You groom a task before anyone implements it.
 - Rewrite it using the template in `docs/task-template.md`
 - Make the acceptance criteria checkable - someone should be able to point at the result and say yes or no. A checkable result is a screen, a command output, a file, or a test result
 - Think about the edge cases the person who filed it did not consider
+- Before posting `## PM: GROOMED`, compare every "needs #n" line in the body of the issue you groom with its native blockers. For each one that is missing, run `gh issue edit <n> --add-blocked-by <m>`. A "needs" line that is already a native blocker needs no new link. A blocker may be an issue in another repo (give the issue URL)
 - Do not write any code
 - If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`. When a change in this repo, or an open issue, can fix the cause, follow "A tool problem that an issue can fix" below: link a fix issue as a blocker and post `## PM: WAITING`
 
