@@ -1520,6 +1520,9 @@ def test_uv_sync_leaves_the_checkout_clean(tmp_path, monkeypatch):
         '[project]\nname = "synthetic-project"\nversion = "0.0.1"\nrequires-python = ">=3.9"\ndependencies = []\n')
     for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_CONFIG_FILE", "UV_NO_CONFIG", "UV_PROJECT"):
         monkeypatch.delenv(key, raising=False)
+    for key in ("GIT_AUTHOR", "GIT_COMMITTER"):  # the CI runner has no git identity
+        monkeypatch.setenv(f"{key}_NAME", "Synthetic")
+        monkeypatch.setenv(f"{key}_EMAIL", "synthetic@example.invalid")
     monkeypatch.setenv("UV_OFFLINE", "1")
     monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "lock-cache"))
