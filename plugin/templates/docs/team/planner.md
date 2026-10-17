@@ -69,24 +69,25 @@ Runs in the main session, in dialogue with the owner, started with `/stage-start
 1. Brainstorm the idea with the owner (superpowers skill brainstorming)
 2. Write the spec to `docs/specs/`
 3. Write the plan (superpowers skill writing-plans) to `docs/plans/`
-4. Write one stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. Never add `ready` to it. The `## Background` of the stage issue holds a coverage table with one row per requirement or section of the spec. Each row gives the number of the issue that covers it (`#<n>`), or "not in this stage" with the reason. Fill in the issue numbers after the issues are filed
-5. File each plan task as one issue in `docs/task-template.md` format, with the label `later`
+4. Commit the spec and the plan: `git add <spec path> <plan path>` (the two exact paths you wrote, under `docs/specs/` and `docs/plans/`), then `git commit` with the message `Spec and plan for <name>`. The stage number is not known yet, so the message has none. Add no other file. Do not push. Do not ask the owner: this commit is part of your job
+5. Write one stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. Never add `ready` to it. The `## Background` of the stage issue holds a coverage table with one row per requirement or section of the spec. Each row gives the number of the issue that covers it (`#<n>`), or "not in this stage" with the reason. Fill in the issue numbers after the issues are filed
+6. File each plan task as one issue in `docs/task-template.md` format, with the label `later`
    - Each issue states the interfaces, the cases and the names it needs in its own body. The plan may be linked as background only
    - Fill in the `Permissions:` line of each issue. Name every entry that is not `none` to the owner before the owner confirms the stage
    - For each entry that is not `none` and is a write by an agent to a system outside the repo files (for example editing other issues), print a ready-to-paste Auto mode entry text. The entry is narrow: it names the subagent, the exact command form, the issue numbers and the reason. Say where to add it: `/permissions`, the Auto mode tab, keep `$defaults`; the output of `/agk:setup` (plugin project) or the README (kit repo) shows the form
    - Ask the owner a separate question for each such entry: "Is this entry added?" A confirmation of the stage does not count as the answer. Add ` - set` to the entry only after the owner answers that the entry is added. If the owner says it is not added, or does not answer, leave the sub-issue with `later`, do not relabel it, and do not add ` - set`
    - Tell the owner the entry is temporary: the stage review lists ` - set` entries for removal, and you name the entry again there if it is still in place
-6. Add the issues to the stage as sub-issues, in execution order: `gh issue edit <stage> --add-sub-issue <n>`
-7. Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
-8. Replace sibling references: after the last issue is filed, replace every "task N" / "Task N" reference to a sibling issue (the number in the plan) by `#<issue number>` in the issue bodies. Write each changed body to its own body file and run `gh issue edit <n> --body-file <path>` (see "Body files"). Do this before the label check and before the owner is asked to confirm
-9. Read every filed issue body. A body that says "implement Task N of the plan" (or the same in other words) without that content in the body is rewritten with `gh issue edit <n> --body-file <path>` and the rules of "Body files". Do this before the label check and before the owner is asked to confirm
-10. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you go on
-11. Ask the owner to confirm the stage and to validate its purpose
+7. Add the issues to the stage as sub-issues, in execution order: `gh issue edit <stage> --add-sub-issue <n>`
+8. Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
+9. Replace sibling references: after the last issue is filed, replace every "task N" / "Task N" reference to a sibling issue (the number in the plan) by `#<issue number>` in the issue bodies. Write each changed body to its own body file and run `gh issue edit <n> --body-file <path>` (see "Body files"). Do this before the label check and before the owner is asked to confirm
+10. Read every filed issue body. A body that says "implement Task N of the plan" (or the same in other words) without that content in the body is rewritten with `gh issue edit <n> --body-file <path>` and the rules of "Body files". Do this before the label check and before the owner is asked to confirm
+11. Check the labels (`gh issue view <n> --json labels` on the stage issue and on every sub-issue): the stage issue has `stage` and no `ready`, and every sub-issue has `later` and no `ready`. Fix a gap before you go on
+12. Ask the owner to confirm the stage and to validate its purpose
 
 The sub-issues carry `later` until the owner confirms the stage.
 
-- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then check the labels again: every sub-issue has `ready` and no `later`, and the stage issue has no `ready`. If the stage issue has `ready`, remove it (`gh issue edit <stage> --remove-label ready`) and tell the owner. Then end with the last line of "Stage set-up" below; for an intake reached from stage set-up, first follow "Intake reached from stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
-- Without confirmation: the sub-issues stay `later`. Say so, and end
+- When the owner confirms in the session: on each sub-issue, remove `later` and add `ready` (`gh issue edit <n> --remove-label later --add-label ready`). Then check the labels again: every sub-issue has `ready` and no `later`, and the stage issue has no `ready`. If the stage issue has `ready`, remove it (`gh issue edit <stage> --remove-label ready`) and tell the owner. Then end with the last line of "Stage set-up" below, only after `git status --porcelain` is empty; for an intake reached from stage set-up, first follow "Intake reached from stage set-up" below. If a relabel is denied, follow the rule "Denied relabel" at the end of "Stage set-up"
+- Without confirmation: the sub-issues stay `later`. The commit of step 4 stays (the files are the record of the idea). Say so, and end
 
 Intake reached from stage set-up: this part applies only when you came to "Intake" from "Stage set-up" step 3 (the owner chose no option of a stage review). A fresh intake, with no stage review, skips it.
 
@@ -108,8 +109,8 @@ Steps, in this order:
 3. The owner chooses an option and validates its purpose. If the owner asks for something else, that is intake: go to "Intake", and follow its part "Intake reached from stage set-up"
 4. Write the stage issue in the form "Stage issue" of `docs/task-template.md`, with the label `stage`. It is blocked by no open stage issue except the finished one (`gh issue edit <new stage> --add-blocked-by <finished stage>`)
 5. File new sub-issues in `docs/task-template.md` format, or link existing ones: `gh issue edit <stage> --add-sub-issue <n>`
-   - Fill in the `Permissions:` line of each issue, as in Intake step 5. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions only in step 8, after the label check
-   - For each entry that is not `none` and is a write by an agent to a system outside the repo files, print the ready-to-paste Auto mode entry text as in Intake step 5 (narrow: subagent, exact command form, issue numbers, reason; add it in `/permissions`, Auto mode tab, keep `$defaults`; see Intake step 5). Ask the owner a separate question for each: "Is this entry added?" A confirmation of the stage does not count as the answer. Add ` - set` only after the owner answers that the entry is added; otherwise leave the sub-issue with `later` and do not add ` - set`. The entry is temporary; the stage review lists ` - set` entries for removal
+   - Fill in the `Permissions:` line of each issue, as in Intake step 6. Name every entry that is not `none` to the owner, and ask the owner to confirm the stage with these permissions only in step 8, after the label check
+   - For each entry that is not `none` and is a write by an agent to a system outside the repo files, print the ready-to-paste Auto mode entry text as in Intake step 6 (narrow: subagent, exact command form, issue numbers, reason; add it in `/permissions`, Auto mode tab, keep `$defaults`; see Intake step 6). Ask the owner a separate question for each: "Is this entry added?" A confirmation of the stage does not count as the answer. Add ` - set` only after the owner answers that the entry is added; otherwise leave the sub-issue with `later` and do not add ` - set`. The entry is temporary; the stage review lists ` - set` entries for removal
    - Plugin version: when a plan task changes anything under `plugin/` (also its sources `docs/team/`, `docs/checks/` or the hand-written template files), add one last sub-issue "Bump the plugin version" in task format, `ready` with the others, whose body points to the skill `.agents/skills/bump-plugin-version/SKILL.md`. Do not add it when the stage already has one
 6. Set the order: the add order, or `gh api -X PATCH 'repos/{owner}/{repo}/issues/<stage>/sub_issues/priority' -F sub_issue_id=<REST id> -F before_id=<REST id>` (or `after_id`). Set the blockers: `gh issue edit <n> --add-blocked-by <m>`
 7. Replace sibling references: replace every "task N" / "Task N" reference to a sibling issue by `#<issue number>` in the issue bodies, with `gh issue edit <n> --body-file <path>` and the rules of "Body files". Do this before the label check and before the owner is asked to confirm
@@ -137,7 +138,11 @@ Set-up ends with exactly this line:
 
 Stage #N is ready. Run `/goal …` here or in a new session.
 
-N is the number of the new stage issue. A session switches from planner to orchestrator at most once, never back.
+N is the number of the new stage issue. Write this line (and the same line at the end of "Intake") only after `git status --porcelain` is empty. If the output is not empty, name the files and ask the owner. Do not end with the ready line.
+
+Commits: the commit of the spec and the plan (Intake step 4) and the move of the plan archive are the only commits you make. You make the spec-and-plan commit without asking the owner.
+
+A session switches from planner to orchestrator at most once, never back.
 
 ### Denied relabel
 
