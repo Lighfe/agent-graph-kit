@@ -101,6 +101,7 @@ The planner prompt always has a section `Run notes`. It covers the current sessi
 - outages: `## Launch not started: …` and `## Launch stopped by outage: …` receipts
 - collisions
 - the number of `## QA: UNAVAILABLE` results of the stage, in one line (for example "QA: UNAVAILABLE 3 times in this stage")
+- a launch with no result for more than 30 minutes, with its issue and the time
 - anything else unusual in the run
 
 When nothing happened, the section says so in one line, for example "Nothing unusual in this run."
@@ -193,6 +194,10 @@ If the result is missing, the role ended without a result (one miss): go on with
 | QA | `## QA: UNAVAILABLE` | Launch the `qa-engineer` fallback |
 | QA | `## QA: INVALID` | Escalate the issue |
 | Planner | `## Planner: STAGE REVIEW` | Stop the loop and write the final report |
+
+An escalation for returns names the count from the rule (3) in its comment. Count the returns on the issue before you escalate; do not escalate at 2 returns.
+
+After two misses of the same step, you may diagnose read-only before you escalate (journal, `git log`, a memory-capped test run). Put the finding in the escalation comment.
 
 ## Hooks
 
