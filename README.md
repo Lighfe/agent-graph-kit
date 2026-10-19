@@ -2,19 +2,19 @@
 
 A reusable set-up for AI-native development with several agents (Graph Engineering).
 
+The kit is already a working Claude Code plugin, `agk`. It is work in progress. To use it, follow "Start a new project" below.
+
 Target architecture:
 
 - The entry command sets the role of the Claude Code main session: `/goal …` makes it the orchestrator, `/stage-start` makes it the planner, and without a command it has no role (questions and reports, no loop, no planning).
 - Workers are Claude Code subagents, Codex CLI, and Lovable (MCP).
 - Jev (TypeSafe AI) makes fast, typed decisions at the handoffs between workers.
 
-Current bootstrap (v1): the orchestrator runs the loop in [docs/process.md](docs/process.md). The PM and the engineer are Claude subagents. Hooks in `.claude/hooks/` check each role launch and each `gh issue close`, and deny the call when the issue is not in the right state. QA runs through the Codex QA launcher `scripts/qa-codex` (`codex exec` in a sandbox). When Codex is not available, the Claude subagent `qa-engineer` is the fallback. Issues with `Lane: frontend` go to the Lovable frontend lane: the subagent `frontend-engineer` drives Lovable through MCP, and the code lives in the `frontend/` submodule. Jev is not part of v1.
-
-Later, this repo becomes a Claude Code plugin.
+How the kit works (v1 parts): the orchestrator runs the loop in [docs/process.md](docs/process.md). The PM and the engineer are Claude subagents. Hooks in `.claude/hooks/` check each role launch and each `gh issue close`, and deny the call when the issue is not in the right state. QA runs through the Codex QA launcher `scripts/qa-codex` (`codex exec` in a sandbox). When Codex is not available, the Claude subagent `qa-engineer` is the fallback. Issues with `Lane: frontend` go to the Lovable frontend lane: the subagent `frontend-engineer` drives Lovable through MCP, and the code lives in the `frontend/` submodule. Jev is not part of v1.
 
 ## Status
 
-v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. You set up the kit in a project by hand with the steps in "Set up the kit in a project". The first project that uses these steps is the paint-math demo.
+v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. The first project that used these parts is the paint-math demo.
 
 v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Start a new project" below.
 
