@@ -1,5 +1,7 @@
 # agent-graph-kit
 
+![Agentic Graph Engineering: five agents (orchestrator, planner, PM, software engineer, QA engineer) joined by handoffs, with the tools Claude Code, Codex and Lovable](docs/assets/agk-overview.png)
+
 A reusable set-up for AI-native development with several agents (Graph Engineering).
 
 The kit is already a working Claude Code plugin, `agk`. It is work in progress. To use it, follow "Start a new project" below.
