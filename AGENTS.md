@@ -13,7 +13,7 @@ Hooks in `.claude/hooks/` check the handoff calls (see `docs/process.md`).
 
 ## Commands
 
-- `gh issue list --state open --label ready --search "-label:later -label:needs-owner -label:stage"` - list the issues the loop may work on
+- `gh issue list --state open --label ready --search "-label:later -label:needs-owner -label:stage" --limit 500` - list the issues the loop may work on
 - `gh issue view <number> --comments` - read an issue and its comments
 - `gh issue comment <number> --body-file <file>` - add a comment to an issue
 - `gh issue edit <number> --add-label <label>` / `--remove-label <label>` - change labels

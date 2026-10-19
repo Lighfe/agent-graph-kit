@@ -2,7 +2,7 @@
 
 This document tells how work is organized in this repo.
 
-Status: the hooks check the guarded calls and deny a call that is not allowed. This prose stays the main description.
+Status: the hooks check the guarded calls and deny a call that is not allowed. This document is the main description of the rules.
 
 ## Work rules
 
