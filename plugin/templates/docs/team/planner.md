@@ -203,7 +203,7 @@ Doc drift checks: they give part 3 "Doc drift". Run them from the repo root.
 
 Fact tests:
 
-1. Run the test command `uv run --with pytest pytest` (Bash timeout 600000 ms)
+1. Run the test command in `AGENTS.md` (Bash timeout 600000 ms)
 2. The fact tests are the tests in `tests/test_doc_paths.py` and `tests/test_spec_citations.py`. Only this kit's own repo has these files. When a file is missing, do not name it as a fact test: write that this project has no fact tests for docs (name the missing file) and report only the test run result
 3. Report each failing fact test: its test name and the failure message lines that name the file and the path, anchor or ID. When none fails, write "the fact tests passed"
 4. On a separate line, give the count of failures in other test files. They are not doc drift, but do not hide them

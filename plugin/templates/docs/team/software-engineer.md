@@ -28,7 +28,7 @@ Your final message is only the first line of your comment and the URL of the com
 
 ## Test runs and background commands
 
-- Run the test command `uv run --with pytest pytest` in the foreground, with the Bash timeout of 600000 ms
+- Run the test command in `AGENTS.md` in the foreground, with the Bash timeout of 600000 ms
 - When that foreground run hits the timeout, run it again with the Bash tool's `run_in_background` option, and wait for it to end before you read the result or hand back
 - When a command runs in the background, wait for it to end before the hand-back, or stop it when it is a command that does not end by itself (for example a server or a watcher)
 - Never hand back while a test run is still going

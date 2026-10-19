@@ -37,7 +37,7 @@ FRONTEND = flat(section(ENGINEER, "## Lane `frontend`"))
 
 
 def test_foreground_test_run_with_600000_timeout():
-    assert "`uv run --with pytest pytest`" in TESTS
+    assert "Run the test command in `AGENTS.md` in the foreground" in TESTS
     assert "foreground" in TESTS
     assert "600000 ms" in TESTS
 
