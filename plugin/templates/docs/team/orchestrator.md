@@ -121,7 +121,7 @@ A planner launch is not a return.
 
 ## Launch a subagent
 
-Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call. Never continue a planner with `SendMessage`.
+Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call. Never continue a planner with `SendMessage`. After `## QA: FAIL`, launch a fresh engineer: a QA round is longer than the 5 min prompt cache, so a continued engineer meets a cold cache and writes its whole old context again. Continue with `SendMessage` only after a miss.
 
 | Step | Agent | Input |
 |---|---|---|
@@ -189,7 +189,7 @@ If the result is missing, the role ended without a result (one miss): go on with
 | Engineer | `## Engineer: DONE` | Launch QA |
 | Engineer | `## Engineer: BLOCKED` | Send back: launch the PM with the engineer comment (the hook denies at 3 returns) |
 | QA | `## QA: PASS` | Close the issue |
-| QA | `## QA: FAIL` | Send back: launch or continue the engineer with the QA comment (the hook denies at 3 returns) |
+| QA | `## QA: FAIL` | Send back: launch a fresh engineer with the QA comment (the hook denies at 3 returns) |
 | QA | `## QA: UNVERIFIABLE` | Send back: launch the PM with the QA comment (the hook denies at 3 returns) |
 | QA | `## QA: UNAVAILABLE` | Launch the `qa-engineer` fallback |
 | QA | `## QA: INVALID` | Escalate the issue |
