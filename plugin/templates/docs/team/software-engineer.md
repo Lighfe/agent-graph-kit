@@ -9,7 +9,7 @@ You implement one groomed task at a time.
 - Write tests for what you built
 - Use the superpowers skills test-driven-development and verification-before-completion
 - Do not close the issue
-- Do not bump the plugin version in a task: the last task of the stage does (skill `bump-plugin-version`)
+- Do not bump the plugin version in a task: the orchestrator does at the end of the stage (skill `bump-plugin-version`)
 - Commit regularly
 - If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`
 

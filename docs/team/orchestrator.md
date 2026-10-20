@@ -78,8 +78,9 @@ When the active stage's sub-issue list is not empty and every entry is closed, t
 
 1. Run `git status --porcelain`. If the output is not empty, stop the loop and ask the owner, as in "Before each issue".
 2. Look for an earlier stage review on the stage issue: a comment whose first line is exactly `## Planner: STAGE REVIEW` and whose `authorAssociation` is `OWNER`. If one exists (from an earlier run), do not launch the planner again. Stop the loop. Your final report names the URL of the newest such comment and the line below (see "Definition of done").
-3. Otherwise launch the agent `planner` on the stage issue, with the run notes (see "Launch a subagent").
-4. Read its result (see "Read the result") and stop the loop.
+3. Release the plugin, before the planner is launched: run `uv run scripts/bump_plugin_version.py`. When it prints that no bump is needed, there is nothing to commit. Otherwise run the test command of `AGENTS.md` and commit the bump (`plugin/.claude-plugin/plugin.json`, `scripts/plugin-release.json` and the rebuilt copies in `plugin/`). When the script or the tests fail, do not commit: reset the files, name the failure in the run notes and go on. The skill `bump-plugin-version` describes the script
+4. Launch the agent `planner` on the stage issue, with the run notes (see "Launch a subagent").
+5. Read its result (see "Read the result") and stop the loop.
 
 The read for step 2 returns the newest stage review by the owner's login, or `null`:
 

@@ -84,12 +84,86 @@ def test_commands_run_on_the_repo():
 
 def test_skill_and_docs_rules():
     skill = (ROOT / ".agents" / "skills" / "bump-plugin-version" / "SKILL.md").read_text()
-    assert "--release-status" in skill and "once" in skill and "last task" in skill
+    assert "scripts/bump_plugin_version.py" in skill and "--release-status" in skill
     assert not (ROOT / "plugin" / "skills" / "bump-plugin-version").exists()
     planner = (ROOT / "docs" / "team" / "planner.md").read_text()
-    assert "Bump the plugin version" in planner and "--release-status" in planner
-    assert "unreleased changes" in planner
+    assert "Bump the plugin version" not in planner and "--release-status" in planner
+    assert "unreleased changes" in planner and "did not run" in planner
+    assert "Add the plugin bump task" not in (ROOT / "docs" / "team" / "pm.md").read_text()
+    orch = (ROOT / "docs" / "team" / "orchestrator.md").read_text()
+    assert "uv run scripts/bump_plugin_version.py" in orch and "nothing to commit" in orch
     assert "Do not bump the plugin version in a task" in (ROOT / "docs" / "team" / "software-engineer.md").read_text()
+
+
+def test_no_role_file_names_a_missing_skill():
+    import re
+    skills = {p.name for p in (ROOT / ".agents" / "skills").iterdir()}
+    for f in (ROOT / "docs" / "team").glob("*.md"):
+        for name in re.findall(r"skill `([a-z0-9-]+)`", f.read_text()):
+            assert name in skills, f"{f.name} names missing skill {name}"
+
+
+def _repo_copy(tmp_path, released=True):
+    repo = tmp_path / "repo"
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True)
+    for rel in filter(None, tracked.stdout.split("\0")):
+        if (ROOT / rel).is_file():
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, repo / rel)
+    build = repo / "scripts" / "build_plugin.py"
+    run = lambda *a: subprocess.run([sys.executable, str(build), *a], cwd=repo, capture_output=True, text=True)
+    run()  # copies match sources
+    version = json.loads((repo / "plugin" / MANIFEST).read_text())["version"]
+    (repo / "scripts" / "plugin-release.json").write_text(
+        json.dumps({"version": version, "sha256": run("--hash").stdout.strip()}))
+    return repo, run, version
+
+
+def _bump(repo):
+    return subprocess.run([sys.executable, str(repo / "scripts" / "bump_plugin_version.py")],
+                          cwd=repo, capture_output=True, text=True)
+
+
+def _state(repo):
+    return ((repo / "plugin" / MANIFEST).read_bytes(), (repo / "scripts" / "plugin-release.json").read_bytes())
+
+
+def test_bump_of_an_unreleased_change(tmp_path):
+    repo, run, version = _repo_copy(tmp_path)
+    with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
+        f.write("\n# change\n")
+    assert run("--release-status").stdout.strip() == "released"  # copies not rebuilt yet
+    run()
+    assert run("--release-status").stdout.strip() == "unreleased changes"
+    major, minor, patch = version.split(".")
+    new = f"{major}.{minor}.{int(patch) + 1}"
+    r = _bump(repo)
+    assert r.returncode == 0, r.stderr
+    assert version in r.stdout and new in r.stdout
+    assert json.loads((repo / "plugin" / MANIFEST).read_text())["version"] == new
+    assert json.loads((repo / "scripts" / "plugin-release.json").read_text())["version"] == new
+    assert run("--release-status").stdout.strip() == "released"
+    assert run("--check").returncode == 0
+
+
+def test_no_bump_when_released(tmp_path):
+    repo, _, _ = _repo_copy(tmp_path)
+    before = _state(repo)
+    r = _bump(repo)
+    assert r.returncode == 0 and "no bump needed" in r.stdout
+    assert _state(repo) == before
+
+
+def test_failing_step_leaves_files_as_they_were(tmp_path):
+    repo, run, _ = _repo_copy(tmp_path)
+    with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
+        f.write("\n# change\n")
+    run()
+    (repo / ".claude" / "hooks" / "issue_state.py").unlink()  # a source is missing: the build fails
+    before = _state(repo)
+    r = _bump(repo)
+    assert r.returncode != 0
+    assert _state(repo) == before
 
 
 def test_source_change_between_bumps_is_unreleased_and_tests_pass(tmp_path):
