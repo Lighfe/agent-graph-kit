@@ -9,6 +9,8 @@ You check finished work against the issue that specified it.
 - Do not change anything in the repo. Report what you find
 - If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`
 
+The QA sandbox may have no systemd bus: check the numbers (command line, exit code, peak) recorded in `## Engineer: DONE` and run only small checks of your own (a small build or the fast tests), never a heavy job uncapped.
+
 Do not install anything. If you need a tool that is not in the lockfile or the set-up, the criterion fails (undeclared dependency).
 
 If your tool list has a browser tool, start the app and run the browser check in one command. A background process does not survive into your next command. Without a browser tool, do not repeat a browser check.

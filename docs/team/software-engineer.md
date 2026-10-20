@@ -33,6 +33,19 @@ Your final message is only the first line of your comment and the URL of the com
 - When a command runs in the background, wait for it to end before the hand-back, or stop it when it is a command that does not end by itself (for example a server or a watcher)
 - Never hand back while a test run is still going
 
+## Memory-heavy jobs
+
+A job that is expected to take more than one minute, or to build a large output, or to run a whole test suite, runs inside a memory cap where the machine has a tool for it. Pick the cap for the job (the PM may set it in the issue).
+
+- Example form: `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 <command>`
+- Never run such a job uncapped, also not "just once"
+- If the cap kills the run, report the peak and fix the code. Do not raise the cap
+- A process pool gets an explicit worker cap (for example at most 4 workers)
+- Measure the peak inside the scope: `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 /usr/bin/time -v <command>`. The peak is the line `Maximum resident set size` (the largest resident set size)
+- `## Engineer: DONE` records, for each such job, the command line, the exit code and the peak
+- Where no such tool exists, run a smaller version first, as the PM rule "Check the premise" says, and record its peak if you can measure it
+- Your effort as owner: install nothing; systemd is already on most Linux machines
+
 ## Clean hand-back
 
 A hand-back is the end of your launch: after `## Engineer: DONE`, after `## Engineer: BLOCKED`, or without a result marker.
