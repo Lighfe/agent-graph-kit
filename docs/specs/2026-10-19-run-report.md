@@ -11,10 +11,11 @@ The owner sees where a stage spends time and tokens: per role, per issue (outlie
 Call:
 
 ```
-python3 scripts/run_report.py --comments <issues.json> (--issues 1,2,3 | --stage N) [--transcripts <folder>]
+python3 scripts/run_report.py --comments <issues.json> (--issues 1,2,3 | --stage N) [--transcripts <folder>] [--codex-usage <file>]
 ```
 
 - `<issues.json>` holds, for each issue, the output of `gh issue view <n> --json number,comments,closedAt,labels` (one object, a list of objects, or an object keyed by issue number). For `--stage N`, the object of the stage issue carries a list `subIssues` of issue numbers (added by the owner from the sub-issue list); the script does not call GitHub.
+- `<file>` is the Codex QA token record `codex-qa-usage.jsonl` that `qa-codex` keeps (see "Token record" in `docs/specs/agent-graph-kit.md`). For each issue the report prints one line `Codex QA tokens: <sum of input, cached input and output>`, or `Codex QA tokens: no record` without the flag, with a missing or empty file, or when the issue has no line.
 - `<folder>` is searched recursively for `.jsonl` files. These are the Claude Code subagent transcripts, normally under `<projects folder>/<project>/<session>/subagents/`.
 
 ## Numbers and sources
@@ -34,7 +35,7 @@ The last section "Most expensive" names the top 3 issues by launch-to-close time
 ## Not measured
 
 - Tokens of the main session (orchestrator, planner in `/stage-start`): the report reads subagent transcripts only, not the transcript of the main session.
-- Tokens of Codex QA runs: no record is kept; `qa-codex` keeps none yet (see #30).
+- Tokens of Codex QA runs are read from the record only when `--codex-usage` is given; runs from before the record existed, and failed runs, have no number.
 - Memory and CPU (see #223).
 - Transcripts deleted by Claude Code retention: the report says "no transcript" for such an issue and does not guess.
 - The link from one launch comment to one transcript: the report joins on role and issue number only (see #31). A launch that was retried is therefore summed with the first one.

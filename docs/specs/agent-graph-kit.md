@@ -401,6 +401,16 @@ The fallback `qa-engineer` posts its own comment with `Checker: claude (fallback
 
 **Trust entry.** A Codex run with a writable sandbox writes a trust entry for the repo into `$HOME/.codex/config.toml` when none exists. The set-up adds it up front ("Codex trust entry" in the README); QA runs ignore the trust list.
 
+### Token record
+
+After each Codex run that ends `ok` (before the schema check), `qa-codex` appends one JSON line to a local record file ([#224](https://github.com/Lighfe/agent-graph-kit/issues/224)). The record is local only: it lies outside the git tree and is never committed or posted.
+
+- Path: `<state dir>/agent-graph-kit/codex-qa-usage.jsonl`. The state dir is built like the one of the usage limit file: the env var `QA_CODEX_USAGE_FILE` (the whole path), else `$XDG_STATE_HOME`, else `~/.local/state`.
+- Fields, and only these: `issue`, `time` (UTC, ISO 8601), `model`, `effort`, `input_tokens`, `cached_input_tokens`, `output_tokens`. No prompt text, comment text, output text or secret is written.
+- Source: the last `turn.completed` event on stdout of `codex exec --json`, field `usage` (`input_tokens`, `cached_input_tokens`, `output_tokens`; the event also has `cache_write_input_tokens` and `reasoning_output_tokens`, which are not recorded).
+- A run that ends in a failure writes no line (it has no `turn.completed` event). When stdout has no usage event, or the file cannot be written, no line is written and the QA result does not change.
+- `scripts/run_report.py --codex-usage <file>` sums the three token fields for each issue of the report.
+
 ## Stage model
 
 The loop steps for stages (pick order, promotion, stage end) are in "Stages" of [docs/process.md](../process.md#stages) and in [docs/team/orchestrator.md](../team/orchestrator.md); stage set-up and the stage review are in [docs/team/planner.md](../team/planner.md). The form of a stage issue is "Stage issue" in `docs/task-template.md`. In short:

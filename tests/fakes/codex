@@ -16,6 +16,7 @@ Modes:
   short_sha    verified_sha is a 7-character SHA
   empty        exits 0 and leaves the -o file empty
   extra        like ok, with an extra property in one criterion entry
+  nousage      like ok, the turn.completed event has no usage
   write        like ok, but first writes a file into the working directory
   transient    turn.failed with the 500 text of the S2 error table, exit 1
   unavailable  turn.failed with the usage limit text, exit 1
@@ -150,10 +151,14 @@ elif mode == "short_sha":
     result["verified_sha"] = head[:7]
 elif mode == "extra":
     criteria[0]["note"] = "extra"
-elif mode not in ("ok", "write"):
+elif mode not in ("ok", "write", "nousage"):
     sys.stderr.write(f"fake codex: unknown mode {mode}\n")
     sys.exit(2)
 with open(out, "w", encoding="utf-8") as f:
     json.dump(result, f)
-print(json.dumps({"type": "turn.completed"}))
+if mode == "nousage":
+    print(json.dumps({"type": "turn.completed"}))
+else:
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 20096, "cached_input_tokens": 2304,
+                      "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0}}))
 sys.exit(0)

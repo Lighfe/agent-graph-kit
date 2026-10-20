@@ -24,6 +24,7 @@ class CodexRun:
     status: str  # "ok" | "transient" | "timeout" | "invalid_output" | "unavailable" | "unknown"
     output: dict | None
     reason: str
+    usage: dict | None = None  # token numbers of an "ok" run (usage_from_stdout), else None
 
 
 # Keep the user config, AGENTS.md, skills, hooks and apps out of the run, report errors as
@@ -109,6 +110,28 @@ def _turn_failed(stdout: str) -> str | None:
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 message = error["message"]
     return message
+
+
+USAGE_FIELDS = ("input_tokens", "cached_input_tokens", "output_tokens")
+
+
+def usage_from_stdout(stdout: str) -> dict | None:
+    """Token numbers of the last `turn.completed` event on stdout (`--json`): its `usage` object
+    holds `input_tokens`, `cached_input_tokens` and `output_tokens` (checked with a real run, #224).
+    Returns exactly these three ints, or None when there is no such event or a field is not an int.
+    A failed run has no `turn.completed` event, and its usage is never read."""
+    found = None
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "turn.completed":
+            usage = event.get("usage")
+            if isinstance(usage, dict) and all(
+                    isinstance(usage.get(f), int) and not isinstance(usage.get(f), bool) for f in USAGE_FIELDS):
+                found = {f: usage[f] for f in USAGE_FIELDS}
+    return found
 
 
 def failure_text(stdout: str, stderr: str) -> str:
@@ -221,7 +244,7 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
             return CodexRun("invalid_output", None, f"output is not JSON: {_one_line(str(e))}")
         if not isinstance(data, dict):
             return CodexRun("invalid_output", None, "output is not a JSON object")
-        return CodexRun("ok", data, "")
+        return CodexRun("ok", data, "", usage_from_stdout(stdout))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -293,6 +316,36 @@ def limit_file() -> Path:
         return Path(custom)
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(base) / "agent-graph-kit" / "codex-usage-reset"
+
+
+# --- the token record (#224) ----------------------------------------------------------------------
+# After a Codex run that ends "ok", the launcher appends one JSON line to a local file outside the git
+# tree. A line holds only RECORD_FIELDS: never prompt text, comment text or output text.
+USAGE_FILE_ENV = "QA_CODEX_USAGE_FILE"
+RECORD_FIELDS = ("issue", "time", "model", "effort", "input_tokens", "cached_input_tokens", "output_tokens")
+
+
+def usage_file() -> Path:
+    custom = os.environ.get(USAGE_FILE_ENV)
+    if custom:
+        return Path(custom)
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "agent-graph-kit" / "codex-qa-usage.jsonl"
+
+
+def record_usage(issue: int, model: str, effort: str, usage: dict | None, now: datetime) -> None:
+    """Append one line to the record. No usage, or a failed write: nothing is written, no error."""
+    if usage is None:
+        return
+    line = {"issue": issue, "time": now.astimezone(timezone.utc).isoformat(), "model": model, "effort": effort,
+            **{f: usage[f] for f in USAGE_FIELDS}}
+    try:
+        path = usage_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+    except (OSError, RuntimeError):
+        pass
 
 
 def read_limit() -> datetime | None:

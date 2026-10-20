@@ -99,6 +99,7 @@ class QaEnv:
             "FAKE_TOOL_LOG": str(tmp / "tools.log"),
             "QA_CODEX_TIMEOUT": "1",
             "QA_CODEX_LIMIT_FILE": str(tmp / "limit-state" / "reset"),
+            "QA_CODEX_USAGE_FILE": str(tmp / "usage-state" / "codex-qa-usage.jsonl"),
             "TZ": "UTC",
         }
         for key, value in env.items():
@@ -2959,3 +2960,49 @@ def test_qa_groups_failing_sync_shows_the_groups(qa_env, monkeypatch):
     lines = comment.splitlines()
     assert lines[0] == "## QA: UNAVAILABLE"
     assert "pre-step `uv sync --frozen --group train` failed:" in next(l for l in lines if l.startswith("Reason:"))
+
+
+# --- the token record (#224) -------------------------------------------------------------
+
+
+def _usage_file():
+    return Path(os.environ["QA_CODEX_USAGE_FILE"])
+
+
+def test_ok_run_appends_one_usage_line(qa_env):
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    lines = _usage_file().read_text().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert set(rec) == set(codex_exec.RECORD_FIELDS)  # only these fields: no prompt, comment or output text
+    assert (rec["issue"], rec["model"], rec["effort"]) == (7, qa.QA_MODEL, qa.QA_EFFORT)
+    assert (rec["input_tokens"], rec["cached_input_tokens"], rec["output_tokens"]) == (20096, 2304, 5)
+    assert rec["time"].endswith("+00:00")
+
+
+def test_failed_run_writes_no_usage_line(qa_env):
+    comment, _ = qa_env.run(["unavailable"])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert not _usage_file().exists()
+
+
+def test_no_usage_event_keeps_the_result_and_writes_nothing(qa_env):
+    comment, _ = qa_env.run(["nousage"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert not _usage_file().exists()
+
+
+def test_unwritable_record_keeps_the_result(qa_env, monkeypatch):
+    blocker = qa_env.tmp / "blocker"
+    blocker.write_text("a file, not a folder\n")
+    monkeypatch.setenv("QA_CODEX_USAGE_FILE", str(blocker / "sub" / "usage.jsonl"))
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert not (blocker / "sub").exists()
+
+
+def test_usage_file_path_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("QA_CODEX_USAGE_FILE", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert codex_exec.usage_file() == tmp_path / "agent-graph-kit" / "codex-qa-usage.jsonl"

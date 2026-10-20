@@ -143,6 +143,29 @@ def read_transcripts(folder):
     return result
 
 
+def read_codex_usage(path):
+    """Return {issue: total tokens (input + cached input + output)} from the Codex QA record
+    (scripts/codex_exec.py record_usage), or None for no path, a missing or an empty file.
+    A line that is not a JSON object with an integer issue is skipped."""
+    if not path or not Path(path).is_file():
+        return None
+    result = {}
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+            n = d["issue"]
+            total = sum(d[f] for f in ("input_tokens", "cached_input_tokens", "output_tokens"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if isinstance(n, int) and isinstance(total, int):
+            result[n] = result.get(n, 0) + total
+    return result or None
+
+
 def fmt_duration(seconds):
     if seconds is None:
         return "n/a"
@@ -159,7 +182,7 @@ def load_issues(path):
     return {int(i["number"]): i for i in data}
 
 
-def build_report(numbers, issues, transcripts):
+def build_report(numbers, issues, transcripts, codex_usage=None):
     out = ["# Run report", ""]
     if not numbers:
         out += ["No issues given.", ""]
@@ -191,6 +214,10 @@ def build_report(numbers, issues, transcripts):
             for role, v in sorted(roles.items()):
                 cols = ", ".join(f"{lab} {val}" for lab, val in zip(TOKEN_LABELS, v))
                 out.append(f"- Tokens {role}: {cols}")
+        if codex_usage is not None and n in codex_usage:
+            out.append(f"- Codex QA tokens: {codex_usage[n]}")
+        else:
+            out.append("- Codex QA tokens: no record")
         out.append("")
 
     total = len(numbers)
@@ -236,6 +263,7 @@ def main(argv=None):
     ap.add_argument("--stage", type=int, help="stage issue number; its subIssues list is read from the JSON")
     ap.add_argument("--issues", help="comma-separated issue numbers")
     ap.add_argument("--transcripts", help="folder of Claude Code subagent transcripts")
+    ap.add_argument("--codex-usage", help="Codex QA token record (codex-qa-usage.jsonl)")
     args = ap.parse_args(argv)
     issues = load_issues(args.comments)
     numbers = []
@@ -243,7 +271,8 @@ def main(argv=None):
         numbers = [int(x) for x in issues.get(args.stage, {}).get("subIssues", [])]
     if args.issues:
         numbers = [int(x) for x in args.issues.split(",") if x.strip()]
-    sys.stdout.write(build_report(numbers, issues, read_transcripts(args.transcripts)))
+    sys.stdout.write(build_report(numbers, issues, read_transcripts(args.transcripts),
+                                   read_codex_usage(args.codex_usage)))
     sys.stdout.write("\n")
     return 0
 

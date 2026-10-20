@@ -935,6 +935,9 @@ def _main(argv: list[str], sleep) -> int:
                                        effort=QA_EFFORT, timeout_s=timeout, cwd=worktree)
             status, reason = run.status, run.reason
             if status == "ok":
+                # token record (#224): only a run that ended "ok"; a failed run is skipped. A missing
+                # usage event or a failed write changes no QA result.
+                codex_exec.record_usage(number, QA_MODEL, QA_EFFORT, run.usage, _now())
                 errors = validate(run.output, criteria, head)
                 if not errors:
                     break

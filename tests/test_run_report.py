@@ -127,3 +127,30 @@ def test_fewer_than_three_issues_and_stage(tmp_path, capsys):
     out = run(tmp_path, issues=ISSUES + [stage], numbers=None, stage=9, capsys=capsys)
     assert "## Issue #2" in out and "## Issue #3" in out and "## Issue #1" not in out
     assert "#2 (1h 00m)" in out
+
+
+def test_codex_usage_record(tmp_path, capsys):
+    rec = tmp_path / "codex-qa-usage.jsonl"
+    rec.write_text("".join(json.dumps(d) + "\n" for d in (
+        {"issue": 1, "input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 5},
+        {"issue": 1, "input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 1},
+        {"issue": 2, "input_tokens": 7, "cached_input_tokens": 1, "output_tokens": 2},
+    )) + "not json\n")
+    f = tmp_path / "issues.json"
+    f.write_text(json.dumps(ISSUES))
+    assert run_report.main(["--comments", str(f), "--issues", "1,2,3", "--codex-usage", str(rec)]) == 0
+    out = capsys.readouterr().out
+    assert out.count("- Codex QA tokens: 136") == 1
+    assert out.count("- Codex QA tokens: 10\n") == 1
+    assert out.count("- Codex QA tokens: no record") == 1  # issue 3
+
+
+def test_codex_usage_no_record_leaves_rest_unchanged(tmp_path, capsys):
+    base = run(tmp_path, capsys=capsys)
+    assert base.count("- Codex QA tokens: no record") == 3
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    f = tmp_path / "issues.json"
+    for argv in (["--codex-usage", str(tmp_path / "missing.jsonl")], ["--codex-usage", str(empty)]):
+        assert run_report.main(["--comments", str(f), "--issues", "1,2,3", *argv]) == 0
+        assert capsys.readouterr().out == base
