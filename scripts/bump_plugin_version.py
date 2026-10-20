@@ -58,6 +58,8 @@ def main() -> int:
         for p, data in saved.items():
             if data is not None:
                 p.write_bytes(data)
+            else:
+                p.unlink(missing_ok=True)  # the step created it: remove it again
         print(f"bump failed: {e}", file=sys.stderr)
         return 1
     if result is None:

@@ -166,6 +166,43 @@ def test_failing_step_leaves_files_as_they_were(tmp_path):
     assert _state(repo) == before
 
 
+def _bump_with_late_failure(repo):
+    """Run the script with a release-status check that fails after the files are written."""
+    code = ("import sys; sys.path.insert(0, 'scripts'); import build_plugin, bump_plugin_version as b\n"
+            "calls = []\n"
+            "def status():\n"
+            "    calls.append(1)\n"
+            "    return 'unreleased changes'\n"
+            "build_plugin.release_status = status\n"
+            "sys.exit(b.main())\n")
+    return subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True)
+
+
+def test_late_failure_restores_both_files(tmp_path):
+    repo, run, _ = _repo_copy(tmp_path)
+    with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
+        f.write("\n# change\n")
+    run()
+    before = _state(repo)
+    r = _bump_with_late_failure(repo)
+    assert r.returncode == 1, r.stderr
+    assert _state(repo) == before
+
+
+def test_late_failure_removes_a_release_file_the_run_created(tmp_path):
+    repo, run, _ = _repo_copy(tmp_path)
+    with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
+        f.write("\n# change\n")
+    run()
+    release = repo / "scripts" / "plugin-release.json"
+    release.unlink()
+    manifest_before = (repo / "plugin" / MANIFEST).read_bytes()
+    r = _bump_with_late_failure(repo)
+    assert r.returncode == 1, r.stderr
+    assert not release.exists()
+    assert (repo / "plugin" / MANIFEST).read_bytes() == manifest_before
+
+
 def test_source_change_between_bumps_is_unreleased_and_tests_pass(tmp_path):
     """A plugin source changes and `build_plugin.py` copies it; the stored hash stays. The status is
     `unreleased changes`, and the copy-match test and the version-match test both pass.
