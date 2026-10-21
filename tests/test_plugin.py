@@ -26,7 +26,7 @@ def test_layout():
     assert manifest["name"] and manifest["version"] and manifest["author"]
     for a in AGENTS:
         assert (PLUGIN / "agents" / f"{a}.md").is_file()
-    for s in ("stage-start", "codex-review"):
+    for s in ("stage-start", "codex-review", "run-record"):
         assert (PLUGIN / "skills" / s / "SKILL.md").is_file()
 
 
