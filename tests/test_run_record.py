@@ -33,7 +33,7 @@ def issues_file(tmp_path, issues):
     return p
 
 
-def run(tmp_path, issues, monkeypatch, folder=None, codex=None, role=None):
+def run(tmp_path, issues, monkeypatch, folder=None, codex=None, role=None, keep_orch=False):
     """Run `write`; return the record lines, without the issue lines unless role is "issue"."""
     rec = tmp_path / "state" / "run-record.jsonl"
     monkeypatch.setenv("RUN_RECORD_FILE", str(rec))
@@ -43,7 +43,7 @@ def run(tmp_path, issues, monkeypatch, folder=None, codex=None, role=None):
         argv += ["--codex-usage", str(codex)]
     assert rr.main(argv) == 0
     rows = [json.loads(x) for x in rec.read_text().splitlines()] if rec.exists() else []
-    return [r for r in rows if (r["role"] == "issue") == (role == "issue")]
+    return [r for r in rows if (r["role"] == "issue") == (role == "issue") and (keep_orch or r["role"] != "orchestrator")]
 
 
 def one_issue(n=5, receipts=()):
@@ -265,3 +265,106 @@ def test_start_end_are_first_and_last_message_not_min_max(tmp_path, monkeypatch)
         asst("m3", "claude-x", (1, 1, 1, 1), "2026-10-21T11:01:00Z")])
     (line,) = run(tmp_path, [one_issue()], monkeypatch)
     assert line["start"] == "2026-10-21T11:00:00.000Z" and line["end"] == "2026-10-21T11:01:00.000Z"
+
+
+# --- orchestrator lines (issue #244) ---
+
+def cost_state(**models):
+    usage = {m: {"inputTokens": v[0], "outputTokens": v[1], "cacheCreationInputTokens": v[2],
+                 "cacheReadInputTokens": v[3]} for m, v in models.items()}
+    return {"type": "cost-state", "sessionId": "s1", "modelUsage": usage}
+
+
+def main_session(tmp_path, rows, name="sess"):
+    """A main-session transcript directly in the project folder `proj`; returns the subagent folder."""
+    write(tmp_path / "proj" / f"{name}.jsonl", rows)
+    return tmp_path / "proj" / name / "subagents"
+
+
+def orch(lines):
+    return {(x["model"], x["estimate"]): x for x in lines if x["role"] == "orchestrator"}
+
+
+def sub_launch(folder):
+    write(folder / "agent-a.jsonl", [user("ROLE=pm ISSUE=5", "2026-10-21T10:00:00Z"),
+                                     asst("s1", "claude-x", (10, 20, 30, 40), "2026-10-21T10:01:00Z")])
+
+
+MAIN = [{"type": "user", "timestamp": "2026-10-21T09:00:00Z", "message": {"content": "hello"}},
+        asst("a1", "claude-x", (100, 200, 300, 400), "2026-10-21T09:05:00Z"),
+        asst("a1", "claude-x", (100, 200, 300, 400), "2026-10-21T09:05:00Z"),
+        asst("a2", "claude-x", (1, 2, 3, 4), "2026-10-21T09:10:00Z")]
+
+
+def test_orchestrator_cost_state_minus_subagents(tmp_path, monkeypatch):
+    folder = main_session(tmp_path, MAIN + [cost_state(**{"claude-x": (1000, 2000, 3000, 4000)})])
+    sub_launch(folder)
+    lines = run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True)
+    o = orch(lines)
+    m, e = o[("claude-x", False)], o[("claude-x", True)]
+    assert (m["input_tokens"], m["output_tokens"], m["cache_creation_tokens"], m["cache_read_tokens"]) == (990, 1980, 2970, 3960)
+    assert (m["role"], m["issue"], m["provider"], m["retry"], m["source"]) == ("orchestrator", None, "claude", 0, "session-total")
+    assert (m["start"], m["end"]) == ("2026-10-21T09:00:00.000Z", "2026-10-21T09:10:00.000Z")
+    assert e["input_tokens"] == round(990 * rr.ORCHESTRATOR_ESTIMATE_FACTOR) and e["source"] == "session-total"
+    assert (m["id"], e["id"]) == ("o/r:sess:claude-x:measured", "o/r:sess:claude-x:estimate")
+    assert len([x for x in lines if x["role"] == "pm"]) == 1
+
+
+def test_orchestrator_cost_state_without_subagent_tokens(tmp_path, monkeypatch):
+    monkeypatch.setattr(rr, "COST_STATE_INCLUDES_SUBAGENTS", False)
+    folder = main_session(tmp_path, MAIN + [cost_state(**{"claude-x": (1000, 2000, 3000, 4000)})])
+    sub_launch(folder)
+    m = orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True))[("claude-x", False)]
+    assert (m["input_tokens"], m["output_tokens"], m["cache_creation_tokens"], m["cache_read_tokens"]) == (1000, 2000, 3000, 4000)
+
+
+def test_orchestrator_without_cost_state_sums_messages(tmp_path, monkeypatch):
+    folder = main_session(tmp_path, MAIN)
+    o = orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True))
+    m = o[("claude-x", False)]
+    assert (m["input_tokens"], m["output_tokens"], m["cache_creation_tokens"], m["cache_read_tokens"]) == (101, 202, 303, 404)
+    assert m["source"] == "transcript" and o[("claude-x", True)]["source"] == "transcript"
+
+
+def test_orchestrator_no_usable_usage_no_line(tmp_path, monkeypatch, capsys):
+    folder = main_session(tmp_path, [{"type": "user", "timestamp": "2026-10-21T09:00:00Z", "message": {"content": "hi"}},
+                                     {"type": "cost-state", "modelUsage": "broken"}])
+    assert orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True)) == {}
+    assert "no orchestrator line" in capsys.readouterr().out
+
+
+def test_orchestrator_no_main_transcript_says_so(tmp_path, monkeypatch, capsys):
+    assert orch(run(tmp_path, [one_issue()], monkeypatch, keep_orch=True)) == {}
+    assert "No main-session transcript found" in capsys.readouterr().out
+
+
+def test_orchestrator_two_models(tmp_path, monkeypatch):
+    folder = main_session(tmp_path, MAIN + [cost_state(**{"claude-x": (10, 20, 30, 40), "claude-y": (1, 2, 3, 4)})])
+    o = orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True))
+    assert sorted(o) == [("claude-x", False), ("claude-x", True), ("claude-y", False), ("claude-y", True)]
+    assert o[("claude-y", False)]["input_tokens"] == 1
+
+
+def test_orchestrator_appends_again_and_prints_file(tmp_path, monkeypatch, capsys):
+    folder = main_session(tmp_path, MAIN)
+    run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True)
+    run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True)
+    out = capsys.readouterr().out
+    assert out.count("Orchestrator transcript:") == 2 and "sess.jsonl" in out
+    rec = (tmp_path / "state" / "run-record.jsonl").read_text().splitlines()
+    assert [json.loads(x)["id"] for x in rec if json.loads(x)["role"] == "orchestrator"].count("o/r:sess:claude-x:measured") == 2
+
+
+def test_orchestrator_transcript_option_and_newest_pick(tmp_path, monkeypatch):
+    main_session(tmp_path, MAIN, "old")
+    main_session(tmp_path, MAIN[:2], "new")
+    import os
+    os.utime(tmp_path / "proj" / "old.jsonl", (1, 1))
+    assert orch(run(tmp_path, [one_issue()], monkeypatch, folder=tmp_path / "proj", keep_orch=True))[("claude-x", False)]["input_tokens"] == 100
+    rec = tmp_path / "state" / "run-record.jsonl"
+    rec.unlink()
+    argv = ["write", "--project", "o/r", "--stage", "9", "--issues", str(issues_file(tmp_path, [one_issue()])),
+            "--transcripts", str(tmp_path / "proj"), "--orchestrator-transcript", str(tmp_path / "proj" / "old.jsonl")]
+    assert rr.main(argv) == 0
+    ids = [json.loads(x)["id"] for x in rec.read_text().splitlines()]
+    assert "o/r:old:claude-x:measured" in ids and "o/r:new:claude-x:measured" not in ids

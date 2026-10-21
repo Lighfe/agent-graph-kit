@@ -27,6 +27,17 @@ USAGE_FIELDS = (("input_tokens", "input_tokens"), ("output_tokens", "output_toke
                 ("cache_read_tokens", "cache_read_input_tokens"))
 PROMPT_RE = re.compile(r"ROLE=(\S+)\s+ISSUE=(\d+)")
 LAUNCH_RE = re.compile(r"^## Launch: (\S+)")
+# The first value is a guess: the writer runs before the orchestrator writes its report and final
+# answer, so the number it sees is too low, and nobody has measured by how much. 1.1 means "about
+# ten percent more is spent after the writer runs". Change it when real stage data shows better.
+ORCHESTRATOR_ESTIMATE_FACTOR = 1.1
+# Checked on real main-session transcripts (issue #244): the input and cache token totals of the
+# `cost-state` record equal the sum of the main transcript and the subagent transcripts, so the
+# totals include the subagents and the orchestrator line is the totals minus the subagent lines.
+COST_STATE_INCLUDES_SUBAGENTS = True
+COST_STATE_FIELDS = (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
+                     ("cache_creation_tokens", "cacheCreationInputTokens"),
+                     ("cache_read_tokens", "cacheReadInputTokens"))
 PREFIX_OF_ROLE = {"pm": "PM", "engineer": "Engineer", "planner": "Planner"}
 
 
@@ -172,6 +183,123 @@ def build_lines(project, stage, issues, folder):
     return lines
 
 
+def read_main(path):
+    """Return {session, times, cost (last usable cost-state per model or None), sums (assistant sums)}."""
+    session = path.name[:-len(".jsonl")]
+    times, cost, seen, sums = [], None, set(), {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("type") == "cost-state":
+            usage = d.get("modelUsage")
+            try:
+                parsed = {m: {out: int(u.get(src) or 0) for out, src in COST_STATE_FIELDS}
+                          for m, u in usage.items()}
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if parsed:
+                cost = parsed
+            continue
+        msg = d.get("message")
+        if not isinstance(msg, dict) or not msg:
+            continue
+        if d.get("timestamp"):
+            try:
+                times.append(parse_time(d["timestamp"]))
+            except ValueError:
+                pass
+        usage = msg.get("usage")
+        if d.get("type") == "assistant" and isinstance(usage, dict):
+            mid, model = msg.get("id"), msg.get("model")
+            if mid:
+                if mid in seen:
+                    continue
+                seen.add(mid)
+            if not isinstance(model, str) or not model:
+                continue
+            row = sums.setdefault(model, dict.fromkeys((f for f, _ in USAGE_FIELDS), 0))
+            for out_field, in_field in USAGE_FIELDS:
+                row[out_field] += int(usage.get(in_field) or 0)
+    return {"session": session, "times": times, "cost": cost, "sums": sums}
+
+
+def orchestrator_lines(path, project, stage, subtract=()):
+    """Return the measured and the estimate line of each model of the main session at `path`.
+
+    Source is `cost-state` (minus the Claude subagent lines in `subtract`, when the totals include
+    them) or, when it is missing or unusable, the sum of the assistant messages of the transcript."""
+    main = read_main(Path(path))
+    if main is None:
+        return []
+    if main["cost"]:
+        source, totals = "session-total", {m: dict(v) for m, v in main["cost"].items()}
+        if COST_STATE_INCLUDES_SUBAGENTS:
+            for line in subtract:
+                if line.get("model") in totals:
+                    for f, _ in USAGE_FIELDS:
+                        totals[line["model"]][f] = max(0, totals[line["model"]][f] - line[f])
+    else:
+        source, totals = "transcript", main["sums"]
+    times = main["times"]
+    lines = []
+    for model, sums in sorted(totals.items()):
+        if not any(sums.values()):
+            continue
+        for kind, factor in (("measured", 1), ("estimate", ORCHESTRATOR_ESTIMATE_FACTOR)):
+            row = {"v": VERSION, "id": f"{project}:{main['session']}:{model}:{kind}", "project": project,
+                   "stage": stage, "issue": None, "role": "orchestrator", "provider": "claude",
+                   "model": model, "effort": None,
+                   **{f: round(sums[f] * factor) for f, _ in USAGE_FIELDS},
+                   "start": iso(times[0]) if times else None, "end": iso(times[-1]) if times else None,
+                   "retry": 0, "estimate": kind == "estimate", "source": source}
+            lines.append({k: row[k] for k in FIELDS})
+    return lines
+
+
+def is_subagent_transcript(path):
+    """True when the first user message has a `ROLE=... ISSUE=...` prompt."""
+    try:
+        with path.open(encoding="utf-8") as f:
+            for raw in f:
+                try:
+                    d = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and d.get("type") == "user":
+                    content = (d.get("message") or {}).get("content")
+                    if isinstance(content, list):
+                        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+                    return bool(PROMPT_RE.search(content if isinstance(content, str) else ""))
+    except (OSError, UnicodeError):
+        pass
+    return False
+
+
+def project_folder(folder):
+    """The folder itself when it directly holds a main-session transcript, else the nearest ancestor that does."""
+    start = Path(folder).resolve()
+    for d in (start, *start.parents):
+        if any(not is_subagent_transcript(p) for p in d.glob("*.jsonl")):
+            return d
+    return None
+
+
+def newest_main_transcript(folder):
+    top = project_folder(folder)
+    if top is None:
+        return None
+    files = [p for p in top.glob("*.jsonl") if not is_subagent_transcript(p)]
+    return max(files, key=lambda p: p.stat().st_mtime) if files else None
+
+
 def first_receipt(issue):
     """Return the time of the first `## Launch:` receipt of any role, or None."""
     times = [t for ts in receipts(issue).values() for t in ts]
@@ -291,6 +419,7 @@ def main(argv=None):
     w.add_argument("--stage", type=int, required=True)
     w.add_argument("--issues", required=True, help="JSON file: gh issue view --json number,comments,closedAt,labels")
     w.add_argument("--transcripts", required=True, help="folder of Claude Code subagent transcripts")
+    w.add_argument("--orchestrator-transcript", help="main-session transcript; default: the newest one of the project folder")
     w.add_argument("--codex-usage", help="Codex QA token record codex-qa-usage.jsonl")
     args = ap.parse_args(argv)
     issues = load_issues(args.issues)
@@ -299,6 +428,18 @@ def main(argv=None):
         lines = build_lines(args.project, args.stage, issues, args.transcripts)
     else:
         print(f"No transcript folder: {args.transcripts}; no Claude lines")
+    orch = Path(args.orchestrator_transcript) if args.orchestrator_transcript else newest_main_transcript(args.transcripts)
+    if orch is None:
+        print("No main-session transcript found; no orchestrator line")
+    else:
+        if not args.orchestrator_transcript:
+            print(f"Orchestrator transcript: {orch}")
+        mine = {p.stem for p in (orch.parent / orch.stem / "subagents").rglob("*.jsonl")}
+        sub = [x for x in lines if x["provider"] == "claude" and x["id"].split(":")[-2] in mine]
+        orchestrator = orchestrator_lines(orch, args.project, args.stage, sub)
+        if not orchestrator:
+            print("No usable usage in the orchestrator transcript; no orchestrator line")
+        lines += orchestrator
     if args.codex_usage:
         codex, skipped = codex_lines(args.codex_usage, issues, args.project, args.stage)
         lines += codex
