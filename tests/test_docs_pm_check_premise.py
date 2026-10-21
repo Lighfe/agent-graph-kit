@@ -33,7 +33,7 @@ def test_rule_names_the_premise_check():
 def test_rule_gives_the_wording_examples():
     for p in COPIES:
         s = section(p)
-        assert 'write "ignoring the fields `game_id` and `started_at`" instead of "identical records"' in s
+        assert 'write "ignoring the fields `request_id` and `created_at`" instead of "identical records"' in s
         assert 'write "for each finding that names a problem" instead of "each finding"' in s
 
 
@@ -49,7 +49,7 @@ def test_rule_bounds_full_scale_runs():
         s = section(p)
         assert "also asks for a smaller run as the check" in s
         assert "the measured peak memory in `## Engineer: DONE`" in s
-        assert 'as a bound (for example "at most 5,000 games"), not as "at least"' in s
+        assert 'as a bound (for example "at most 5,000 rows"), not as "at least"' in s
 
 
 def test_both_copies_are_equal():
