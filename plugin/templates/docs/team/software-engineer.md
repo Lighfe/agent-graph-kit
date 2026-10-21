@@ -43,7 +43,6 @@ A job that is expected to take more than one minute, or to build a large output,
 - Measure the peak inside the scope: `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 /usr/bin/time -v <command>`. The peak is the line `Maximum resident set size` (the largest resident set size)
 - `## Engineer: DONE` records, for each such job, the command line, the exit code and the peak
 - Where no such tool exists, run a smaller version first, as the PM rule "Check the premise" says, and record its peak if you can measure it
-- Your effort as owner: install nothing; systemd is already on most Linux machines
 
 ## Clean hand-back
 

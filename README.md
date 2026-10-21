@@ -33,6 +33,8 @@ Public repo rule: no secrets, no real account data and no full third-party artic
 - `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
 - Codex CLI, logged in (`codex login`)
 
+The memory cap of heavy jobs uses `systemd-run --user`. On a Linux machine with systemd the owner installs nothing. Where `systemd-run` is missing, the engineer runs a smaller version first.
+
 The setup checks for `gh`, `uv` and Codex were run only on a machine that has them. The output on a machine without them is not tested.
 
 Optional, needed only for the frontend lane (skip this block when you do not use Lovable):

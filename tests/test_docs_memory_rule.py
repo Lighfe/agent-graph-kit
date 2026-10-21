@@ -42,9 +42,13 @@ def test_engineer_fallback_without_tool():
     assert "Check the premise" in r
 
 
-def test_engineer_owner_effort():
-    assert "install nothing" in rule().lower()
-    assert "systemd" in rule()
+def test_owner_effort_is_in_readme_not_role_file():
+    assert "effort as owner" not in read("software-engineer.md")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    prereq = readme.split("### Prerequisites", 1)[1].split("### Steps", 1)[0]
+    assert "systemd-run --user" in prereq
+    assert "installs nothing" in prereq
+    assert "smaller version first" in prereq
 
 
 def test_qa_line():
