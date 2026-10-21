@@ -210,7 +210,7 @@ Fact tests:
 
 Prompt audit:
 
-1. Run `claude -p "/doctor prompt-audit"` and then `claude -p "/doctor prompt-audit docs/"` (Bash timeout 600000 ms each). Write the output of each run to its own file, a path in `/tmp` with the stage number, and read the whole file before the review lists findings. Never list findings from a cut-off tail of the output. Two runs are needed because the scopes read different files: the default run reads `AGENTS.md`, the skills and the agent files, and the `docs/` run reads `docs/process.md`, `docs/team/` and `docs/task-template.md`
+1. Run `claude -p "/doctor prompt-audit"` and then `claude -p "/doctor prompt-audit docs/"` (Bash timeout 600000 ms each). Write the output of each run to its own file, a path in `/tmp` with the stage number, and read the whole file before the review lists findings. Never list findings from a cut-off tail of the output. Two runs are needed because the scopes read different files: the default run reads `AGENTS.md`, the skills and the agent files, and the `docs/` run reads `docs/process.md`, `docs/team/`, `docs/task-template.md` and `docs/checks/`
 2. List their findings: file, line, and what the audit says. A finding that an earlier stage review or an open issue already has is listed as "known", with that issue or review named, not as new
 3. Apply none of the edits that the audit proposes
 4. Run `git status --porcelain` after the two runs. When the output is not empty, name the changed files in the review. Do not clean them up
