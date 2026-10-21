@@ -44,7 +44,8 @@ def test_foreground_test_run_with_600000_timeout():
 
 def test_timeout_rerun_in_background_and_wait():
     assert "`run_in_background`" in TESTS
-    assert re.search(r"hits the timeout.*run it again.*`run_in_background`", TESTS)
+    assert re.search(r"hits the timeout, run it again.*`run_in_background`", TESTS)
+    assert TESTS.count("in the foreground") == 1
     assert re.search(r"wait (for it )?until it (has )?end", TESTS) or "wait for it to end" in TESTS
     assert "before you read the result" in TESTS
 
