@@ -380,3 +380,37 @@ def test_orchestrator_empty_cost_state_falls_back_to_messages(tmp_path, monkeypa
     folder = main_session(tmp_path, MAIN + [cost_state(**{"claude-x": (0, 0, 0, 0)})])
     m = orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True))[("claude-x", False)]
     assert (m["input_tokens"], m["source"]) == (101, "transcript")
+
+
+# --- limit subcommand (issue #245) ---
+
+def test_limit_appends_line(tmp_path, monkeypatch):
+    rec = tmp_path / "state" / "run-record.jsonl"
+    monkeypatch.setenv("RUN_RECORD_FILE", str(rec))
+    monkeypatch.delenv("RUN_RECORD_LIMITS_FILE", raising=False)
+    argv = ["limit", "--project", "o/r", "--stage", "9", "--point", "start", "--percent", "12.5", "--plan", "max"]
+    assert rr.main(argv) == 0
+    rows = [json.loads(x) for x in (tmp_path / "state" / "run-record-limits.jsonl").read_text().splitlines()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["v"], row["project"], row["stage"], row["point"], row["percent"], row["plan"]) == (1, "o/r", 9, "start", 12.5, "max")
+    assert row["time"].endswith("Z")
+
+
+def test_limit_env_overrides_path(tmp_path, monkeypatch):
+    target = tmp_path / "elsewhere" / "l.jsonl"
+    monkeypatch.setenv("RUN_RECORD_LIMITS_FILE", str(target))
+    assert rr.main(["limit", "--project", "p", "--stage", "1", "--point", "end", "--percent", "0", "--plan", "x"]) == 0
+    assert target.is_file()
+
+
+def test_limit_rejects_bad_input(tmp_path, monkeypatch):
+    import pytest
+    target = tmp_path / "l.jsonl"
+    monkeypatch.setenv("RUN_RECORD_LIMITS_FILE", str(target))
+    for pct in ("-1", "100.5"):
+        assert rr.main(["limit", "--project", "p", "--stage", "1", "--point", "end", "--percent", pct, "--plan", "x"]) != 0
+    with pytest.raises(SystemExit) as e:
+        rr.main(["limit", "--project", "p", "--stage", "1", "--point", "middle", "--percent", "5", "--plan", "x"])
+    assert e.value.code != 0
+    assert not target.exists()

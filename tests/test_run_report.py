@@ -154,3 +154,130 @@ def test_codex_usage_no_record_leaves_rest_unchanged(tmp_path, capsys):
     for argv in (["--codex-usage", str(tmp_path / "missing.jsonl")], ["--codex-usage", str(empty)]):
         assert run_report.main(["--comments", str(f), "--issues", "1,2,3", *argv]) == 0
         assert capsys.readouterr().out == base
+
+
+# --- report from the run record (issue #245) ---
+
+def rline(id_, project="o/a", stage=9, issue=1, role="engineer", provider="claude", model="m1",
+          tok=(100, 10, 40, 1000), retry=0, estimate=False, **extra):
+    d = {"v": 1, "id": id_, "project": project, "stage": stage, "issue": issue, "role": role,
+         "provider": provider, "model": model, "input_tokens": tok[0], "output_tokens": tok[1],
+         "cache_creation_tokens": tok[2], "cache_read_tokens": tok[3], "start": "2026-10-21T10:00:00.000Z",
+         "end": "2026-10-21T10:30:00.000Z", "retry": retry, "estimate": estimate}
+    d.update(extra)
+    return d
+
+
+WEIGHTS = {"note": "x", "claude": {"input": 1, "output": 5, "cache_creation": 1.25, "cache_read": 0.1},
+           "codex": {"input": 1, "output": 5, "cache_creation": 1, "cache_read": 0.1}}
+
+
+def write_record(path, rows, raw_extra=()):
+    path.write_text("\n".join([json.dumps(r) for r in rows] + list(raw_extra)) + "\n")
+
+
+def record_rows():
+    return [
+        rline("a1"),
+        rline("a2", role="qa", retry=2, issue=1),
+        rline("c1", role="qa-codex", provider="codex", model="gpt", tok=(10, 2, 0, 50)),
+        rline("o1", role="orchestrator", issue=None, tok=(1000, 100, 0, 0)),
+        rline("o2", role="orchestrator", issue=None, tok=(1100, 110, 0, 0), estimate=True),
+        rline("b1", project="o/b", stage=3, issue=7, tok=(5, 5, 5, 5)),
+        {"v": 1, "id": "i1", "project": "o/a", "stage": 9, "issue": 1, "role": "issue", "escalations": 2,
+         "start": "2026-10-21T10:00:00.000Z", "end": "2026-10-21T12:05:00.000Z"},
+    ]
+
+
+def run_record_report(tmp_path, rows, capsys, extra=(), raw_extra=(), weights=None):
+    rec = tmp_path / "rec.jsonl"
+    write_record(rec, rows, raw_extra)
+    w = tmp_path / "w.json"
+    w.write_text(json.dumps(weights or WEIGHTS))
+    code = run_report.main(["--record", str(rec), "--weights", str(w), *extra])
+    return code, capsys.readouterr()
+
+
+def test_weighted_applies_factors():
+    assert run_report.weighted(rline("x"), WEIGHTS) == 100 + 50 + 50 + 100.0
+    assert run_report.weighted(rline("x", provider="codex", tok=(0, 0, 10, 0)), WEIGHTS) == 10.0
+
+
+def test_record_report_sections(tmp_path, capsys):
+    code, cap = run_record_report(tmp_path, record_rows(), capsys)
+    assert code == 0
+    out = cap.out
+    assert "| engineer | 105 | 15 | 45 | 1,005 |" in out
+    assert "orchestrator (measured up to the report; not complete)" in out
+    assert "| estimate | 1,100 | 110 | 0 | 0 |" in out
+    assert "| o/b |" in out and "| gpt |" in out
+    assert "estimate from price ratios, not measured plan use" in out
+    assert "| codex | 25 | 0 |" in out
+    assert "| #1 | 2h 05m | 2 |" in out
+    assert "| qa | #1 | 2 |" in out
+
+
+def test_stage_and_project_filter(tmp_path, capsys):
+    _c, cap = run_record_report(tmp_path, record_rows(), capsys, extra=["--stage", "3"])
+    assert "| o/b |" in cap.out and "| o/a |" not in cap.out
+    _c, cap = run_record_report(tmp_path, record_rows(), capsys, extra=["--project", "o/a"])
+    assert "| o/b |" not in cap.out
+
+
+def test_changed_weights_change_total_not_record(tmp_path, capsys):
+    rec = tmp_path / "rec.jsonl"
+    write_record(rec, record_rows())
+    before = rec.read_bytes()
+    w = tmp_path / "w.json"
+    outs = []
+    for out_factor in (5, 50):
+        weights = json.loads(json.dumps(WEIGHTS))
+        weights["claude"]["output"] = out_factor
+        w.write_text(json.dumps(weights))
+        assert run_report.main(["--record", str(rec), "--weights", str(w)]) == 0
+        outs.append(capsys.readouterr().out)
+    assert outs[0] != outs[1]
+    assert rec.read_bytes() == before
+
+
+def test_bad_json_line_skipped(tmp_path, capsys):
+    code, cap = run_record_report(tmp_path, record_rows(), capsys, raw_extra=["{not json"])
+    assert code == 0 and "skipped 1 invalid line" in cap.out.lower()
+
+
+def test_missing_and_incomplete_weights(tmp_path, capsys):
+    rec = tmp_path / "rec.jsonl"
+    write_record(rec, record_rows())
+    missing = tmp_path / "nope.json"
+    assert run_report.main(["--record", str(rec), "--weights", str(missing)]) != 0
+    assert str(missing) in capsys.readouterr().err
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"claude": {"input": 1}, "codex": WEIGHTS["codex"]}))
+    assert run_report.main(["--record", str(rec), "--weights", str(bad)]) != 0
+    assert str(bad) in capsys.readouterr().err
+
+
+def test_id_twice_last_counts(tmp_path, capsys):
+    rows = [rline("same", tok=(1, 1, 1, 1)), rline("same", tok=(7, 1, 1, 1))]
+    _c, cap = run_record_report(tmp_path, rows, capsys)
+    assert "| engineer | 7 | 1 | 1 | 1 |" in cap.out
+
+
+def test_limits_next_to_weighted_total(tmp_path, capsys):
+    lim = tmp_path / "lim.jsonl"
+    rows = [
+        {"v": 1, "project": "o/a", "stage": 9, "time": "2026-10-21T09:05:00.000Z", "point": "start", "percent": 12, "plan": "max"},
+        {"v": 1, "project": "o/a", "stage": 9, "time": "2026-10-21T09:00:00.000Z", "point": "start", "percent": 10, "plan": "max"},
+    ]
+    lim.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    _c, cap = run_record_report(tmp_path, record_rows(), capsys, extra=["--limits", str(lim)])
+    assert "o/a stage 9: weighted claude" in cap.out
+    assert "start 12%" in cap.out and "start 10%" not in cap.out
+    assert "end not entered" in cap.out
+    assert "o/b stage 3" in cap.out and "start not entered" in cap.out
+
+
+def test_repo_weights_file_is_valid():
+    w = run_report.load_weights(run_report.DEFAULT_WEIGHTS)
+    assert w["claude"] == {"input": 1, "output": 5, "cache_creation": 1.25, "cache_read": 0.1}
+    assert w["codex"]["cache_creation"] == 1 and "assumption" in w["note"]

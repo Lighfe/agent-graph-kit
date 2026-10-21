@@ -50,6 +50,11 @@ def record_path():
     return base / "agent-graph-kit" / "run-record.jsonl"
 
 
+def limits_path():
+    env = os.environ.get("RUN_RECORD_LIMITS_FILE")
+    return Path(env) if env else record_path().parent / "run-record-limits.jsonl"
+
+
 def role_group(role):
     if role in PREFIX_OF_ROLE:
         return PREFIX_OF_ROLE[role]
@@ -413,6 +418,21 @@ def append_lines(lines):
     return written
 
 
+def write_limit(args):
+    """Append one hand-entered plan limit line; a percent outside 0 to 100 writes nothing."""
+    if not 0 <= args.percent <= 100:
+        print(f"run_record: percent must be between 0 and 100, got {args.percent}", file=sys.stderr)
+        return 2
+    row = {"v": VERSION, "project": args.project, "stage": args.stage, "time": iso(datetime.now(timezone.utc)),
+           "point": args.point, "percent": args.percent, "plan": args.plan}
+    path = limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    print(f"Wrote the {args.point} limit of stage {args.stage} to {path}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -423,7 +443,15 @@ def main(argv=None):
     w.add_argument("--transcripts", required=True, help="folder of Claude Code subagent transcripts")
     w.add_argument("--orchestrator-transcript", help="main-session transcript; default: the newest one of the project folder")
     w.add_argument("--codex-usage", help="Codex QA token record codex-qa-usage.jsonl")
+    lim = sub.add_parser("limit", help="enter the percent of the session limit used at the start or end of a stage")
+    lim.add_argument("--project", required=True)
+    lim.add_argument("--stage", type=int, required=True)
+    lim.add_argument("--point", required=True, choices=("start", "end"))
+    lim.add_argument("--percent", required=True, type=float)
+    lim.add_argument("--plan", required=True, help="plan name, free text")
     args = ap.parse_args(argv)
+    if args.cmd == "limit":
+        return write_limit(args)
     issues = load_issues(args.issues)
     lines = []
     if Path(args.transcripts).is_dir():

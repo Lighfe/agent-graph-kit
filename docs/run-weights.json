@@ -1,0 +1,5 @@
+{
+  "note": "Factors per token kind. These are API price ratios, an assumption, not measured against the plans. Edit this file to change the report; weights are never written into the record.",
+  "claude": {"input": 1, "output": 5, "cache_creation": 1.25, "cache_read": 0.1},
+  "codex": {"input": 1, "output": 5, "cache_creation": 1, "cache_read": 0.1}
+}
