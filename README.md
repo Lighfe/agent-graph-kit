@@ -378,20 +378,30 @@ The orchestrator closes an issue only if the SHA that QA verified is the current
 
 A plugin project has no clone of the kit and no `.claude/hooks` of its own to copy from. The kit files that `/agk:setup` copied are recorded in `.agent-graph-kit.lock`. `/agk:drift` compares them with the new plugin files, and `--update` takes the safe cases. Nothing is overwritten without you.
 
-1. Update the plugin first, so the plugin templates are new (see "Update the plugin in a project" above).
+1. Update the plugin first (see "Update the plugin in a project" above). The new templates are in `<plugin cache>/agk/<version>/templates/`, usually `~/.claude/plugins/cache/agent-graph-kit/agk/<version>/`.
 2. Run `/agk:drift`. It prints one line `<state>: <path>` per file and writes nothing.
-3. Run the update in a terminal outside Claude Code, in the root of the project. The guard hooks and the Auto mode classifier deny writes into `.claude/` from a session.
+3. In a terminal outside Claude Code, in the root of the project, run the update. The guard hooks and the Auto mode classifier deny writes into `.claude/` from a session.
 
    ```bash
-   uv run --script <plugin folder>/skills/drift/drift.py --root . --update
+   uv run --script <plugin cache>/agk/<version>/skills/drift/drift.py --root . --update
    ```
 
-   The plugin folder is the folder of `agk` under the plugin cache (usually `~/.claude/plugins/cache/`).
-4. Read the result:
    - `newer in the plugin`: replaced by the new template (`updated: <path>`), and the lock holds the new state
    - `changed in this project`: kept as it is
-   - `changed in both`: shown as `not touched (changed in both): <path>`. Merge it by hand: compare the plugin template with the project file (for example `diff <plugin folder>/templates/<path> <path>`)
-5. Commit the updated files and `.agent-graph-kit.lock`.
+   - `changed in both`: shown as `not touched (changed in both): <path>`
+   - `dropped (gone from both)`: the entry is removed from the lock (`removed from the lock: <path>`)
+
+   "nothing updated" is a normal answer. It means no file is `newer in the plugin`.
+4. Merge each `changed in both` file by hand: compare the template with the project file (for example `diff <plugin cache>/agk/<version>/templates/<path> <path>`). A template line that names a file the project does not have (for example `scripts/build_plugin.py`) is reworded or removed.
+5. Tell the lock that the merge is done, once for each merged file, in the same terminal:
+
+   ```bash
+   uv run --script <plugin cache>/agk/<version>/skills/drift/drift.py --root . --accept <path> [<path> ...]
+   ```
+
+   `--accept` sets the lock entry to the current template. It changes no project file. It refuses `AGENTS.md`, a path that is not in the lock, a path without a template, and a path that is not in the project; then it writes nothing.
+6. Run `/agk:drift` again. It shows no `changed in both` and no `dropped`.
+7. Commit the files and `.agent-graph-kit.lock` together.
 
 ## Background
 
