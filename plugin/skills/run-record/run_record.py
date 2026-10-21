@@ -205,7 +205,7 @@ def read_main(path):
                           for m, u in usage.items()}
             except (AttributeError, TypeError, ValueError):
                 continue
-            if parsed:
+            if any(v for u in parsed.values() for v in u.values()):
                 cost = parsed
             continue
         msg = d.get("message")
@@ -265,7 +265,9 @@ def orchestrator_lines(path, project, stage, subtract=()):
 
 
 def is_subagent_transcript(path):
-    """True when the first user message has a `ROLE=... ISSUE=...` prompt."""
+    """True when the file is under a `subagents` folder, or its first user message has a `ROLE=... ISSUE=...` prompt."""
+    if path.parent.name == "subagents":
+        return True
     try:
         with path.open(encoding="utf-8") as f:
             for raw in f:

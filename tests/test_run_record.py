@@ -368,3 +368,15 @@ def test_orchestrator_transcript_option_and_newest_pick(tmp_path, monkeypatch):
     assert rr.main(argv) == 0
     ids = [json.loads(x)["id"] for x in rec.read_text().splitlines()]
     assert "o/r:old:claude-x:measured" in ids and "o/r:new:claude-x:measured" not in ids
+
+
+def test_orchestrator_discovery_skips_subagents_folder(tmp_path):
+    folder = main_session(tmp_path, MAIN)
+    write(folder / "agent-1.jsonl", [user("no role prompt here")])
+    assert rr.newest_main_transcript(folder) == tmp_path / "proj" / "sess.jsonl"
+
+
+def test_orchestrator_empty_cost_state_falls_back_to_messages(tmp_path, monkeypatch):
+    folder = main_session(tmp_path, MAIN + [cost_state(**{"claude-x": (0, 0, 0, 0)})])
+    m = orch(run(tmp_path, [one_issue()], monkeypatch, folder=folder, keep_orch=True))[("claude-x", False)]
+    assert (m["input_tokens"], m["source"]) == (101, "transcript")
