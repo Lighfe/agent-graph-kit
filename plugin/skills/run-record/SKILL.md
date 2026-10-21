@@ -13,7 +13,7 @@ This skill keeps the cost of every subagent launch after Claude Code deletes its
 2. Run the script from this skill's folder:
 
    ```bash
-   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder> [--codex-usage <codex-qa-usage.jsonl>]
+   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder> [--codex-usage <codex-qa-usage.jsonl>] [--orchestrator-transcript <main-session transcript>]
    ```
 
 3. The script writes the Claude lines, the Codex QA lines (with `--codex-usage`) and one line per issue (time and escalations). It prints how many lines it wrote. Running it again adds no second line.

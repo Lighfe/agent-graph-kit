@@ -411,6 +411,18 @@ After each Codex run that ends `ok` (before the schema check), `qa-codex` append
 - A run that ends in a failure writes no line (it has no `turn.completed` event). When stdout has no usage event, or the file cannot be written, no line is written and the QA result does not change.
 - `scripts/run_report.py --codex-usage <file>` sums the three token fields for each issue of the report.
 
+## Run record
+
+At the end of a stage the orchestrator runs `plugin/skills/run-record/run_record.py write` (step 4 of "Stage end" in [docs/team/orchestrator.md](../team/orchestrator.md#stage-end)). The command appends lines to a local file outside the git tree. A failure of the command is named in the run notes and does not stop the loop.
+
+- **File.** `<state dir>/agent-graph-kit/run-record.jsonl`; the state dir is built as for the token record: the env var `RUN_RECORD_FILE` (the whole path), else `$XDG_STATE_HOME`, else `~/.local/state`. JSONL, append-only, flat objects, one file for all projects.
+- **Fields.** `v` (1), `id`, `project` (the repo name, owner and repo), `stage`, `issue`, `role`, `provider`, `model`, `effort`, `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens`, `start`, `end`, `retry`, `estimate`, `source`. An issue line also has `escalations`. No prompt, comment or output text is written.
+- **Ids.** A Claude subagent line: project, transcript file id, model. A Codex line: project, issue, the `time` of its token record line. An orchestrator line: project, session id, model, `measured` or `estimate`. An issue line: project, issue. A line whose `id` is in the file is not written again, except orchestrator lines, which are appended each run; a reader takes the last line per `id`.
+- **Lines.** One per launch and model. Claude subagent lines come from the transcripts whose first prompt has `ROLE=<role> ISSUE=<n>` with `<n>` in the issue file; `retry` counts the earlier launch receipts of the role on the issue. Codex QA lines come from `codex-qa-usage.jsonl` when the run time lies between the first receipt and the close of the issue. Issue lines (role `issue`, token fields 0) hold the first receipt, the close time and the escalations.
+- **Orchestrator.** The measured line (`estimate` false) is the main session up to the moment the writer runs, so it is incomplete. Its source is `session-total` (the `cost-state` record, minus the Claude subagent lines because the totals include them) or `transcript` (the sum of the assistant messages) when `cost-state` is missing. The estimate line (`estimate` true) is the measured counts times a fixed factor, 1.1, a guess. The main-session transcript is `--orchestrator-transcript`, else the newest one of the project folder.
+- **Weights.** Not stored. `scripts/run_report.py --record` applies the factors of `docs/run-weights.json` (per token kind, Claude and Codex apart) when it reads, and prints Claude and Codex totals separately, as an estimate from price ratios.
+- **Limits file.** `run-record-limits.jsonl` next to the record (`RUN_RECORD_LIMITS_FILE` sets the whole path). `run_record.py limit` appends a line with `v`, `project`, `stage`, `time`, `point` (`start` or `end`), `percent` (0 to 100) and `plan`, entered by hand. `run_report.py --limits` prints it next to the weighted total. Nothing reads the percent automatically.
+
 ## Stage model
 
 The loop steps for stages (pick order, promotion, stage end) are in "Stages" of [docs/process.md](../process.md#stages) and in [docs/team/orchestrator.md](../team/orchestrator.md); stage set-up and the stage review are in [docs/team/planner.md](../team/planner.md). The form of a stage issue is "Stage issue" in `docs/task-template.md`. In short:

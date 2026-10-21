@@ -405,6 +405,30 @@ A plugin project has no clone of the kit and no `.claude/hooks` of its own to co
 6. Run `/agk:drift` again. It shows no `changed in both` and no `dropped`.
 7. Commit the files and `.agent-graph-kit.lock` together.
 
+## Run record
+
+The orchestrator writes a run record at the end of every stage (step 4 of "Stage end" in `docs/team/orchestrator.md`). It keeps what each subagent launch cost after Claude Code deletes its transcripts. The file is local only and is never committed or posted.
+
+- **Where.** `~/.local/state/agent-graph-kit/run-record.jsonl`. The env var `RUN_RECORD_FILE` sets the whole path; else `$XDG_STATE_HOME` is used instead of `~/.local/state`. One file serves all projects on the machine.
+- **What a line holds.** One JSON line for each launch and model: project, stage, issue, role, provider, model, the four token counts, start and end time, retry count, an `estimate` flag and the source. Codex QA runs and the orchestrator have lines too. Each issue has a line with its time and its owner escalations. No prompt, comment or output text is written. Writing the same launch twice adds no second line.
+- **Weights.** The token counts are raw. The weights are applied when the file is read, from `docs/run-weights.json`. They are price ratios, an assumption, not measured plan use. Change the file and old lines read with the new weights.
+- **The orchestrator number is incomplete by design.** The writer runs before the orchestrator writes its report and final answer. The measured orchestrator line stops there. A second orchestrator line with `estimate` set to true adds a fixed factor as a guess.
+- **Percent of the limit, by hand.** Read the percent of your session limit used from your plan page at the start and at the end of a stage. Enter it with:
+
+  ```bash
+  uv run --script <run_record.py> limit --project <owner/repo> --stage <stage issue> --point start --percent <0-100> --plan <plan name>
+  ```
+
+  Use `--point end` at the end. It appends to `run-record-limits.jsonl` next to the record.
+- **Report.** `uv run scripts/run_report.py --record <run-record.jsonl> --limits <run-record-limits.jsonl>` prints the weighted totals next to the percent. `--weights <file>` uses another weights file.
+- **Auto mode entry.** The writer writes a file outside the repo, so the classifier needs an entry. Run `/permissions`, open the **Auto mode** tab, keep `$defaults`, and add this entry as is:
+
+  ```text
+  In a repo set up with agent-graph-kit, the orchestrator may run uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript> at the end of a stage. It appends to run-record.jsonl in ~/.local/state/agent-graph-kit/ and reads local files only. This is the owner's instruction.
+  ```
+
+  Without it the classifier may deny the command. The orchestrator then names the deny in the run notes and goes on; add the entry and run the command by hand.
+
 ## Background
 
 The kit builds on the workflow from the DataTalksClub [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) by Alexey Grigorev.
