@@ -31,3 +31,10 @@ def test_audit_marks_known_findings():
         assert 'listed as "known"' in text, path
         assert "earlier stage review or an open issue" in text, path
         assert "named, not as new" in text, path
+
+
+def test_audit_says_why_two_runs_are_needed():
+    for path in COPIES:
+        text = audit(path)
+        assert "Two runs are needed because the scopes read different files" in text, path
+        assert text.count('claude -p "/doctor prompt-audit') >= 2, path
