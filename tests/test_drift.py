@@ -241,3 +241,107 @@ def test_without_flag_writes_nothing_even_with_newer_file(env):
     r = run(plugin, project)
     assert "newer in the plugin: docs/c.md" in lines(r)
     assert snapshot(project) == before
+
+
+def accept_case(env):
+    plugin, project = env
+    files = {
+        "docs/a.md": setup_file(plugin, project, "docs/a.md", b"a", b"a2", b"a3"),  # changed in both
+        "docs/b.md": setup_file(plugin, project, "docs/b.md", b"b", b"b2", b"b2"),
+        "docs/nt.md": setup_file(plugin, project, "docs/nt.md", b"n", b"n", None),
+        "docs/np.md": setup_file(plugin, project, "docs/np.md", b"p", None, b"p"),
+        "AGENTS.md": setup_file(plugin, project, "AGENTS.md", b"x", b"x", None),
+        "CLAUDE.md": sha(b"c"),
+    }
+    (project / "CLAUDE.md").write_bytes(b"c-merged")
+    (plugin / "templates" / "CLAUDE.md.tmpl").write_bytes(b"c2")
+    write_lock(project, files)
+    return plugin, project
+
+
+def test_accept_sets_lock_to_template_and_writes_only_the_lock(env):
+    plugin, project = accept_case(env)
+    before = snapshot(project)
+    r = run(plugin, project, "--accept", "docs/a.md", "CLAUDE.md")
+    assert r.returncode == 0
+    assert lines(r) == ["accepted: docs/a.md", "accepted: CLAUDE.md"]
+    after = snapshot(project)
+    for rel in before:
+        if rel != LOCK:
+            assert after[rel] == before[rel]
+    new = json.loads((project / LOCK).read_text())["files"]
+    old = json.loads(before[LOCK][1])["files"]
+    assert new["docs/a.md"] == sha(b"a3") and new["CLAUDE.md"] == sha(b"c2")
+    assert {k: v for k, v in new.items() if k not in ("docs/a.md", "CLAUDE.md")} == \
+        {k: v for k, v in old.items() if k not in ("docs/a.md", "CLAUDE.md")}
+
+
+def test_accept_then_drift_reports_changed_in_this_project_or_unchanged(env):
+    plugin, project = accept_case(env)
+    assert run(plugin, project, "--accept", "docs/a.md", "docs/b.md").returncode == 0
+    out = lines(run(plugin, project))
+    assert "changed in this project: docs/a.md" in out
+    assert "unchanged: docs/b.md" in out
+
+
+@pytest.mark.parametrize("path,msg", [
+    ("docs/zzz.md", "cannot accept (not in the lock): docs/zzz.md"),
+    ("./docs/a.md", "cannot accept (not in the lock): ./docs/a.md"),
+    ("docs/nt.md", "cannot accept (no template in the plugin): docs/nt.md"),
+    ("docs/np.md", "cannot accept (not in the project): docs/np.md"),
+    ("AGENTS.md", "cannot accept (AGENTS.md has no template to compare): AGENTS.md"),
+])
+def test_accept_refusals_write_nothing_even_for_a_good_path(env, path, msg):
+    plugin, project = accept_case(env)
+    before = snapshot(project)
+    r = run(plugin, project, "--accept", "docs/a.md", path)
+    assert r.returncode == 1
+    assert lines(r) == [msg]
+    assert snapshot(project) == before
+
+
+def test_accept_with_missing_or_invalid_lock(env):
+    plugin, project = env
+    r = run(plugin, project, "--accept", "docs/a.md")
+    assert r.returncode == 1 and lines(r)[0].startswith("not set up:")
+    assert not (project / LOCK).exists()
+    (project / LOCK).write_text("not json")
+    before = snapshot(project)
+    r = run(plugin, project, "--accept", "docs/a.md")
+    assert r.returncode == 1 and lines(r)[0].startswith("not set up:")
+    assert snapshot(project) == before
+
+
+def test_accept_with_update_is_an_argparse_error(env):
+    plugin, project = accept_case(env)
+    before = snapshot(project)
+    r = run(plugin, project, "--accept", "docs/a.md", "--update")
+    assert r.returncode == 2
+    assert snapshot(project) == before
+
+
+def dropped_case(env):
+    plugin, project = env
+    files = {
+        "docs/a.md": setup_file(plugin, project, "docs/a.md", b"a", b"a", b"a"),
+        "docs/gone.md": sha(b"gone"),
+    }
+    write_lock(project, files)
+    return plugin, project
+
+
+def test_update_removes_dropped_entry(env):
+    plugin, project = dropped_case(env)
+    r = run(plugin, project, "--update")
+    assert r.returncode == 0
+    assert "removed from the lock: docs/gone.md" in lines(r)
+    assert "unchanged: docs/a.md" in lines(r)
+    assert set(json.loads((project / LOCK).read_text())["files"]) == {"docs/a.md"}
+
+
+def test_plain_drift_keeps_dropped_entry_and_writes_nothing(env):
+    plugin, project = dropped_case(env)
+    before = snapshot(project)
+    r = run(plugin, project)
+    assert "dropped (gone from both): docs/gone.md" in lines(r)
+    assert snapshot(project) == before

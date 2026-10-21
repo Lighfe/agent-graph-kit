@@ -13,7 +13,19 @@ sha256 of the lock (L), the project file (P) and the plugin template (T). It wri
 
 With `--update` it replaces only the files that are `newer in the plugin` with the plugin template and
 sets their lock entries to the new sha256 (issue #201). Every other file and lock entry stays as it was.
+`--update` also deletes each lock entry whose state is `dropped (gone from both)` and prints
+`removed from the lock: <path>`. Plain drift writes nothing.
 Exit code 1 only when the lock file is missing or unusable, otherwise 0.
+
+  uv run --script drift.py --root <project root> --accept <path> [<path> ...]
+
+After the owner has merged a kit file by hand, `--accept` sets the lock entry of each path to the sha256
+of the current plugin template (`CLAUDE.md.tmpl` for `CLAUDE.md`) and prints `accepted: <path>`. It
+changes no project file and no other lock entry. A path is refused, in this order, when it is `AGENTS.md`
+(no template to compare), not in the lock, has no plugin template, or is not in the project; paths are
+used as written. When any path is refused, nothing is written and the exit code is 1. A missing or
+unusable lock file prints the `not set up` line and exits with 1. `--accept` and `--update` exclude
+each other (argparse error, exit code 2).
 """
 from __future__ import annotations
 
@@ -81,17 +93,50 @@ def state(root: Path, rel: str, lock_sha: str) -> str:
     return f"{label}: {rel}"
 
 
+def accept(root: Path, lock: dict[str, str], paths: list[str]) -> int:
+    """Set the lock entry of each path to the sha256 of its plugin template. All or nothing."""
+    new_lock = dict(lock)
+    refused = False
+    for rel in paths:
+        if rel == AGENTS:
+            reason = f"cannot accept (AGENTS.md has no template to compare): {rel}"
+        elif rel not in lock:
+            reason = f"cannot accept (not in the lock): {rel}"
+        elif sha256_of(template_path(rel)) is None:
+            reason = f"cannot accept (no template in the plugin): {rel}"
+        elif not (root / rel).exists() and not (root / rel).is_symlink():
+            reason = f"cannot accept (not in the project): {rel}"
+        else:
+            new_lock[rel] = sha256_of(template_path(rel))
+            continue
+        print(reason)
+        refused = True
+    if refused:
+        return 1
+    text = json.dumps({"version": 1, "files": dict(sorted(new_lock.items()))}, indent=2) + "\n"
+    (root / LOCK).write_text(text)
+    for rel in paths:
+        print(f"accepted: {rel}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", required=True)
     ap.add_argument("--update", action="store_true",
                     help="replace the files that are newer in the plugin; touch nothing else")
+    ap.add_argument("--accept", nargs="+", metavar="PATH",
+                    help="record the current plugin template as the lock entry of hand-merged files")
     a = ap.parse_args(argv)
+    if a.accept and a.update:
+        ap.error("--accept and --update cannot be used together")
     root = Path(a.root)
     lock = read_lock(root / LOCK)
     if lock is None:
         print(f"not set up: {LOCK} is missing or not a valid lock file in {root}")
         return 1
+    if a.accept:
+        return accept(root, lock, a.accept)
     new_lock = dict(lock)
     for rel in sorted(lock):
         line = state(root, rel, lock[rel])
@@ -100,6 +145,9 @@ def main(argv: list[str]) -> int:
             (root / rel).write_bytes(data)  # keeps the file mode of the project file
             new_lock[rel] = hashlib.sha256(data).hexdigest()
             print(f"updated: {rel}")
+        elif a.update and line.startswith("dropped (gone from both): "):
+            del new_lock[rel]
+            print(f"removed from the lock: {rel}")
         elif a.update and line.startswith("changed in both: "):
             print(f"not touched (changed in both): {rel}")
         else:
