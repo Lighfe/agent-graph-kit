@@ -138,7 +138,7 @@ def read_launch(path):
     if role is None:
         return None
     return {"role": role, "issue": issue, "effort": effort, "models": models,
-            "start": min(times) if times else None, "end": max(times) if times else None,
+            "start": times[0] if times else None, "end": times[-1] if times else None,
             "file_id": path.name[:-len(".jsonl")]}
 
 

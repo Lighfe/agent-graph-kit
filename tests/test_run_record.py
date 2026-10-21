@@ -165,3 +165,13 @@ def test_skill_frontmatter_is_valid_yaml():
     text = (ROOT / "plugin" / "skills" / "run-record" / "SKILL.md").read_text()
     desc = re.search(r"^description: (.*)$", text, re.M).group(1)
     assert desc.startswith('"') and desc.endswith('"')
+
+
+def test_start_end_are_first_and_last_message_not_min_max(tmp_path, monkeypatch):
+    write(tmp_path / "tr" / "o.jsonl", [
+        user("ROLE=pm ISSUE=5", "2026-10-21T11:00:00Z"),
+        asst("m1", "claude-x", (1, 1, 1, 1), "2026-10-21T10:59:00Z"),
+        asst("m2", "claude-x", (1, 1, 1, 1), "2026-10-21T11:02:00Z"),
+        asst("m3", "claude-x", (1, 1, 1, 1), "2026-10-21T11:01:00Z")])
+    (line,) = run(tmp_path, [one_issue()], monkeypatch)
+    assert line["start"] == "2026-10-21T11:00:00.000Z" and line["end"] == "2026-10-21T11:01:00.000Z"
