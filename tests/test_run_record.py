@@ -33,13 +33,17 @@ def issues_file(tmp_path, issues):
     return p
 
 
-def run(tmp_path, issues, monkeypatch, folder=None):
+def run(tmp_path, issues, monkeypatch, folder=None, codex=None, role=None):
+    """Run `write`; return the record lines, without the issue lines unless role is "issue"."""
     rec = tmp_path / "state" / "run-record.jsonl"
     monkeypatch.setenv("RUN_RECORD_FILE", str(rec))
     argv = ["write", "--project", "o/r", "--stage", "9", "--issues", str(issues_file(tmp_path, issues)),
             "--transcripts", str(folder or tmp_path / "tr")]
+    if codex is not None:
+        argv += ["--codex-usage", str(codex)]
     assert rr.main(argv) == 0
-    return [json.loads(x) for x in rec.read_text().splitlines()] if rec.exists() else []
+    rows = [json.loads(x) for x in rec.read_text().splitlines()] if rec.exists() else []
+    return [r for r in rows if (r["role"] == "issue") == (role == "issue")]
 
 
 def one_issue(n=5, receipts=()):
@@ -101,7 +105,7 @@ def test_second_qa_launch_has_retry_1(tmp_path, monkeypatch):
 
 def test_missing_folder_writes_nothing(tmp_path, monkeypatch, capsys):
     assert run(tmp_path, [one_issue()], monkeypatch, folder=tmp_path / "nope") == []
-    assert len(capsys.readouterr().out.strip().splitlines()) == 1
+    assert "No transcript folder" in capsys.readouterr().out
 
 
 def test_record_path(tmp_path, monkeypatch):
@@ -165,6 +169,92 @@ def test_skill_frontmatter_is_valid_yaml():
     text = (ROOT / "plugin" / "skills" / "run-record" / "SKILL.md").read_text()
     desc = re.search(r"^description: (.*)$", text, re.M).group(1)
     assert desc.startswith('"') and desc.endswith('"')
+
+
+def codex_file(tmp_path, rows):
+    p = tmp_path / "codex-qa-usage.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return p
+
+
+def crec(issue, t, **kw):
+    return {"issue": issue, "time": t, "model": "gpt-x", "effort": "high", "input_tokens": 100,
+            "cached_input_tokens": 60, "output_tokens": 7, **kw}
+
+
+WIN = [("qa", "2026-10-21T10:00:00Z")]
+
+
+def closed_issue(n=5, closed="2026-10-21T12:00:00Z", labels=(), comments=()):
+    i = one_issue(n, WIN)
+    i["closedAt"] = closed
+    i["labels"] = [{"name": x} for x in labels]
+    i["comments"] += [{"body": b, "createdAt": "2026-10-21T10:30:00Z"} for b in comments]
+    return i
+
+
+def test_codex_line_inside_window(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T11:00:00Z")])
+    (line,) = run(tmp_path, [closed_issue()], monkeypatch, codex=f)
+    assert list(line) == list(rr.FIELDS)
+    assert (line["role"], line["provider"], line["model"], line["effort"]) == ("qa-codex", "codex", "gpt-x", "high")
+    assert (line["input_tokens"], line["cache_read_tokens"], line["cache_creation_tokens"], line["output_tokens"]) == (100, 60, 0, 7)
+    assert line["start"] == line["end"] == "2026-10-21T11:00:00Z"
+    assert (line["retry"], line["source"], line["issue"], line["stage"]) == (0, "codex-record", 5, 9)
+    assert line["id"] == "o/r:codex:5:2026-10-21T11:00:00Z"
+
+
+def test_codex_skips_outside_window_and_unknown_issue(tmp_path, monkeypatch, capsys):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T09:00:00Z"), crec(5, "2026-10-21T13:00:00Z"),
+                              crec(99, "2026-10-21T11:00:00Z"), {"issue": 5}, {"time": "2026-10-21T11:00:00Z"},
+                              crec(5, "2026-10-21T11:00:00Z")])
+    assert len(run(tmp_path, [closed_issue()], monkeypatch, codex=f)) == 1
+    assert "skipped 5 Codex record lines" in capsys.readouterr().out
+
+
+def test_codex_issue_without_receipt_has_no_window(tmp_path, monkeypatch, capsys):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T11:00:00Z")])
+    assert run(tmp_path, [one_issue()], monkeypatch, codex=f) == []
+    assert "skipped 1 Codex record lines" in capsys.readouterr().out
+
+
+def test_codex_missing_or_empty_file(tmp_path, monkeypatch, capsys):
+    assert run(tmp_path, [closed_issue()], monkeypatch, codex=tmp_path / "nope.jsonl") == []
+    (tmp_path / "e.jsonl").write_text("")
+    assert run(tmp_path, [closed_issue()], monkeypatch, codex=tmp_path / "e.jsonl") == []
+    assert "skipped" not in capsys.readouterr().out
+
+
+def test_codex_open_issue_window_runs_to_now(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T15:00:00Z")])
+    assert len(run(tmp_path, [one_issue(5, WIN)], monkeypatch, codex=f)) == 1
+
+
+def test_two_codex_runs_two_lines_and_repeat_adds_none(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T11:00:00Z"), crec(5, "2026-10-21T11:30:00Z")])
+    assert len(run(tmp_path, [closed_issue()], monkeypatch, codex=f)) == 2
+    assert len(run(tmp_path, [closed_issue()], monkeypatch, codex=f)) == 2
+
+
+def test_issue_line(tmp_path, monkeypatch):
+    issue = closed_issue(comments=["## PM: NEEDS OWNER\nwhy", "  ## QA: NEEDS OWNER  ", "no ## NEEDS OWNER"])
+    (line,) = run(tmp_path, [issue], monkeypatch, role="issue")
+    assert (line["role"], line["issue"], line["stage"], line["escalations"]) == ("issue", 5, 9, 2)
+    assert line["start"] == "2026-10-21T10:00:00.000Z" and line["end"] == "2026-10-21T12:00:00.000Z"
+    assert (line["input_tokens"], line["output_tokens"], line["cache_creation_tokens"], line["cache_read_tokens"]) == (0, 0, 0, 0)
+    assert (line["source"], line["id"]) == ("transcript", "o/r:issue:5")
+
+
+def test_issue_line_open_with_needs_owner_label(tmp_path, monkeypatch):
+    issue = one_issue(5)
+    issue["labels"] = [{"name": "needs-owner"}]
+    (line,) = run(tmp_path, [issue], monkeypatch, role="issue")
+    assert line["escalations"] == 1 and line["start"] is None and line["end"] is None
+
+
+def test_issue_line_repeated_run_adds_none(tmp_path, monkeypatch):
+    assert len(run(tmp_path, [closed_issue()], monkeypatch, role="issue")) == 1
+    assert len(run(tmp_path, [closed_issue()], monkeypatch, role="issue")) == 1
 
 
 def test_start_end_are_first_and_last_message_not_min_max(tmp_path, monkeypatch):

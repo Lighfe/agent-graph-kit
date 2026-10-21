@@ -172,6 +172,93 @@ def build_lines(project, stage, issues, folder):
     return lines
 
 
+def first_receipt(issue):
+    """Return the time of the first `## Launch:` receipt of any role, or None."""
+    times = [t for ts in receipts(issue).values() for t in ts]
+    return min(times) if times else None
+
+
+def close_time(issue):
+    try:
+        return parse_time(issue["closedAt"]) if issue.get("closedAt") else None
+    except ValueError:
+        return None
+
+
+def window(issue, now=None):
+    """Return (start, end) of the issue window, or None when the issue has no receipt."""
+    start = first_receipt(issue)
+    if start is None:
+        return None
+    return start, close_time(issue) or now or datetime.now(timezone.utc)
+
+
+def codex_lines(usage_file, issues, project, stage):
+    """Return (lines, skipped): one qa-codex line per Codex record line inside the window of its issue."""
+    lines, skipped = [], 0
+    try:
+        raws = Path(usage_file).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return lines, skipped
+    windows = {}
+    for raw in raws:
+        if not raw.strip():
+            continue
+        try:
+            d = json.loads(raw)
+            n, when = d.get("issue"), d.get("time")
+            if n is None or not when:
+                raise ValueError("incomplete")
+            n = int(n)
+            t = parse_time(when)
+        except (ValueError, TypeError, AttributeError):
+            skipped += 1
+            continue
+        if n not in issues:
+            skipped += 1
+            continue
+        if n not in windows:
+            windows[n] = window(issues[n])
+        w = windows[n]
+        if w is None or not w[0] <= t <= w[1]:
+            skipped += 1
+            continue
+        row = {"v": VERSION, "id": f"{project}:codex:{n}:{when}", "project": project, "stage": stage,
+               "issue": n, "role": "qa-codex", "provider": "codex", "model": d.get("model"),
+               "effort": d.get("effort"), "input_tokens": int(d.get("input_tokens") or 0),
+               "output_tokens": int(d.get("output_tokens") or 0), "cache_creation_tokens": 0,
+               "cache_read_tokens": int(d.get("cached_input_tokens") or 0),
+               "start": when, "end": when, "retry": 0, "estimate": False, "source": "codex-record"}
+        lines.append({k: row[k] for k in FIELDS})
+    return lines, skipped
+
+
+def escalations(issue):
+    count = 0
+    for c in issue.get("comments") or []:
+        body = (c.get("body") or "").strip().splitlines()
+        first = body[0].strip() if body else ""
+        if first.startswith("## ") and first.endswith("NEEDS OWNER"):
+            count += 1
+    if count == 0:
+        names = [(x.get("name") if isinstance(x, dict) else x) for x in issue.get("labels") or []]
+        if "needs-owner" in names:
+            count = 1
+    return count
+
+
+def issue_lines(issues, project, stage):
+    lines = []
+    for n, issue in sorted(issues.items()):
+        row = {"v": VERSION, "id": f"{project}:issue:{n}", "project": project, "stage": stage,
+               "issue": n, "role": "issue", "provider": None, "model": None, "effort": None,
+               "input_tokens": 0, "output_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0,
+               "start": iso(first_receipt(issue)), "end": iso(close_time(issue)), "retry": 0,
+               "estimate": False, "source": "transcript", "escalations": escalations(issue)}
+        lines.append(row)
+    return lines
+
+
 def append_lines(lines):
     """Append one JSON line per entry; skip an id that is in the file already (orchestrator excepted).
     Return the number of lines written."""
@@ -204,11 +291,20 @@ def main(argv=None):
     w.add_argument("--stage", type=int, required=True)
     w.add_argument("--issues", required=True, help="JSON file: gh issue view --json number,comments,closedAt,labels")
     w.add_argument("--transcripts", required=True, help="folder of Claude Code subagent transcripts")
+    w.add_argument("--codex-usage", help="Codex QA token record codex-qa-usage.jsonl")
     args = ap.parse_args(argv)
-    if not Path(args.transcripts).is_dir():
-        print(f"No transcript folder: {args.transcripts}; nothing written")
-        return 0
-    lines = build_lines(args.project, args.stage, load_issues(args.issues), args.transcripts)
+    issues = load_issues(args.issues)
+    lines = []
+    if Path(args.transcripts).is_dir():
+        lines = build_lines(args.project, args.stage, issues, args.transcripts)
+    else:
+        print(f"No transcript folder: {args.transcripts}; no Claude lines")
+    if args.codex_usage:
+        codex, skipped = codex_lines(args.codex_usage, issues, args.project, args.stage)
+        lines += codex
+        if skipped:
+            print(f"skipped {skipped} Codex record lines")
+    lines += issue_lines(issues, args.project, args.stage)
     written = append_lines(lines)
     print(f"Wrote {written} lines to {record_path()} ({len(lines) - written} already there)")
     return 0

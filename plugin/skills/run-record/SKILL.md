@@ -13,9 +13,9 @@ This skill keeps the cost of every subagent launch after Claude Code deletes its
 2. Run the script from this skill's folder:
 
    ```bash
-   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder>
+   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder> [--codex-usage <codex-qa-usage.jsonl>]
    ```
 
-3. The script prints how many lines it wrote. Running it again adds no second line.
+3. The script writes the Claude lines, the Codex QA lines (with `--codex-usage`) and one line per issue (time and escalations). It prints how many lines it wrote. Running it again adds no second line.
 
 The record file is `$RUN_RECORD_FILE`, else `$XDG_STATE_HOME/agent-graph-kit/run-record.jsonl`, else `~/.local/state/agent-graph-kit/run-record.jsonl`. Spec: `docs/specs/2026-10-21-run-record.md`.
