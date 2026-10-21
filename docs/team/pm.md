@@ -55,6 +55,8 @@ A criterion must have a possible pass. For each criterion that names an equality
 - Word the criterion so a pass is possible. Example: write "ignoring the fields `request_id` and `created_at`" instead of "identical records" (a request id is random on purpose). Example: write "for each finding that names a problem" instead of "each finding" (a finding may have no problem)
 - Do not write a criterion on the logging or output of a library that nobody has run. Run it first, or state the observed behavior in the issue
 - A criterion that asks for a full-scale run (a large build, a long training) also asks for a smaller run as the check, and for the measured peak memory in `## Engineer: DONE`. State the scale of the full run as a bound (for example "at most 5,000 rows"), not as "at least"
+- For each command, file path or data column that a criterion names, check that it exists now (for example with `ls`, `grep`, or the command with `--help`). If it does not exist, fix the criterion or ask. A file or command that the issue itself creates is not checked
+- Ask whether the change has to alter an assertion, a constant or a test that a criterion says stays unchanged. If yes, fix the criterion
 
 ## Criteria for a text-matching check
 

@@ -54,3 +54,17 @@ def test_rule_bounds_full_scale_runs():
 
 def test_both_copies_are_equal():
     assert COPIES[0].read_bytes() == COPIES[1].read_bytes()
+
+
+def test_rule_checks_that_named_things_exist():
+    for p in COPIES:
+        s = section(p)
+        assert "command, file path or data column that a criterion names, check that it exists now" in s
+        assert "A file or command that the issue itself creates is not checked" in s
+
+
+def test_rule_checks_for_changing_assertions():
+    for p in COPIES:
+        s = section(p)
+        assert "alter an assertion, a constant or a test that a criterion says stays unchanged" in s
+        assert "If yes, fix the criterion" in s
