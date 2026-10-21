@@ -1,6 +1,6 @@
 ---
 name: run-record
-description: Write the run record of a stage: one JSON line per Claude subagent launch and model, kept outside the repo. Use when the orchestrator ends a stage, or when the owner asks to record the cost of a stage's launches.
+description: "Write the run record of a stage: one JSON line per Claude subagent launch and model, kept outside the repo. Use when the orchestrator ends a stage, or when the owner asks to record the cost of a stage's launches."
 ---
 
 # Run record

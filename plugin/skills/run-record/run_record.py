@@ -85,6 +85,7 @@ def receipts(issue):
 def read_launch(path):
     """Return a dict with role, issue, effort, start, end and per-model sums, or None."""
     role = issue = effort = None
+    first_user_seen = False
     seen = set()
     models = {}
     times = []
@@ -99,24 +100,27 @@ def read_launch(path):
             continue
         if not isinstance(d, dict):
             continue
+        if effort is None and isinstance(d.get("effort"), str):
+            effort = d["effort"]
+        msg = d.get("message") or {}
+        if not isinstance(msg, dict) or not msg:
+            continue
         ts = d.get("timestamp")
         if ts:
             try:
                 times.append(parse_time(ts))
             except ValueError:
                 pass
-        if effort is None and isinstance(d.get("effort"), str):
-            effort = d["effort"]
-        msg = d.get("message") or {}
-        if not isinstance(msg, dict):
-            continue
-        if role is None and d.get("type") == "user":
+        if not first_user_seen and d.get("type") == "user":
+            first_user_seen = True
             content = msg.get("content")
             if isinstance(content, list):
                 content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
             m = PROMPT_RE.search(content if isinstance(content, str) else "")
             if m:
                 role, issue = m.group(1), int(m.group(2))
+            else:
+                return None
             continue
         usage = msg.get("usage")
         if d.get("type") == "assistant" and isinstance(usage, dict):

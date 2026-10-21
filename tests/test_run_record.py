@@ -130,3 +130,38 @@ def test_no_network_imports():
         elif isinstance(node, ast.ImportFrom):
             names.add(node.module.split(".")[0])
     assert not names & {"socket", "urllib", "http", "subprocess"}
+
+
+def test_marker_only_in_first_user_prompt(tmp_path, monkeypatch):
+    write(tmp_path / "tr" / "late.jsonl", [user("ordinary first prompt"), user("ROLE=qa ISSUE=5"),
+                                            asst("m1", "claude-x", (1, 1, 1, 1), "2026-10-21T10:05:00Z")])
+    assert run(tmp_path, [one_issue()], monkeypatch) == []
+
+
+def test_times_come_from_messages_only(tmp_path, monkeypatch):
+    receipts = [("qa", "2026-10-21T10:00:00Z"), ("qa", "2026-10-21T11:00:00Z")]
+    write(tmp_path / "tr" / "q2.jsonl", [
+        {"type": "summary", "timestamp": "2026-10-21T09:00:00Z"},
+        user("ROLE=qa ISSUE=5", "2026-10-21T11:00:05Z"),
+        asst("m2", "claude-x", (1, 1, 1, 1), "2026-10-21T11:05:00Z"),
+        {"type": "system", "timestamp": "2026-10-21T12:00:00Z"},
+    ])
+    (line,) = run(tmp_path, [one_issue(receipts=receipts)], monkeypatch)
+    assert line["start"] == "2026-10-21T11:00:05.000Z" and line["end"] == "2026-10-21T11:05:00.000Z"
+    assert line["retry"] == 1
+
+
+def test_no_message_timestamp_gives_null(tmp_path, monkeypatch):
+    write(tmp_path / "tr" / "n.jsonl", [
+        {"type": "summary", "timestamp": "2026-10-21T09:00:00Z"},
+        {"type": "user", "message": {"content": "ROLE=pm ISSUE=5"}},
+        {"type": "assistant", "message": {"id": "m", "model": "claude-x", "usage": {"input_tokens": 1}}}])
+    (line,) = run(tmp_path, [one_issue()], monkeypatch)
+    assert line["start"] is None and line["end"] is None
+
+
+def test_skill_frontmatter_is_valid_yaml():
+    import re
+    text = (ROOT / "plugin" / "skills" / "run-record" / "SKILL.md").read_text()
+    desc = re.search(r"^description: (.*)$", text, re.M).group(1)
+    assert desc.startswith('"') and desc.endswith('"')
