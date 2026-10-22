@@ -78,8 +78,8 @@ When the active stage's sub-issue list is not empty and every entry is closed, t
 
 1. Run `git status --porcelain`. If the output is not empty, stop the loop and ask the owner, as in "Before each issue".
 2. Look for an earlier stage review on the stage issue: a comment whose first line is exactly `## Planner: STAGE REVIEW` and whose `authorAssociation` is `OWNER`. If one exists (from an earlier run), do not launch the planner again. Stop the loop. Your final report names the URL of the newest such comment and ends with the sentence required in "Definition of done".
-3. Release the plugin, before the planner is launched: run `uv run scripts/bump_plugin_version.py`. When it prints that no bump is needed, there is nothing to commit. Otherwise run the test command of `AGENTS.md` and commit the bump (`plugin/.claude-plugin/plugin.json`, `scripts/plugin-release.json` and the rebuilt copies in `plugin/`). When the script or the tests fail, do not commit: reset the files, name the failure in the run notes and go on. The skill `bump-plugin-version` describes the script
-4. Write the run record, after the plugin release step and before the planner is launched. It keeps the cost of the stage after Claude Code deletes the transcripts. It reads local files and writes one file outside the repo, so a failure never stops the loop:
+3. Release the plugin, only when the project has such a step. When `AGENTS.md` has the heading `Kit-repo release steps`, do the orchestrator step under it, before the planner is launched. When it does not have that heading, do nothing in this step
+4. Write the run record, after the release step and before the planner is launched. It keeps the cost of the stage after Claude Code deletes the transcripts. It reads local files and writes one file outside the repo, so a failure never stops the loop:
    1. Save the issue JSON of the stage issue and of every sub-issue to one file: `gh issue view <n> --json number,comments,closedAt,labels` for each, joined as a JSON list, or as one object keyed by number
    2. Run the writer. This is the exact command form, and the Auto mode entry in the README allows exactly this form:
 

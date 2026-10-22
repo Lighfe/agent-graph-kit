@@ -87,12 +87,16 @@ def test_skill_and_docs_rules():
     assert "scripts/bump_plugin_version.py" in skill and "--release-status" in skill
     assert not (ROOT / "plugin" / "skills" / "bump-plugin-version").exists()
     planner = (ROOT / "docs" / "team" / "planner.md").read_text()
-    assert "Bump the plugin version" not in planner and "--release-status" in planner
-    assert "unreleased changes" in planner and "did not run" in planner
+    agents = (ROOT / "AGENTS.md").read_text()
+    assert "Bump the plugin version" not in planner and "--release-status" in agents
+    assert "unreleased changes" in agents and "did not run" in agents
     assert "Add the plugin bump task" not in (ROOT / "docs" / "team" / "pm.md").read_text()
     orch = (ROOT / "docs" / "team" / "orchestrator.md").read_text()
-    assert "uv run scripts/bump_plugin_version.py" in orch and "nothing to commit" in orch
-    assert "Do not bump the plugin version in a task" in (ROOT / "docs" / "team" / "software-engineer.md").read_text()
+    assert "uv run scripts/bump_plugin_version.py" in agents and "nothing to commit" in agents
+    assert "## Kit-repo release steps" in agents
+    for role in (planner, orch, (ROOT / "docs" / "team" / "software-engineer.md").read_text()):
+        assert "Kit-repo release steps" in role
+    assert "do not bump the plugin version in a task" in agents.lower()
 
 
 def test_no_role_file_names_a_missing_skill():

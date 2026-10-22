@@ -1,4 +1,5 @@
 """Issue #199: the files a plugin project receives name nothing that only the kit repo has."""
+import re
 from pathlib import Path
 
 import pytest
@@ -36,3 +37,31 @@ def test_scan_reports_file_and_string(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "x.md").write_text("see QA_SANDBOX here")
     assert scan(tmp_path) == ["docs/x.md: kit-only string 'QA_SANDBOX'"]
+
+
+# Issue #251: a plugin project gets only one script from /agk:setup.
+SCRIPT_PATH = re.compile(r"scripts/[A-Za-z0-9_.-]+")
+COPIED_SCRIPTS = {"scripts/" + "qa-codex"}
+
+
+def script_paths(root: Path) -> list[str]:
+    found = []
+    for p in sorted((root / "docs" / "team").glob("*.md")):
+        for m in SCRIPT_PATH.findall(p.read_text(errors="replace")):
+            if m not in COPIED_SCRIPTS:
+                found.append(f"{p.name}: names {m}")
+    return found
+
+
+def test_role_files_name_no_script_a_project_lacks():
+    assert not script_paths(TEMPLATES), "\n".join(script_paths(TEMPLATES))
+
+
+def test_script_scan_examples(tmp_path):
+    (tmp_path / "docs" / "team").mkdir(parents=True)
+    f = tmp_path / "docs" / "team" / "x.md"
+    f.write_text("run scripts/qa-codex ROLE=qa ISSUE=12 and look in the scripts/ folder")
+    assert script_paths(tmp_path) == []
+    for bad in ["scripts/build_plugin.py --release-status", "uv run scripts/bump_plugin_version.py", "scripts/plugin-release.json"]:
+        f.write_text(bad)
+        assert script_paths(tmp_path), bad

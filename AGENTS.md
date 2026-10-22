@@ -54,3 +54,11 @@ If a skill offers one of these two skills as the next step, do not accept. Turn 
 
 - Never put secrets in commits, issue bodies, issue comments or reports. `TYPESAFE_API_KEY` and other keys stay in the user environment. Redact sensitive output. Use synthetic examples.
 - Do not commit full third-party articles. `docs/references/local/` is local only.
+
+## Kit-repo release steps
+
+These steps exist only in this repo. A plugin project has neither script. The role files in `docs/team/` send each role here when this heading exists. The skill `bump-plugin-version` describes the bump.
+
+- Orchestrator, in "Stage end", before the planner is launched: run `uv run scripts/bump_plugin_version.py`. When it prints that no bump is needed, there is nothing to commit. Otherwise run the test command above and commit the bump (`plugin/.claude-plugin/plugin.json`, `scripts/plugin-release.json` and the rebuilt copies in `plugin/`). When the script or the tests fail, do not commit: reset the files, name the failure in the run notes and go on
+- Planner, before the stage review is written: run `scripts/build_plugin.py --release-status`. The answer `unreleased changes` is a doc drift finding: the stage changed the plugin and the end-of-stage bump of the orchestrator did not run
+- Engineer: do not bump the plugin version in a task. The orchestrator does at the end of the stage
