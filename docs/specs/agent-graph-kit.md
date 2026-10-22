@@ -448,10 +448,10 @@ The kit is installed as a Claude Code plugin `agk` ([plugin/](../../plugin/), li
 
 - **Hooks**: the guard, the not-started hook and the outage-stop hook, from `plugin/hooks/`.
 - **Agents**: the role agents, from `plugin/agents/`.
-- **Skills**: `stage-start`, `codex-review`, `setup`, `drift` and `update`, from `plugin/skills/`. `update` (`/agk:update`) runs `drift.py` read only, then `drift.py --update`, and names each `changed in both` file; the merge step is not built yet.
+- **Skills**: `stage-start`, `codex-review`, `setup`, `drift` and `update`, from `plugin/skills/`. `update` (`/agk:update`) runs `drift.py` read only, then `drift.py --update`, and then proposes a merge for each `changed in both` file (it reads the project file, the plugin template and their diff, and sorts each part into a kit change, a project change to keep, or a template line to leave out; the owner answers per file and a file is written only after a yes), runs `drift.py --accept` for the written files, `drift.py` again and the hook activation check, and offers one commit (never a push). It never touches `AGENTS.md` or the project settings file.
 - **Project templates**: the files that `/agk:setup` copies into a project, in `plugin/templates/`.
 
-The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. `drift.py --update` replaces the files that are `newer in the plugin` and removes `dropped` entries from the lock; after a hand merge, `drift.py --accept <path>` records the current template in the lock. The steps are in "Start a new project" in the README. The manual copy of v1 stays as the manual route.
+The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. `/agk:update` is the route for an update; `drift.py --update` and `--accept` are the low-level commands. `drift.py --update` replaces the files that are `newer in the plugin` and removes `dropped` entries from the lock; after a hand merge, `drift.py --accept <path>` records the current template in the lock. The steps are in "Start a new project" in the README. The manual copy of v1 stays as the manual route.
 
 ## Doc lifecycles
 
