@@ -62,7 +62,7 @@ README = "README.md"
 README_SECTIONS = [
     "## Start a new project",
     "## Lovable frontend lane (optional, v2)",
-    "## Set up the kit in a project",
+    "## Project set-up reference",
 ]
 
 # Paths that are skipped, with the reason for each.

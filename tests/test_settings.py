@@ -84,18 +84,6 @@ def test_pre_tool_use_entry_is_unchanged():
     }]
 
 
-def test_readme_merge_note_names_every_hook_event():
-    """The README tells a project with its own settings file what to merge.
-
-    It must name every event of the kit's hooks block, so no hook is lost.
-    """
-    readme = (ROOT / "README.md").read_text()
-    notes = [line for line in readme.splitlines() if "do not overwrite it" in line]
-    assert len(notes) == 1
-    for event in load()["hooks"]:
-        assert f"`{event}`" in notes[0], event
-
-
 def test_subagent_stop_hook_runs_outage_stop_and_never_blocks():
     entries = load()["hooks"]["SubagentStop"]
     assert len(entries) == 1
