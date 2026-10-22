@@ -448,7 +448,7 @@ The kit is installed as a Claude Code plugin `agk` ([plugin/](../../plugin/), li
 
 - **Hooks**: the guard, the not-started hook and the outage-stop hook, from `plugin/hooks/`.
 - **Agents**: the role agents, from `plugin/agents/`.
-- **Skills**: `stage-start`, `codex-review`, `setup` and `drift`, from `plugin/skills/`.
+- **Skills**: `stage-start`, `codex-review`, `setup`, `drift` and `update`, from `plugin/skills/`. `update` (`/agk:update`) runs `drift.py` read only, then `drift.py --update`, and names each `changed in both` file; the merge step is not built yet.
 - **Project templates**: the files that `/agk:setup` copies into a project, in `plugin/templates/`.
 
 The owner installs it with `claude plugin marketplace add` and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. `drift.py --update` replaces the files that are `newer in the plugin` and removes `dropped` entries from the lock; after a hand merge, `drift.py --accept <path>` records the current template in the lock. The steps are in "Start a new project" in the README. The manual copy of v1 stays as the manual route.
