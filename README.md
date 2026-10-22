@@ -276,45 +276,31 @@ The frontend needs a Playwright dependency: `playwright` or `@playwright/test` (
 
 Accepted risk ("Worktree and pre-step" in [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md#worktree-and-pre-step)): the QA pre-step runs code from the repository outside the Codex sandbox, with your environment and access. This happens on three paths: the lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) of `frontend/package.json` and of every dependency with `npm ci`, or of the dependencies bun trusts (`trustedDependencies` and bun's default trusted list) with `bun install`; the package manager config `frontend/.npmrc` or `frontend/bunfig.toml`; and the Playwright CLI from `frontend/node_modules`, which the lockfile decides. This is accepted because the frontend code comes from your own Lovable project and from the loop's engineer (issue #50). The remaining risk includes packages that agents add: a new dependency or version that Lovable or another agent of the loop puts into `package.json` or the lockfile runs with your access at the next QA run, before QA or you have looked at it. Nothing in the loop checks it first. Treat changes to `frontend/package.json`, the lockfile, `.npmrc`, `bunfig.toml` or `trustedDependencies` as review items.
 
-## Update the plugin in a project
+## Update a plugin project
 
-A project with the plugin gets a new kit version in two commands, run in a terminal in the project folder:
+A plugin project gets a new kit version in three parts. First, run two commands in a terminal in the project folder:
 
 ```bash
 claude plugin marketplace update agent-graph-kit
+```
+
+```bash
 claude plugin update agk@agent-graph-kit --scope project
 ```
 
+Then restart Claude Code in the project, and run this in the session:
+
+```text
+/agk:update
+```
+
+In `/agk:update`, read each merge proposal and answer yes or no. Then accept or decline the commit.
+
+The two commands are not enough. The plugin update changes the hooks, agents, skills and `bin/`. The files that `/agk:setup` copied (for example `docs/team/*`, `docs/process.md`, `scripts/qa-codex`) stay as copied until `/agk:update` runs.
+
 The kit raises the plugin version once per stage, so a new version is a released stage. If the answer is "already at the latest version" although the kit repo has a newer released version, remove the cached copy of the plugin (the folder of `agk` under the plugin cache in your Claude Code user folder, usually `~/.claude/plugins/cache/`) and run `claude plugin install agk@agent-graph-kit --scope project`.
 
-## Update a plugin project
-
-A plugin project has no clone of the kit and no `.claude/hooks` of its own to copy from. The kit files that `/agk:setup` copied are recorded in `.agent-graph-kit.lock`. `/agk:drift` compares them with the new plugin files, and `--update` takes the safe cases. Nothing is overwritten without you.
-
-1. Update the plugin first (see "Update the plugin in a project" above). The new templates are in `<plugin cache>/agk/<version>/templates/`, usually `~/.claude/plugins/cache/agent-graph-kit/agk/<version>/`.
-2. Run `/agk:drift`. It prints one line `<state>: <path>` per file and writes nothing.
-3. In a terminal outside Claude Code, in the root of the project, run the update. The guard hooks and the Auto mode classifier deny writes into `.claude/` from a session.
-
-   ```bash
-   uv run --script <plugin cache>/agk/<version>/skills/drift/drift.py --root . --update
-   ```
-
-   - `newer in the plugin`: replaced by the new template (`updated: <path>`), and the lock holds the new state
-   - `changed in this project`: kept as it is
-   - `changed in both`: shown as `not touched (changed in both): <path>`
-   - `dropped (gone from both)`: the entry is removed from the lock (`removed from the lock: <path>`)
-
-   "nothing updated" is a normal answer. It means no file is `newer in the plugin`.
-4. Merge each `changed in both` file by hand: compare the template with the project file (for example `diff <plugin cache>/agk/<version>/templates/<path> <path>`). A template line that names a file the project does not have (for example `scripts/build_plugin.py`) is reworded or removed.
-5. Tell the lock that the merge is done, once for each merged file, in the same terminal:
-
-   ```bash
-   uv run --script <plugin cache>/agk/<version>/skills/drift/drift.py --root . --accept <path> [<path> ...]
-   ```
-
-   `--accept` sets the lock entry to the current template. It changes no project file. It refuses `AGENTS.md`, a path that is not in the lock, a path without a template, and a path that is not in the project; then it writes nothing.
-6. Run `/agk:drift` again. It shows no `changed in both` and no `dropped`.
-7. Commit the files and `.agent-graph-kit.lock` together.
+`drift.py --update` and `--accept` are the low-level commands that the skill uses. They are described in the drift skill (`plugin/skills/drift/SKILL.md`, `/agk:drift`). You need a terminal outside Claude Code only if `/agk:update` reports a deny.
 
 ## Run record
 

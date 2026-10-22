@@ -8,17 +8,25 @@ SPEC = (ROOT / "docs/specs/agent-graph-kit.md").read_text()
 
 
 def test_readme_section_names_commands():
-    for k in ["--accept", "--update", "/agk:drift"]:
+    for k in ["--accept", "--update", "/agk:drift", "/agk:update"]:
         assert k in SECTION
 
 
-def test_readme_steps_in_order():
-    keys = ["templates/", "2. Run `/agk:drift`", "--root . --update", "nothing updated", "Merge each `changed in both`",
-            "--accept", "no `changed in both` and no `dropped`", "`.agent-graph-kit.lock` together"]
-    pos = []
-    for k in keys:
-        pos.append(SECTION.index(k))
+def test_readme_section_in_order():
+    keys = ["claude plugin update", "restart Claude Code", "/agk:update", "merge proposal", "drift.py --update", "--accept"]
+    pos = [SECTION.index(k) for k in keys]
     assert pos == sorted(pos)
+
+
+def test_readme_single_update_heading():
+    heads = [l for l in README.splitlines() if l.startswith("## Update")]
+    assert heads == ["## Update a plugin project"]
+    assert "Update the plugin in" + " a project" not in README
+
+
+def test_readme_old_steps_gone():
+    for k in ["--root . --update", "diff <plugin cache>", "by hand"]:
+        assert k not in SECTION
 
 
 def test_readme_no_hand_edit_of_lock():
