@@ -296,7 +296,7 @@ Then restart Claude Code in the project, and run this in the session:
 
 In `/agk:update`, read each merge proposal and answer yes or no. Then accept or decline the commit.
 
-The two commands are not enough. The plugin update changes the hooks, agents, skills and `bin/`. The files that `/agk:setup` copied (for example `docs/team/*`, `docs/process.md`, `scripts/qa-codex`) stay as copied until `/agk:update` runs.
+The two commands are not enough, because the plugin update changes the hooks, agents, skills and `bin/`, but the files that `/agk:setup` copied (for example `docs/team/*`, `docs/process.md`, `scripts/qa-codex`) stay as copied until `/agk:update` runs.
 
 The kit raises the plugin version once per stage, so a new version is a released stage. If the answer is "already at the latest version" although the kit repo has a newer released version, remove the cached copy of the plugin (the folder of `agk` under the plugin cache in your Claude Code user folder, usually `~/.claude/plugins/cache/`) and run `claude plugin install agk@agent-graph-kit --scope project`.
 

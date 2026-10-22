@@ -28,15 +28,15 @@ For each path, the script sets the lock entry to the sha256 of the current plugi
 
 ### Text
 
-The README section "Update a plugin project", the drift skill and the living spec describe one complete route:
+The README section "Update a plugin project" is one section. Its route is:
 
-1. Update the plugin, and name the template folder (`<plugin cache>/agk/<version>/templates/`)
-2. `/agk:drift`
-3. In a terminal: `drift.py --update` (says that "nothing to update" is a normal answer; it also clears `dropped` entries)
-4. Merge each `changed in both` file by hand; reword or remove a template line that names a file the project does not have
-5. `drift.py --accept` for each merged file
-6. `/agk:drift` again: no `changed in both`, no `dropped`
-7. Commit the files and the lock together
+1. The two `claude plugin` commands, each in its own block, then a restart of Claude Code in the project
+2. `/agk:update`: the owner reads each merge proposal, answers yes or no, and accepts or declines the commit (the skill runs the drift check, `drift.py --update`, the merge and `drift.py --accept`; see the update-skill spec)
+3. One sentence on why the two commands are not enough: the plugin update does not touch the files that `/agk:setup` copied
+4. The "already at the latest version" hint
+5. A pointer to the drift skill: `drift.py --update` and `--accept` are the low-level commands that the skill uses. A terminal outside Claude Code is needed only when `/agk:update` reports a deny
+
+The drift skill keeps the low-level route: the template folder (`<plugin cache>/agk/<version>/templates/`), "nothing to update" as a normal answer, `--update` clearing `dropped` entries, a hand merge of each `changed in both` file (reword or remove a template line that names a file the project does not have), `--accept` for each merged file, and a last `/agk:drift` with no `changed in both` and no `dropped`.
 
 ## Not in this spec
 
