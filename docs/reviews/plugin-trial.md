@@ -68,7 +68,7 @@ Findings:
 - Because the plugin install had already created `.claude/settings.json`, the setup never writes its `permissions` block, and the README order (install, then setup) makes this the normal case. The owner merges the lines by hand. Follow-up: #167.
 - Setup writes `AGENTS.md` but no `CLAUDE.md`, and no `.gitignore` lines. The v1 route had both.
 - Nothing in the v2 section names the four labels (`ready`, `needs-owner`, `later`, `stage`). The loop needs them. I created them with `gh label create`.
-- The v2 section does not say to commit and push the copied files, to accept the trust dialog (without it Claude Code printed `Ignoring 2 permissions.allow entries from .claude/settings.json: this workspace has not been trusted`), or to run `docs/checks/hook-activation.md`. These are the "Start" steps of the v1 route.
+- The v2 section does not say to commit and push the copied files, to accept the trust dialog (without it Claude Code printed `Ignoring 2 permissions.allow entries from .claude/settings.json: this workspace has not been trusted`), or to run `docs/checks/hook-activation.md`. These are the start steps of the v1 route (now archived in `docs/archive/2026-10-22-readme-copy-route.md`).
 
 Follow-up for the last three points: #168.
 
