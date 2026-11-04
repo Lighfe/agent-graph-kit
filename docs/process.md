@@ -11,7 +11,7 @@ Status: the hooks check the guarded calls and deny a call that is not allowed. T
 - Commit regularly
 - Reading rules for the doc folders (prose only, no hook checks them):
   - `docs/archive/`: read a file there only when the owner or the issue points to it
-  - research notes folder (if the project has one): readable; you may build on earlier research and cite it
+  - research notes folder (if the project has one): the project names the folder in its `AGENTS.md` with a line that starts with `Research notes:` followed by the folder path (example: `Research notes: <folder>`); when `AGENTS.md` has no such line, the project has no research notes folder and this entry does not apply. The folder is readable; you may build on earlier research and cite it
   - `docs/plans/`: reach a plan through the issue that came from it
   - `docs/reviews/`: a review matters in the session that asked for it; read an older review only when the owner or the issue points to one
 

@@ -11,6 +11,8 @@ Hooks in `.claude/hooks/` check the handoff calls (see `docs/process.md`).
 - `docs/team/planner.md` - the planner: intake and stage set-up in the main session started with `/stage-start`, and the stage review as a subagent
 - `docs/specs/agent-graph-kit.md` - the living behavior spec: how the kit behaves now
 
+Research notes: docs/research/
+
 ## Commands
 
 - `gh issue list --state open --label ready --search "-label:later -label:needs-owner -label:stage" --limit 500` - list the issues the loop may work on

@@ -60,6 +60,8 @@ In a repo set up with agent-graph-kit, the orchestrator may run uv run --script 
 
 Optional, for a Python project with a `uv.lock` whose tests need optional dependency groups: add a line `QA groups: train, dev` (names comma separated) to the project's `AGENTS.md`. The Codex QA pre-step then runs `uv sync --frozen --group train --group dev`.
 
+Optional, for a project with a research notes folder: add a line `Research notes: <folder>` (the folder path) to the project's `AGENTS.md`. It names the folder that the reading rules of `docs/process.md` call the research notes folder. Setup does not write this line; the owner adds it by hand, also in an existing project. Without the line, the project has no research notes folder.
+
 ## Lovable lane
 
 The Lovable frontend lane is a separate, optional step. Do it after setup. The base kit works without it. This skill does not do it.
