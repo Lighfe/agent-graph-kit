@@ -293,3 +293,138 @@ def test_launches_of_a_group_with_null_issue():
     rows = data.launches(record, {}, {"issue": None, "estimate": True})
     assert [r["role"] for r in rows] == ["orchestrator"]
     assert data.launches(record, {}, {"issue": None, "estimate": False}) == []
+
+
+# --- retry cases and owner tags (issue #266) --------------------------------------------------
+
+CASES = FIXTURES / "retry-cases.jsonl"
+
+
+def state_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    return tmp_path / "state" / "agent-graph-kit"
+
+
+def test_case_and_tag_paths_are_in_the_state_folder(tmp_path, monkeypatch):
+    folder = state_home(tmp_path, monkeypatch)
+    assert data.cases_path() == folder / "retry-cases.jsonl"
+    assert data.tags_path() == folder / "retry-tags.jsonl"
+    monkeypatch.delenv("XDG_STATE_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    base = tmp_path / "home" / ".local" / "state" / "agent-graph-kit"
+    assert data.cases_path() == base / "retry-cases.jsonl"
+    assert data.tags_path() == base / "retry-tags.jsonl"
+
+
+def test_load_cases_last_line_per_id_and_skips_bad_lines():
+    cases = data.load_cases(CASES)
+    assert [c["id"] for c in cases] == ["example/proj:1:1", "example/proj:2:1", "example/proj:3:1"]
+    assert cases[0]["commit"] == "bbbbbbb"
+
+
+def test_missing_case_and_tag_files_give_empty_results(tmp_path, monkeypatch):
+    state_home(tmp_path, monkeypatch)
+    assert data.load_cases() == []
+    assert data.load_tags() == {}
+    assert data.case_table([], {}) == []
+
+
+def test_two_tags_for_one_case_load_as_the_second(tmp_path):
+    tags = tmp_path / "tags.jsonl"
+    data.save_tag("example/proj:1:1", "first tag", "first note", path=tags)
+    data.save_tag("example/proj:1:1", "second tag", "second note", path=tags)
+    got = data.load_tags(tags)
+    assert set(got) == {"example/proj:1:1"}
+    assert got["example/proj:1:1"]["tag"] == "second tag"
+    assert got["example/proj:1:1"]["note"] == "second note"
+    assert data.parse_time(got["example/proj:1:1"]["time"]).utcoffset().total_seconds() == 0
+    lines = [json.loads(x) for x in tags.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 2 and set(lines[0]) == {"case_id", "tag", "note", "time"}
+
+
+def test_empty_tag_clears_the_tag(tmp_path):
+    tags = tmp_path / "tags.jsonl"
+    data.save_tag("example/proj:1:1", "a tag", "a note", path=tags)
+    data.save_tag("example/proj:1:1", "", "", path=tags)
+    assert data.load_tags(tags)["example/proj:1:1"]["tag"] == ""
+    row = data.case_table(data.load_cases(CASES), data.load_tags(tags))[0]
+    assert row["tag"] == "" and row["note"] == ""
+
+
+def test_tag_file_line_that_is_not_json_is_skipped(tmp_path):
+    tags = tmp_path / "tags.jsonl"
+    tags.write_text('not json\n{"case_id": "x", "tag": "t", "note": "", "time": "2026-11-04T00:00:00Z"}\n',
+                    encoding="utf-8")
+    assert list(data.load_tags(tags)) == ["x"]
+
+
+def test_save_tag_creates_folder_and_file_with_mode_0600(tmp_path, monkeypatch):
+    folder = state_home(tmp_path, monkeypatch)
+    data.save_tag("example/proj:2:1", "t", "n")
+    path = folder / "retry-tags.jsonl"
+    assert path.is_file() and (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_save_tag_sets_mode_0600_on_an_existing_0644_file(tmp_path):
+    import os
+    tags = tmp_path / "tags.jsonl"
+    tags.write_text("", encoding="utf-8")
+    os.chmod(tags, 0o644)
+    data.save_tag("example/proj:2:1", "t", "n", path=tags)
+    assert (tags.stat().st_mode & 0o777) == 0o600
+
+
+def test_tags_survive_a_rewrite_of_the_case_file(tmp_path, monkeypatch):
+    folder = state_home(tmp_path, monkeypatch)
+    folder.mkdir(parents=True)
+    (folder / "retry-cases.jsonl").write_text(CASES.read_text(encoding="utf-8"), encoding="utf-8")
+    data.save_tag("example/proj:1:1", "kept", "note one")
+    data.save_tag("example/proj:3:1", "gone case", "")
+    # A collect rewrites the whole case file; case 3 is no longer in it.
+    kept = [line for line in CASES.read_text(encoding="utf-8").splitlines() if '"example/proj:3:1"' not in line]
+    (folder / "retry-cases.jsonl").write_text("\n".join(kept) + "\n", encoding="utf-8")
+    tags = data.load_tags()
+    assert tags["example/proj:1:1"]["tag"] == "kept"
+    assert "example/proj:3:1" in tags  # still in the tag file
+    rows = {r["id"]: r for r in data.case_table(data.load_cases(), tags)}
+    assert set(rows) == {"example/proj:1:1", "example/proj:2:1"}
+    assert rows["example/proj:1:1"]["tag"] == "kept" and rows["example/proj:1:1"]["note"] == "note one"
+    assert rows["example/proj:2:1"]["tag"] == "" and rows["example/proj:2:1"]["note"] == ""
+    assert data.tag_values(rows.values()) == ["kept", data.NO_TAG]
+
+
+def test_case_role():
+    assert data.case_role({"marker": "## QA: FAIL"}) == "QA"
+    assert data.case_role({"marker": "## Engineer: BLOCKED"}) == "Engineer"
+    assert data.case_role({"marker": "## PM: NEEDS OWNER"}) == "PM"
+    for marker in ("QA: FAIL", "## QA FAIL", "", None, "# QA: FAIL", "##: x"):
+        assert data.case_role({"marker": marker}) is None, marker
+    assert data.case_role({}) is None
+
+
+def test_case_table_rows_and_filters():
+    rows = data.case_table(data.load_cases(CASES), {"example/proj:2:1": {"tag": "t1", "note": "n1", "time": "x"}})
+    assert [r["role"] for r in rows] == ["QA", "Engineer", "QA"]
+    for field in ("criteria", "failed_lines", "next_markers", "commit", "files_changed", "lines_added",
+                  "lines_removed", "body_edited", "tokens", "seconds", "tag", "note"):
+        assert all(field in r for r in rows), field
+    assert rows[0]["tokens"] == "claude: 1100, codex: 200" and rows[2]["tokens"] is None
+    assert data.select_cases(rows, {"role": "QA"}) == [rows[0], rows[2]]
+    assert data.select_cases(rows, {"tag": "t1", "stage": 9}) == [rows[1]]
+    assert data.select_cases(rows, {"tag": data.NO_TAG}) == [rows[0], rows[2]]
+    assert data.select_cases(rows, {"marker": "## QA: UNVERIFIABLE", "tag": None}) == [rows[2]]
+
+
+def test_cases_collect_command():
+    cmd = data.cases_collect_command("example/proj", "9")
+    assert cmd[-8:] == [str(SKILL / "cases.py"), "collect", "--project", "example/proj",
+                        "--repo-slug", "example/proj", "--stage", "9"]
+    assert data.cases_collect_command("example/proj", 9)[-1] == "9"
+
+
+def test_notebook_tags_are_free_text():
+    text = (SKILL / "explore.py").read_text(encoding="utf-8")
+    assert "tag = mo.ui.text(" in text and "note = mo.ui.text_area(" in text
+    assert "data.save_tag(" in text
+    # The tag filter offers only the tags in use, read from the tag file.
+    assert "data.tag_values(" in text

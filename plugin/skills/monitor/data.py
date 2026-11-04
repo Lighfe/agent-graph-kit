@@ -8,6 +8,7 @@ Spec: docs/specs/2026-11-04-kit-monitoring.md, Part 4
 import importlib.util
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -238,6 +239,107 @@ def kit_doc_reads(steps, by):
     return sorted(groups.values(), key=lambda g: tuple(str(g[f]) for f in by) + (g["kit_doc"],))
 
 
+# --- retry cases and owner tags (issue #266) --------------------------------------------------
+
+NO_TAG = "no tag"
+ROLE_RE = re.compile(r"## ([^:\s][^:]*):")
+CASE_FIELDS = ("id", "project", "stage", "issue", "round", "marker", "role", "tag", "note", "criteria",
+               "failed_lines", "next_markers", "commit", "files_changed", "lines_added", "lines_removed",
+               "body_edited", "tokens", "seconds", "comment_url")
+
+
+def state_dir():
+    """`$XDG_STATE_HOME/agent-graph-kit`, else `~/.local/state/agent-graph-kit` (the rule of `cases.py`)."""
+    state = os.environ.get("XDG_STATE_HOME")
+    base = Path(state) if state else Path.home() / ".local" / "state"
+    return base / "agent-graph-kit"
+
+
+def cases_path():
+    return state_dir() / "retry-cases.jsonl"
+
+
+def tags_path():
+    return state_dir() / "retry-tags.jsonl"
+
+
+def load_cases(path=None):
+    """The case rows of `cases.py`, last line per `id`; [] when the file is missing."""
+    return read_jsonl(path or cases_path())
+
+
+def load_tags(path=None):
+    """{case_id: {"tag", "note", "time"}} of the tag file; the last line per `case_id` wins.
+    {} when the file is missing; a line that is not JSON is skipped."""
+    out = {}
+    for row in rr.read_records(path or tags_path()) or []:
+        if isinstance(row, dict) and isinstance(row.get("case_id"), str):
+            out[row["case_id"]] = {"tag": row.get("tag") or "", "note": row.get("note") or "",
+                                   "time": row.get("time")}
+    return out
+
+
+def save_tag(case_id, tag, note, path=None):
+    """Append one line `{case_id, tag, note, time}` (time in UTC) to the tag file. Creates the folder
+    and the file when missing; the file mode is 0600 afterwards, also when it existed with 0644.
+    An empty tag and note is a line like any other: it clears the tag."""
+    path = Path(path or tags_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"case_id": case_id, "tag": tag or "", "note": note or "",
+                       "time": rr.iso(now_utc())}, ensure_ascii=False)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, (line + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
+def case_role(case):
+    """The word between `## ` and the first `:` of the case `marker` (`## QA: FAIL` gives `QA`);
+    None when the marker has another form."""
+    marker = case.get("marker") if isinstance(case, dict) else None
+    m = ROLE_RE.match(marker) if isinstance(marker, str) else None
+    return m.group(1).strip() if m else None
+
+
+def tokens_text(tokens):
+    """A token dict per provider as one text (`claude: 1000, codex: 200`); None stays None."""
+    if not isinstance(tokens, dict) or not tokens:
+        return None
+    return ", ".join(f"{k}: {v}" for k, v in tokens.items())
+
+
+def case_table(cases, tags):
+    """One row per case with `role`, the current `tag` and `note` (empty when none) and `tokens` as
+    text. A tag whose case is not in `cases` is not shown."""
+    rows = []
+    for case in cases:
+        t = tags.get(case.get("id")) or {}
+        row = {**case, "role": case_role(case), "tag": t.get("tag") or "", "note": t.get("note") or "",
+               "tokens": tokens_text(case.get("tokens"))}
+        rows.append({k: row.get(k) for k in CASE_FIELDS})
+    return rows
+
+
+def tag_values(rows):
+    """The tags in use, sorted, then `NO_TAG` when a row has no tag."""
+    found = {r.get("tag") or "" for r in rows}
+    return sorted(t for t in found if t) + ([NO_TAG] if "" in found else [])
+
+
+def select_cases(rows, where):
+    """The case rows matching each value of `where` (None = no filter); the tag `NO_TAG` matches
+    rows with an empty tag."""
+    def ok(row, k, v):
+        if v is None:
+            return True
+        if k == "tag" and v == NO_TAG:
+            return not row.get("tag")
+        return row.get(k) == v
+    return [r for r in rows if all(ok(r, k, v) for k, v in where.items())]
+
+
 # --- running stage ----------------------------------------------------------------------------
 
 def running(steps, now, active_minutes=5, stage=None, project=None):
@@ -277,12 +379,29 @@ def collect_command(project):
     return [sys.executable, str(HERE / "steps.py"), "collect", "--project", project]
 
 
-def collect_steps(project, cwd=None):
-    """Run `steps.py collect --project <project>` in `cwd` (default: the current dir, the project
-    root). Return (exit code, output text)."""
+def run_command(cmd, cwd=None):
+    """Run a collect command in `cwd` (default: the current dir, the project root).
+    Return (exit code, output text)."""
     import subprocess
     try:
-        res = subprocess.run(collect_command(project), cwd=cwd, capture_output=True, text=True, timeout=600)
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.SubprocessError) as e:
         return 1, str(e)
     return res.returncode, (res.stdout + res.stderr).strip()
+
+
+def collect_steps(project, cwd=None):
+    """Run `steps.py collect --project <project>` in `cwd`. Return (exit code, output text)."""
+    return run_command(collect_command(project), cwd)
+
+
+def cases_collect_command(project, stage):
+    """The command that writes the retry cases of one stage (`cases.py collect`). The project name
+    is the `owner/name` form, so it is also the repo slug."""
+    return [sys.executable, str(HERE / "cases.py"), "collect", "--project", project,
+            "--repo-slug", project, "--stage", str(stage)]
+
+
+def collect_cases(project, stage, cwd=None):
+    """Run `cases.py collect` for one stage in `cwd`. Return (exit code, output text)."""
+    return run_command(cases_collect_command(project, stage), cwd)

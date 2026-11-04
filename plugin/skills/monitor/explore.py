@@ -6,7 +6,7 @@ app = marimo.App(width="full")
 
 @app.cell
 def _():
-    # Monitor notebook (issue #265): totals, drill-down to steps, running stage.
+    # Monitor notebook (issues #265, #266): totals, drill-down to steps, running stage, retry cases.
     # It shows numbers and text only. Start: see SKILL.md of the monitor skill.
     import importlib.util
     from pathlib import Path
@@ -179,8 +179,10 @@ def _(data, frame, mo, steps, where):
 
 
 @app.cell
-def _(data, mo, project, steps):
-    _stages = [s for s in data.values(data.select(steps, {"project": project.value}), "stage") if s is not None]
+def _(data, mo, project):
+    # Built from the files as read at open (not after each refresh), so a refresh keeps the chosen stage.
+    _rows = data.select(data.load_steps() + data.load_cases(), {"project": project.value})
+    _stages = [s for s in data.values(_rows, "stage") if s is not None]
     stage = mo.ui.dropdown(options=[str(s) for s in _stages], value=str(_stages[-1]) if _stages else None,
                            label="Stage")
     mo.vstack([mo.md("## Running stage"), stage])
@@ -201,6 +203,98 @@ def _(data, frame, mo, project, stage, steps):
               "Tokens so far: the sum of the four token kinds of the step rows."),
         mo.ui.table(frame(_rows, _cols), selection=None),
     ])
+    return
+
+
+@app.cell
+def _(collect_note, data, mo, project, refresh, stage):
+    # Runs `cases.py collect` only after a click on refresh with a chosen project and stage, after
+    # `steps.py collect` (this cell reads its note), never on open or export.
+    _ = collect_note
+    cases_note = None
+    if refresh.value and project.value and stage.value:
+        _code, _out = data.collect_cases(project.value, stage.value)
+        cases_note = (f"`cases.py collect --project {project.value} --repo-slug {project.value} "
+                      f"--stage {stage.value}`: exit {_code}\n\n```\n{_out}\n```")
+    mo.md(cases_note) if cases_note else None
+    return (cases_note,)
+
+
+@app.cell
+def _(cases_note, data):
+    _ = cases_note  # read again after each refresh
+    cases = data.load_cases()
+    return (cases,)
+
+
+@app.cell
+def _(data, saved_note):
+    _ = saved_note  # read again after each saved tag
+    tags = data.load_tags()
+    return (tags,)
+
+
+@app.cell
+def _(cases, data, mo):
+    _rows = data.case_table(cases, {})
+    case_choices = {f: {str(v): v for v in data.values(_rows, f) if v is not None}
+                    for f in ("project", "stage", "role", "marker")}
+    case_filters = mo.ui.dictionary({f: mo.ui.dropdown(options=["all"] + list(case_choices[f]), value="all",
+                                                       label=f) for f in case_choices})
+    return case_choices, case_filters
+
+
+@app.cell
+def _(cases, data, mo, tags):
+    # The tags in use and "no tag"; nothing else is offered.
+    tag_filter = mo.ui.dropdown(options=["all"] + data.tag_values(data.case_table(cases, tags)),
+                                 value="all", label="tag")
+    return (tag_filter,)
+
+
+@app.cell
+def _(case_choices, case_filters, cases, data, frame, mo, tag_filter, tags):
+    _where = {f: (None if v in (None, "all") else case_choices[f][v]) for f, v in case_filters.value.items()}
+    _where["tag"] = None if tag_filter.value in (None, "all") else tag_filter.value
+    _rows = data.select_cases(data.case_table(cases, tags), _where)
+    mo.vstack([
+        mo.md("## Retry cases\n\nOne row per return round of the case file "
+              f"`{data.cases_path()}`. Role: the word before the first `:` of the marker. "
+              f"Tag and note: your own words, from `{data.tags_path()}` (the last line per case counts)."),
+        mo.hstack(list(case_filters.values()) + [tag_filter], justify="start", wrap=True),
+        mo.ui.table(frame(_rows, list(data.CASE_FIELDS)), selection=None),
+    ])
+    return
+
+
+@app.cell
+def _(cases, mo):
+    _ids = [c["id"] for c in cases if isinstance(c.get("id"), str)]
+    case_pick = mo.ui.dropdown(options=_ids, value=_ids[0] if _ids else None, label="Case")
+    tag = mo.ui.text(label="Tag", full_width=True)
+    note = mo.ui.text_area(label="Note", full_width=True)
+    save = mo.ui.run_button(label="Save tag and note")
+    mo.vstack([mo.md("### Tag a case\n\nFree text. An empty tag and note clears the tag of the case."),
+               case_pick, tag, note, save])
+    return case_pick, note, save, tag
+
+
+@app.cell
+def _(case_pick, data, mo, note, save, tag):
+    # Writes one tag line only after a click on the save button, never on open or export.
+    saved_note = None
+    if save.value and case_pick.value:
+        data.save_tag(case_pick.value, tag.value.strip(), note.value.strip())
+        saved_note = f"Saved for `{case_pick.value}`."
+    mo.md(saved_note) if saved_note else None
+    return (saved_note,)
+
+
+@app.cell
+def _(case_pick, mo, tags):
+    _t = tags.get(case_pick.value) or {}
+    mo.md(f"Current tag of `{case_pick.value}`: `{_t.get('tag') or ''}`, note: {_t.get('note') or ''}"
+          if case_pick.value else "No cases.")
     return
 
 
