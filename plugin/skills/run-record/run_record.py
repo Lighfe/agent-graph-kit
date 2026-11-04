@@ -98,6 +98,33 @@ def receipts(issue):
     return {k: sorted(v) for k, v in out.items()}
 
 
+def read_records(path):
+    """Return the JSON object of each full line of a transcript, or None when the file cannot be read.
+
+    A line that is not a JSON object (for example a half-written last line) is skipped. Shared with
+    the step extractor of the monitor skill (issue #263)."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    out = []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(d, dict):
+            out.append(d)
+    return out
+
+
+def prompt_text(content):
+    """The text of a user message content: a string, or the text parts of a list joined by spaces."""
+    if isinstance(content, list):
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and isinstance(p.get("text", ""), str))
+    return content if isinstance(content, str) else ""
+
+
 def read_launch(path):
     """Return a dict with role, issue, effort, start, end and per-model sums, or None."""
     role = issue = effort = None
@@ -105,17 +132,10 @@ def read_launch(path):
     seen = set()
     models = {}
     times = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
+    records = read_records(path)
+    if records is None:
         return None
-    for raw in lines:
-        try:
-            d = json.loads(raw)
-        except ValueError:
-            continue
-        if not isinstance(d, dict):
-            continue
+    for d in records:
         if effort is None and isinstance(d.get("effort"), str):
             effort = d["effort"]
         msg = d.get("message") or {}
@@ -129,10 +149,7 @@ def read_launch(path):
                 pass
         if not first_user_seen and d.get("type") == "user":
             first_user_seen = True
-            content = msg.get("content")
-            if isinstance(content, list):
-                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-            m = PROMPT_RE.search(content if isinstance(content, str) else "")
+            m = PROMPT_RE.search(prompt_text(msg.get("content")))
             if m:
                 role, issue = m.group(1), int(m.group(2))
             else:
@@ -158,12 +175,15 @@ def read_launch(path):
             "file_id": path.name[:-len(".jsonl")]}
 
 
-def build_lines(project, stage, issues, folder):
+def build_lines(project, stage, issues, folder, paths=None):
+    """Return the Claude subagent lines; append the transcript path of each used launch to `paths`."""
     launches = []
     for path in sorted(Path(folder).rglob("*.jsonl")):
         launch = read_launch(path)
         if launch and launch["issue"] in issues and launch["models"]:
             launches.append(launch)
+            if paths is not None:
+                paths.append(path)
     # retry: launch receipts of the same role group before this launch
     groups = {}
     for launch in launches:
@@ -192,17 +212,10 @@ def read_main(path):
     """Return {session, times, cost (last usable cost-state per model or None), sums (assistant sums)}."""
     session = path.name[:-len(".jsonl")]
     times, cost, seen, sums = [], None, set(), {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
+    records = read_records(path)
+    if records is None:
         return None
-    for raw in lines:
-        try:
-            d = json.loads(raw)
-        except ValueError:
-            continue
-        if not isinstance(d, dict):
-            continue
+    for d in records:
         if d.get("type") == "cost-state":
             usage = d.get("modelUsage")
             try:
@@ -281,10 +294,7 @@ def is_subagent_transcript(path):
                 except ValueError:
                     continue
                 if isinstance(d, dict) and d.get("type") == "user":
-                    content = (d.get("message") or {}).get("content")
-                    if isinstance(content, list):
-                        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-                    return bool(PROMPT_RE.search(content if isinstance(content, str) else ""))
+                    return bool(PROMPT_RE.search(prompt_text((d.get("message") or {}).get("content"))))
     except (OSError, UnicodeError):
         pass
     return False
@@ -418,6 +428,18 @@ def append_lines(lines):
     return written
 
 
+def write_steps(paths, project, stage):
+    """Write the step rows of these transcripts with the monitor skill's extractor (issue #263).
+
+    The stage is given, so the extractor makes no `gh` call. Return the number of rows written."""
+    import importlib.util
+    src = Path(__file__).resolve().parent.parent / "monitor" / "steps.py"
+    spec = importlib.util.spec_from_file_location("agk_steps", src)
+    steps = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(steps)
+    return steps.write_steps(paths, project, stage)
+
+
 def write_limit(args):
     """Append one hand-entered plan limit line; a percent outside 0 to 100 writes nothing."""
     if not 0 <= args.percent <= 100:
@@ -453,9 +475,9 @@ def main(argv=None):
     if args.cmd == "limit":
         return write_limit(args)
     issues = load_issues(args.issues)
-    lines = []
+    lines, step_paths = [], []
     if Path(args.transcripts).is_dir():
-        lines = build_lines(args.project, args.stage, issues, args.transcripts)
+        lines = build_lines(args.project, args.stage, issues, args.transcripts, step_paths)
     else:
         print(f"No transcript folder: {args.transcripts}; no Claude lines")
     orch = Path(args.orchestrator_transcript) if args.orchestrator_transcript else newest_main_transcript(args.transcripts)
@@ -470,6 +492,7 @@ def main(argv=None):
         if not orchestrator:
             print("No usable usage in the orchestrator transcript; no orchestrator line")
         lines += orchestrator
+        step_paths.append(orch)
     if args.codex_usage:
         codex, skipped = codex_lines(args.codex_usage, issues, args.project, args.stage)
         lines += codex
@@ -478,6 +501,11 @@ def main(argv=None):
     lines += issue_lines(issues, args.project, args.stage)
     written = append_lines(lines)
     print(f"Wrote {written} lines to {record_path()} ({len(lines) - written} already there)")
+    try:
+        steps = write_steps(step_paths, args.project, args.stage)
+        print(f"Wrote {steps} step rows")
+    except Exception as exc:  # a failing step write never changes the run-record result (issue #263)
+        print(f"Warning: no step rows written: {type(exc).__name__}: {exc}")
     return 0
 
 

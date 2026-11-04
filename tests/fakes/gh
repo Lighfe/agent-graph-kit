@@ -19,6 +19,9 @@ FAKE_GH_API=<path>       JSON object for `gh api <path> --paginate`, keyed by th
                          list of pages) and "issue" (the issue object); see the comment at that branch.
                          The two sub-issue reads with --jq (issue #97) use the keys "sub_issues" (a
                          list of pages) and "issue" the same way
+                         The parent read of the step extractor (issue #263), `gh api repos/{owner}/{repo}/issues/<n>/parent`,
+                         uses the key "parent": a map of issue number to the parent issue object (or a
+                         raw string); an issue not in the map exits 1, as gh does for an issue without parent
 FAKE_GH_API_FAIL=<key>   only the `gh api` read with that key exits 1
 FAKE_GH_API_SLEEP=<key>:<s>  only the `gh api` read with that key sleeps <s> seconds before answering
 """
@@ -165,6 +168,19 @@ if args[:1] == ["api"] and len(args) == 3 and args[2] == "--paginate" and api_ke
         with open(env("FAKE_GH_API"), encoding="utf-8") as f:
             data = json.load(f)
     value = data.get(key, [])
+    sys.stdout.write(value if isinstance(value, str) else json.dumps(value))
+    sys.exit(0)
+
+# The parent read of the step extractor (issue #263): gh api repos/{owner}/{repo}/issues/<n>/parent
+if args[:1] == ["api"] and len(args) == 2 and re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+/parent", args[1]):
+    if env("FAKE_GH_API_FAIL") == "parent":
+        fail()
+    n = args[1].split("/")[-2]
+    parents = api_data().get("parent", {})
+    if n not in parents:
+        sys.stderr.write("gh: Not Found (HTTP 404)\n")
+        sys.exit(1)
+    value = parents[n]
     sys.stdout.write(value if isinstance(value, str) else json.dumps(value))
     sys.exit(0)
 

@@ -18,6 +18,8 @@ This skill keeps the cost of every subagent launch after Claude Code deletes its
 
 3. The script writes the Claude lines, the Codex QA lines (with `--codex-usage`) and one line per issue (time and escalations). It prints how many lines it wrote. Running it again adds no second line.
 
+`write` also writes the step rows of the transcripts it reads (the launches of the `--issues` issues and the orchestrator transcript) with the extractor of the `monitor` skill, with stage `--stage` and no `gh` call; a failing step write prints a warning and does not change the run-record lines or the exit code.
+
 The record file is `$RUN_RECORD_FILE`, else `$XDG_STATE_HOME/agent-graph-kit/run-record.jsonl`, else `~/.local/state/agent-graph-kit/run-record.jsonl`. Spec: `docs/specs/2026-10-21-run-record.md`.
 
 To enter the percent of the session limit used at the start or end of a stage by hand: `uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" limit --project <name> --stage <n> --point start|end --percent <0-100> --plan <text>`. It appends to `run-record-limits.jsonl` next to the record (`$RUN_RECORD_LIMITS_FILE` sets the whole path). `scripts/run_report.py --record <file> --limits <file>` prints the percent next to the weighted total; the weights are in `docs/run-weights.json`.
