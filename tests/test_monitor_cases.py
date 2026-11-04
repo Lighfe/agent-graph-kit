@@ -181,6 +181,24 @@ def test_unverifiable_suffix_counts():
     assert case["criteria"] == ["- [ ] The script exits 0"]
 
 
+def test_indented_lines_are_not_failed_lines():
+    body = ("## QA: FAIL\n- [ ] The script exits 0 - FAIL\n    - [ ] Indented example - FAIL\n"
+            "  - [ ] The log line has one sentence - FAIL\n")
+    issue = {"body": BODY + "\n  - [ ] Indented example\n", "comments": [c(body, t(1)), receipt("pm", 2)]}
+    [case] = cases_of(issue)
+    assert case["failed_lines"] == ["- [ ] The script exits 0 - FAIL"]
+    assert case["criteria"] == ["- [ ] The script exits 0"]
+
+
+def test_indented_body_line_is_not_a_criterion():
+    body = "## QA: FAIL\n- [ ] Indented example - FAIL\n"
+    issue = {"body": "## Acceptance criteria\n\n  - [ ] Indented example\n",
+             "comments": [c(body, t(1)), receipt("pm", 2)]}
+    [case] = cases_of(issue)
+    assert case["failed_lines"] == ["- [ ] Indented example - FAIL"]
+    assert case["criteria"] == []
+
+
 def test_other_markers_give_empty_lists():
     body = "## Engineer: BLOCKED\n- [ ] The script exits 0 - FAIL\n"
     issue = {"body": BODY, "comments": [c(body, t(1)), receipt("pm", 2)]}
@@ -356,6 +374,31 @@ def test_collect_from_repo_slug_makes_only_reads(tmp_path):
                 assert query.lstrip().startswith("query") and "mutation" not in query
         kinds.add(argv[1] if argv[0] == "api" and argv[1] == "graphql" else argv[0] if argv[0] == "api" else "view")
     assert kinds == {"api", "graphql", "view"}
+
+
+def test_repo_slug_reads_every_page_of_edit_times(tmp_path):
+    calls = tmp_path / "calls.jsonl"
+    api = tmp_path / "api.json"
+    pages = [[{"editedAt": "2026-11-04T09:00:00Z"}], [{"editedAt": "2026-11-04T09:30:00Z"}],
+             [{"editedAt": "2026-11-04T10:07:00Z"}]]
+    api.write_text(json.dumps({"sub_issues": [{"number": 7}], "graphql": {"7": {"pages": pages}}}))
+    issue = tmp_path / "issue.json"
+    issue.write_text(json.dumps(standard_issue()))
+    env = {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_CALLS": str(calls),
+           "FAKE_GH_API": str(api), "FAKE_GH_ISSUE": str(issue)}
+    res = run(["collect", "--project", PROJECT, "--repo-slug", "acme/widgets", "--stage", "3"], env)
+    assert res.returncode == 0, res.stderr
+    out = Path(os.environ["XDG_STATE_HOME"]) / "agent-graph-kit" / "retry-cases.jsonl"
+    [row] = [json.loads(x) for x in out.read_text().splitlines()]
+    # Only the edit on the last page falls inside the round.
+    assert row["body_edited"] is True
+    graphql = [argv for argv in map(json.loads, calls.read_text().splitlines()) if argv[:2] == ["api", "graphql"]]
+    assert len(graphql) == 3
+    afters = [next((a for a in argv if a.startswith("after=")), None) for argv in graphql]
+    assert afters == [None, "after=1", "after=2"]
+    for argv in graphql:
+        query = next(a for a in argv if a.startswith("query="))[len("query="):]
+        assert "pageInfo" in query and "hasNextPage" in query and "endCursor" in query
 
 
 def test_repo_slug_needs_stage():

@@ -31,8 +31,10 @@ RESULT_PREFIXES = ("## PM: ", "## Engineer: ", "## QA: ")
 FAILED_SUFFIXES = (" - FAIL", " - INVALID", " - UNVERIFIABLE")
 COMMITS_RE = re.compile(r"^Commits:\s*(\S+\.\.\S+)\s*$")
 TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")
-EDITS_QUERY = ("query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) "
-               "{ issue(number: $number) { userContentEdits(first: 100) { nodes { editedAt } } } } }")
+EDITS_QUERY = ("query($owner: String!, $name: String!, $number: Int!, $after: String) "
+               "{ repository(owner: $owner, name: $name) { issue(number: $number) "
+               "{ userContentEdits(first: 100, after: $after) { nodes { editedAt } "
+               "pageInfo { hasNextPage endCursor } } } } }")
 
 
 def _load(name, *parts):
@@ -104,7 +106,7 @@ def norm(text):
 def failed_lines(body):
     out = []
     for raw in (body or "").splitlines():
-        line = raw.strip()
+        line = raw.rstrip()  # the line itself starts with `- [ ]`: an indented line does not count
         if line.startswith("- [ ]") and line.endswith(FAILED_SUFFIXES):
             out.append(line)
     return out
@@ -112,7 +114,7 @@ def failed_lines(body):
 
 def criteria_of(lines, issue_body):
     """For each failed line, the first issue-body line `- [ ] <text>` whose text equals the QA text."""
-    body = [raw.strip() for raw in (issue_body or "").splitlines()]
+    body = [raw.rstrip() for raw in (issue_body or "").splitlines()]
     body = [line for line in body if line.startswith("- [ ]")]
     out = []
     for line in lines:
@@ -304,6 +306,26 @@ def json_values(text):
     return out
 
 
+def read_edits(owner, name, number):
+    """All userContentEdits nodes of an issue, page by page; None when GitHub gives no edit data."""
+    nodes, after, seen = None, None, set()
+    while True:
+        args = ["api", "graphql", "-f", f"query={EDITS_QUERY}", "-f", f"owner={owner}",
+                "-f", f"name={name}", "-F", f"number={number}"]
+        if after is not None:
+            args += ["-f", f"after={after}"]
+        data = json.loads(gh(*args))
+        edits = (((data.get("data") or {}).get("repository") or {}).get("issue") or {}).get("userContentEdits")
+        if not isinstance(edits, dict):
+            return nodes
+        nodes = (nodes or []) + list(edits.get("nodes") or [])
+        info = edits.get("pageInfo") or {}
+        after = info.get("endCursor")
+        if not info.get("hasNextPage") or not after or after in seen:
+            return nodes
+        seen.add(after)
+
+
 def read_repo(slug, stage):
     owner, _, name = slug.partition("/")
     numbers = []
@@ -314,9 +336,7 @@ def read_repo(slug, stage):
     for number in numbers:
         issue = json.loads(gh("issue", "view", str(number), "--repo", slug, "--json",
                               "number,body,comments,closedAt"))
-        data = json.loads(gh("api", "graphql", "-f", f"query={EDITS_QUERY}", "-f", f"owner={owner}",
-                             "-f", f"name={name}", "-F", f"number={number}"))
-        edits = (((data.get("data") or {}).get("repository") or {}).get("issue") or {}).get("userContentEdits")
+        edits = read_edits(owner, name, number)
         if edits is not None:
             issue["userContentEdits"] = edits
         issue["number"] = number
