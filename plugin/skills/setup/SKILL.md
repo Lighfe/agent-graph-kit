@@ -20,7 +20,7 @@ This skill turns a mostly fresh project into a project in which the loop can run
 
 3. Show the owner the output of the script, and name what is left:
    - each file that already existed with other content: the script did not touch it and printed a diff. The owner decides whether to merge by hand.
-   - each manual check with the status `MISSING` or `CHECK BY HAND`, with its fix. The three Auto mode entries are always `CHECK BY HAND`: the owner sets them in `/permissions`, in the Auto mode tab. This skill never sets them. The output lists the steps as a numbered list and prints each entry in its own fenced block; show the steps and the three blocks as the script prints them, with nothing added inside a block.
+   - each manual check with the status `MISSING` or `CHECK BY HAND`, with its fix. The four Auto mode entries are always `CHECK BY HAND`: the owner sets them in `/permissions`, in the Auto mode tab. This skill never sets them. The output lists the steps as a numbered list and prints each entry in its own fenced block; show the steps and the four blocks as the script prints them, with nothing added inside a block.
    - the Codex trust entry: when it is missing, the script prints one command in a fenced block. Show the block as printed. The command appends the trust entry of this project to `~/.codex/config.toml` and creates the file and the folder `~/.codex` when they do not exist. The entry is for this project folder only. The script itself writes nothing into the home folder; the owner runs the command.
    - when `.claude/settings.json` could not be merged (invalid JSON or a symlink), the permission lines the owner adds by hand
 
@@ -28,7 +28,7 @@ A missing manual entry does not make the script fail: it never blocks the instal
 
 ## Auto mode entries
 
-The owner sets the three entries by hand. Show these steps, then the three blocks, as the script prints them. A block holds only the text to paste.
+The owner sets the four entries by hand. The fourth entry allows the run-record writer that the orchestrator runs at the end of a stage. Show these steps, then the four blocks, as the script prints them. A block holds only the text to paste.
 
 1. Open `/permissions` in Claude Code.
 2. Open the Auto mode tab.
@@ -45,6 +45,10 @@ In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n>
 
 ```text
 In a repo set up with agent-graph-kit, the main session working as the planner (started with /stage-start) may run exactly gh issue edit <n> --remove-label later --add-label ready on a sub-issue of a stage issue (an issue with the label stage) of that repo, after the repo owner confirmed that stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh issue close, and no sub-issue or blocker link.
+```
+
+```text
+In a repo set up with agent-graph-kit, the orchestrator may run uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript> at the end of a stage. It appends to run-record.jsonl in ~/.local/state/agent-graph-kit/ and reads local files only. This is the owner's instruction.
 ```
 
 ## What the script writes

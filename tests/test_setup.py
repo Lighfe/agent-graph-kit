@@ -274,23 +274,23 @@ def test_trust_entry_without_a_git_repo_says_git_init(tmp_path):
 def test_auto_mode_entries_are_always_check_by_hand(project, tmp_path):
     home = tmp_path / "home"
     r = run(project, tmp_path, home=home)
-    for n in (1, 2, 3):
+    for n in (1, 2, 3, 4):
         assert status_line(r.stdout, f"Auto mode entry {n}").startswith("CHECK BY HAND")
         assert "OK" not in status_line(r.stdout, f"Auto mode entry {n}")
     assert "scripts/qa-codex ROLE=qa ISSUE=<number>" in r.stdout
 
 
-def test_auto_mode_entries_print_as_three_paste_blocks(project, tmp_path):
+def test_auto_mode_entries_print_as_four_paste_blocks(project, tmp_path):
     r = run(project, tmp_path)
     parts = r.stdout.split("```text\n")
-    assert len(parts) == 4
+    assert len(parts) == 5
     blocks = [p.split("```")[0].rstrip("\n") for p in parts[1:]]
     sys.path.insert(0, str(SETUP.parent))
     try:
         import setup as s
     finally:
         sys.path.pop(0)
-    assert blocks == [s.ENTRY_1, s.ENTRY_2, s.ENTRY_3]
+    assert blocks == [s.ENTRY_1, s.ENTRY_2, s.ENTRY_3, s.ENTRY_4]
     for b in blocks:
         assert "\n" not in b and not b.startswith("Entry")
     steps = r.stdout.split("Auto mode entries:")[1].split("```text")[0]
@@ -314,6 +314,29 @@ def test_entries_in_the_script_equal_the_readme():
     assert " ".join(s.ENTRY_2.split()) == setup_entry(2)
     assert " ".join(s.ENTRY_3.split()) == setup_entry(3)
     assert "allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo" in README
+
+
+def run_record_entry():
+    """The run-record entry block of README.md (the block after "**Auto mode entry.**"), as one line."""
+    block = README.split("**Auto mode entry.**")[1].split("```text\n")[1].split("```")[0]
+    return " ".join(block.split())
+
+
+def test_entry_4_equals_the_readme_run_record_entry():
+    sys.path.insert(0, str(SETUP.parent))
+    try:
+        import setup as s
+    finally:
+        sys.path.pop(0)
+    assert run_record_entry().startswith("In a repo set up with agent-graph-kit, the orchestrator may run uv run")
+    assert " ".join(s.ENTRY_4.split()) == run_record_entry()
+
+
+def test_skill_and_readme_step_no_longer_say_three_entries():
+    skill = (SETUP.parent / "SKILL.md").read_text()
+    assert "three" not in skill.lower()
+    step = README.split("   2. Add the ")[1].split("Auto mode entries")[0]
+    assert "three" not in step and "four" in step
 
 
 def test_skill_names_the_lovable_lane_as_optional():
@@ -421,7 +444,7 @@ def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
     for i, step in enumerate(s.AUTO_STEPS, 1):
         assert f"{i}. {step}" in skill
         assert f"{i}. {step}" in out
-    for e in (s.ENTRY_1, s.ENTRY_2, s.ENTRY_3):
+    for e in (s.ENTRY_1, s.ENTRY_2, s.ENTRY_3, s.ENTRY_4):
         assert f"```text\n{e}\n```" in skill
 
 

@@ -97,7 +97,7 @@ Optional, needed only for the frontend lane (skip this block when you do not use
 
 5. Do the manual steps that the setup output names:
    1. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it. It appends the trust entry of this project to `$HOME/.codex/config.toml` (the git root of the project, `git rev-parse --show-toplevel`) and creates the file when it does not exist. The entry is for this project folder only; no other project changes. See [Codex trust entry](#codex-trust-entry).
-   2. Add the three Auto mode entries in `/permissions`, in the Auto mode tab. The texts are in [Auto mode allow entries](#auto-mode-allow-entries). Entry 1 allows exactly this command in the project repo:
+   2. Add the four Auto mode entries in `/permissions`, in the Auto mode tab. The setup output prints all four. The texts of entries 1 to 3 are in [Auto mode allow entries](#auto-mode-allow-entries); entry 4, for the run-record writer, is in [Run record](#run-record). Entry 1 allows exactly this command in the project repo:
 
       ```text
       scripts/qa-codex ROLE=qa ISSUE=<number>

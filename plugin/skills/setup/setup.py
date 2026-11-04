@@ -47,6 +47,11 @@ ENTRY_3 = ("In a repo set up with agent-graph-kit, the main session working as t
            "stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's "
            "instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh "
            "issue close, and no sub-issue or blocker link.")
+ENTRY_4 = ("In a repo set up with agent-graph-kit, the orchestrator may run uv run --script <run_record.py> write "
+           "--project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts "
+           "~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl "
+           "--orchestrator-transcript <own transcript> at the end of a stage. It appends to run-record.jsonl in "
+           "~/.local/state/agent-graph-kit/ and reads local files only. This is the owner's instruction.")
 AUTO_STEPS = [
     "Open `/permissions` in Claude Code.",
     "Open the Auto mode tab.",
@@ -280,13 +285,13 @@ def manual_checks(root: Path, home: Path) -> None:
         print(trust_command(gr))
         print("```")
         print()
-    for n in (1, 2, 3):
+    for n in (1, 2, 3, 4):
         show("CHECK BY HAND", f"Auto mode entry {n}", "fix: add the entry as described below")
     print()
     print("Auto mode entries:")
     for i, step in enumerate(AUTO_STEPS, 1):
         print(f"{i}. {step}")
-    for text in (ENTRY_1, ENTRY_2, ENTRY_3):
+    for text in (ENTRY_1, ENTRY_2, ENTRY_3, ENTRY_4):
         print()
         print("```text")
         print(text)

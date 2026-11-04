@@ -41,3 +41,42 @@ def test_spec_section():
     sec = SPEC.split("## Run record")[1].split("\n## ")[0]
     for k in ["`id`", "orchestrator", "estimate", "run-weights.json", "run-record-limits.jsonl"]:
         assert k in sec
+
+
+# Issue #258: the run-record step and the SendMessage rule are true in a plugin project too.
+COPIES = [ROOT / "docs/team/orchestrator.md", ROOT / "plugin/templates/docs/team/orchestrator.md"]
+
+
+def _record_step(text):
+    stage_end = text.split("### Stage end")[1].split("\n### ")[0].split("\n#### ")[0]
+    return stage_end[stage_end.index("Write the run record"):stage_end.index("Launch the agent `planner`")]
+
+
+def _send_message_paragraph(text):
+    return [p for p in text.split("\n\n") if "SendMessage" in p and "QA: FAIL" in p][0]
+
+
+def test_record_step_names_both_sources_of_the_auto_mode_entry():
+    for path in COPIES:
+        step = _record_step(path.read_text())
+        assert "the Auto mode entry in the README allows" not in step, path
+        assert "/agk:setup" in step and "README" in step and "kit repo" in step, path
+
+
+def test_record_step_names_the_skill_folder_not_a_kit_path_as_this_repo():
+    for path in COPIES:
+        text = path.read_text()
+        step = _record_step(text)
+        assert "in this repo `plugin/skills/run-record/run_record.py`" not in text, path
+        assert "`run-record` skill folder of the plugin" in step, path
+        for i in [m for m in range(len(text)) if text.startswith("plugin/skills/run-record/run_record.py", m)]:
+            assert "kit repo" in text[max(0, i - 80):i], path
+
+
+def test_send_message_paragraph_has_no_fixed_cache_lifetime():
+    for path in COPIES:
+        para = _send_message_paragraph(path.read_text())
+        assert "5 min" not in para and "1 h" not in para, path
+        assert "launch a fresh engineer" in para, path
+        assert "usually outlasts the prompt cache" in para, path
+        assert "writes its whole old context again" in para, path

@@ -81,13 +81,13 @@ When the active stage's sub-issue list is not empty and every entry is closed, t
 3. Release the plugin, only when the project has such a step. When `AGENTS.md` has the heading `Kit-repo release steps`, do the orchestrator step under it, before the planner is launched. When it does not have that heading, do nothing in this step
 4. Write the run record, after the release step and before the planner is launched. It keeps the cost of the stage after Claude Code deletes the transcripts. It reads local files and writes one file outside the repo, so a failure never stops the loop:
    1. Save the issue JSON of the stage issue and of every sub-issue to one file: `gh issue view <n> --json number,comments,closedAt,labels` for each, joined as a JSON list, or as one object keyed by number
-   2. Run the writer. This is the exact command form, and the Auto mode entry in the README allows exactly this form:
+   2. Run the writer. This is the exact command form. An Auto mode entry allows exactly this form: in a plugin project, the fourth entry that `/agk:setup` prints ("Auto mode entry 4"); in the kit repo, the entry in the README section on the run record:
 
       ```
       uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript>
       ```
 
-      `<run_record.py>` is the script `run_record.py` in the `run-record` skill folder of the plugin (in this repo `plugin/skills/run-record/run_record.py`). `<project folder>` is the folder of this project in `~/.claude/projects/`. `<own transcript>` is the main-session transcript of this run: the newest `*.jsonl` file directly in that folder
+      `<run_record.py>` is the script `run_record.py` in the `run-record` skill folder of the plugin (in the kit repo: `plugin/skills/run-record/run_record.py`). `<project folder>` is the folder of this project in `~/.claude/projects/`. `<own transcript>` is the main-session transcript of this run: the newest `*.jsonl` file directly in that folder
    3. Name the counts the writer prints (lines written, lines already there, skipped Codex lines) in the run notes
    4. When the command fails, name the failure in the run notes and go on
 5. Launch the agent `planner` on the stage issue, with the run notes (see "Launch a subagent").
@@ -133,7 +133,7 @@ A planner launch is not a return.
 
 ## Launch a subagent
 
-Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call. Never continue a planner with `SendMessage`. After `## QA: FAIL`, launch a fresh engineer: a QA round is longer than the 5 min prompt cache, so a continued engineer meets a cold cache and writes its whole old context again. Continue with `SendMessage` only after a miss.
+Launch a new subagent for each step. Each subagent starts with a fresh context. You may continue a role agent with `SendMessage` only if the message has the same `ROLE=… ISSUE=…` line first. Without it the hook denies the call. Never continue a planner with `SendMessage`. After `## QA: FAIL`, launch a fresh engineer: a QA round usually outlasts the prompt cache, so a continued engineer meets a cold cache and writes its whole old context again. Continue with `SendMessage` only after a miss.
 
 | Step | Agent | Input |
 |---|---|---|
