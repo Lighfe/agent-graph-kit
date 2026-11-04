@@ -106,6 +106,14 @@ Use this rule when you would post `## PM: NEEDS OWNER` only because of a tool pr
 - a QA sandbox or tool limit after `## QA: UNVERIFIABLE`, or
 - the same cause, reported in `## Engineer: BLOCKED` (the engineer quotes the deny message).
 
+Before you post `## PM: NEEDS OWNER` for a QA sandbox or QA tool problem, read the QA launcher and the project settings it reads, and look there for the cause:
+
+- The launcher is `scripts/qa-codex`. When `scripts/qa-codex` is only a wrapper (`exec qa-codex-launcher "$@"`, as in a plugin project), read the real launcher `qa-codex-launcher`. `command -v qa-codex-launcher` gives its path.
+- A setting the launcher reads is, for example, the `QA groups:` line of `AGENTS.md`: it names the optional dependency groups that QA installs with `uv sync`.
+- Name in your comment what you read.
+
+When the cause is a project setting that a change in this repo fixes (for example a missing `QA groups:` line), follow the fix-issue path below and post `## PM: WAITING`, not `## PM: NEEDS OWNER`. A fix issue that only edits `AGENTS.md` gets only the label `later`.
+
 If a change in this repo can fix the cause, or an open issue (in this repo or another repo) fixes it, do not post `## PM: NEEDS OWNER`. Link a fix issue as a native "blocked by" link with `gh issue edit <n> --add-blocked-by <fix>`, and post `## PM: WAITING` instead. The issue keeps `ready`, waits, and comes back to you by itself when the fix issue is closed. Nobody has to post `## Owner: RESUME` on it.
 
 1. Look for a fix issue. If an open issue that fixes the cause already exists (in this repo or another repo), link that issue. File no new one, and do not change the labels of that existing issue.
@@ -134,6 +142,8 @@ QA could not check some criteria because of a limit of its environment (a tool, 
 - a) Rewrite it so it can be checked from the repo checkout, from the comment text that `scripts/qa-codex` passes to Codex (the first line of every comment and the full newest `## Engineer: DONE`), and from the GitHub state files that `scripts/qa-codex` writes for Codex (`labels.json`, `timeline.json`, `blocked-by.json`, `sub-issues.json`, `created-issues.json`: the issue's labels, its timeline events, its blockers and sub-issues, and the issues created since the base of the commit range, with title and body only for issues by the owner). For example, write the expected values into the criterion. Keep the same intent and scope. Then post `## PM: GROOMED`
 - b) Leave it unchanged when the limit is already gone (a fix has landed). Name the commit or issue of that fix. Then post `## PM: GROOMED`
 - c) Post `## PM: NEEDS OWNER` when the only way to make it checkable changes the criterion's intent or scope (dropping it, weakening it, moving it out of scope).
+
+  Before you post `## PM: NEEDS OWNER` here, read the QA launcher and its settings as "A tool problem that an issue can fix" says. A cause in a project setting takes the fix-issue path there.
 
   When the only way needs an edit of the project settings files (the committed and the local Claude Code settings JSON files in `.claude/`), of the hooks, or of the Codex sandbox arguments in `scripts/qa-codex`, follow "A tool problem that an issue can fix": link a fix issue as a blocker (a new fix issue gets the labels `later` and `needs-owner`) and post `## PM: WAITING`, not `## PM: NEEDS OWNER`. The same holds for any other limit that a change in this repo or an open issue can fix.
 
