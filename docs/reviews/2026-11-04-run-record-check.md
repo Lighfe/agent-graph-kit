@@ -61,11 +61,102 @@ Verdict: complete for the kit Stage 18. For quack-rl, one gap that the record al
 
 ## Line kind: `qa-codex`
 
-Verdict: not complete. One wrong value on every line.
+Verdict: not complete. 24 lines have a wrong `retry`, and all 83 lines have a wrong `start`.
 
 - 83 lines. All 18 spec fields are present and set. `provider` is `codex`, `source` is `codex-record`, `cache_creation_tokens` is 0 on every line, as the spec says
-- Wrong value: `retry` is 0 on all 83 lines. The spec says `retry` counts the earlier launch receipts of the role group on the issue. 16 issues have two or more `qa-codex` lines, and all of these lines still have `retry` 0. Examples: kit #249 (three runs, three QA receipts, all `retry` 0), kit #250 (two runs), quack-rl #196 (four runs). The writer sets `retry` to a fixed 0 for Codex lines
-- `start` equals `end` on every line. The Codex record has one time per run (written when the run ends), so the writer puts that time in both fields. The spec says `start` is the first message of the launch. So `start` is not the launch start, and the line gives no launch time
+- `retry`: the writer stores 0 on all 83 lines. The spec says `retry` is 0 for the first launch of the role group on an issue, and for each later launch the count of the earlier launch receipts of that group (`qa` and `qa-codex`). So 0 is correct on the 59 lines that are the first QA launch of their issue. It is wrong on the 24 lines in the table below (16 issues): each has one or more earlier QA lines on the same issue. The expected value is the count of earlier QA lines (`qa` or `qa-codex`) of the same project and issue, in time order. For kit #249 and #250 it matches the QA launch receipts (see "Missing lines"). For quack-rl it is counted inside the record only; a QA launch with no line would make the true value higher. No line has a `retry` above the expected value
+
+| project | stage | issue | id | `retry` stored | `retry` expected |
+|---|---|---|---|---|---|
+| Lighfe/agent-graph-kit | 254 | 249 | `Lighfe/agent-graph-kit:codex:249:2026-10-22T07:37:22.898851+00:00` | 0 | 1 |
+| Lighfe/agent-graph-kit | 254 | 249 | `Lighfe/agent-graph-kit:codex:249:2026-10-22T07:41:31.479366+00:00` | 0 | 2 |
+| Lighfe/agent-graph-kit | 254 | 250 | `Lighfe/agent-graph-kit:codex:250:2026-10-22T08:14:03.885895+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 166 | 168 | `Lighfe/quack-rl:codex:168:2026-10-23T11:24:37.047013+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 166 | 169 | `Lighfe/quack-rl:codex:169:2026-10-23T10:32:06.949756+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 166 | 169 | `Lighfe/quack-rl:codex:169:2026-10-23T10:53:01.667455+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 198 | 180 | `Lighfe/quack-rl:codex:180:2026-10-23T20:16:23.688866+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 182 | `Lighfe/quack-rl:codex:182:2026-10-23T22:16:45.900112+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 186 | `Lighfe/quack-rl:codex:186:2026-10-24T02:22:17.184418+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 190 | `Lighfe/quack-rl:codex:190:2026-10-24T07:53:29.424876+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 190 | `Lighfe/quack-rl:codex:190:2026-10-24T12:00:11.002402+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 198 | 191 | `Lighfe/quack-rl:codex:191:2026-10-24T12:22:29.328491+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 191 | `Lighfe/quack-rl:codex:191:2026-10-24T12:40:19.980762+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 198 | 192 | `Lighfe/quack-rl:codex:192:2026-10-24T13:24:21.108263+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 192 | `Lighfe/quack-rl:codex:192:2026-10-24T13:33:29.717778+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 198 | 196 | `Lighfe/quack-rl:codex:196:2026-10-24T20:43:21.752027+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 198 | 196 | `Lighfe/quack-rl:codex:196:2026-10-25T08:55:04.126844+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 198 | 196 | `Lighfe/quack-rl:codex:196:2026-10-25T09:03:52.229774+00:00` | 0 | 3 |
+| Lighfe/quack-rl | 208 | 206 | `Lighfe/quack-rl:codex:206:2026-10-26T09:43:49.389615+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 208 | 206 | `Lighfe/quack-rl:codex:206:2026-10-26T10:00:15.283132+00:00` | 0 | 2 |
+| Lighfe/quack-rl | 223 | 218 | `Lighfe/quack-rl:codex:218:2026-10-26T18:36:49.785025+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 252 | 246 | `Lighfe/quack-rl:codex:246:2026-10-28T10:32:43.745080+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 257 | 259 | `Lighfe/quack-rl:codex:259:2026-11-02T11:46:51.962288+00:00` | 0 | 1 |
+| Lighfe/quack-rl | 267 | 266 | `Lighfe/quack-rl:codex:266:2026-11-04T11:45:07.728975+00:00` | 0 | 1 |
+
+- `start`: wrong on all 83 lines. `start` equals `end` on every line. The Codex record has one time per run (written when the run ends), so the writer puts that time in both fields. The spec says `start` is the time of the first message of the launch. So `start` is not the launch start, and the line gives no launch time. The 83 lines, by project, stage and issue:
+
+| project | stage | issue | time (`start` = `end`) of each line; the id is `<project>:codex:<issue>:<time>` |
+|---|---|---|---|
+| Lighfe/agent-graph-kit | 254 | 249 | `2026-10-22T07:32:55.400221+00:00`, `2026-10-22T07:37:22.898851+00:00`, `2026-10-22T07:41:31.479366+00:00` |
+| Lighfe/agent-graph-kit | 254 | 250 | `2026-10-22T08:09:36.851674+00:00`, `2026-10-22T08:14:03.885895+00:00` |
+| Lighfe/agent-graph-kit | 254 | 251 | `2026-10-22T07:52:12.907724+00:00` |
+| Lighfe/agent-graph-kit | 254 | 252 | `2026-10-22T07:58:06.216328+00:00` |
+| Lighfe/agent-graph-kit | 254 | 253 | `2026-10-22T08:04:21.421687+00:00` |
+| Lighfe/quack-rl | 162 | 153 | `2026-10-22T09:53:12.489565+00:00` |
+| Lighfe/quack-rl | 162 | 154 | `2026-10-22T10:08:55.322984+00:00` |
+| Lighfe/quack-rl | 162 | 155 | `2026-10-22T10:25:04.643358+00:00` |
+| Lighfe/quack-rl | 162 | 161 | `2026-10-22T12:42:54.988546+00:00` |
+| Lighfe/quack-rl | 166 | 167 | `2026-10-23T10:07:07.660842+00:00` |
+| Lighfe/quack-rl | 166 | 168 | `2026-10-23T11:09:11.606725+00:00`, `2026-10-23T11:24:37.047013+00:00` |
+| Lighfe/quack-rl | 166 | 169 | `2026-10-23T10:23:39.152025+00:00`, `2026-10-23T10:32:06.949756+00:00`, `2026-10-23T10:53:01.667455+00:00` |
+| Lighfe/quack-rl | 166 | 170 | `2026-10-23T12:23:39.270603+00:00` |
+| Lighfe/quack-rl | 198 | 178 | `2026-10-23T21:19:54.824393+00:00` |
+| Lighfe/quack-rl | 198 | 179 | `2026-10-23T19:56:33.248459+00:00` |
+| Lighfe/quack-rl | 198 | 180 | `2026-10-23T20:09:00.729926+00:00`, `2026-10-23T20:16:23.688866+00:00` |
+| Lighfe/quack-rl | 198 | 181 | `2026-10-23T20:30:36.452242+00:00` |
+| Lighfe/quack-rl | 198 | 182 | `2026-10-23T21:50:26.267921+00:00`, `2026-10-23T22:16:45.900112+00:00` |
+| Lighfe/quack-rl | 198 | 185 | `2026-10-24T01:02:27.043957+00:00` |
+| Lighfe/quack-rl | 198 | 186 | `2026-10-24T01:57:29.962686+00:00`, `2026-10-24T02:22:17.184418+00:00` |
+| Lighfe/quack-rl | 198 | 187 | `2026-10-24T03:13:34.926524+00:00` |
+| Lighfe/quack-rl | 198 | 188 | `2026-10-24T04:19:08.569661+00:00` |
+| Lighfe/quack-rl | 198 | 190 | `2026-10-24T07:18:44.267803+00:00`, `2026-10-24T07:53:29.424876+00:00`, `2026-10-24T12:00:11.002402+00:00` |
+| Lighfe/quack-rl | 198 | 191 | `2026-10-24T12:12:59.345242+00:00`, `2026-10-24T12:22:29.328491+00:00`, `2026-10-24T12:40:19.980762+00:00` |
+| Lighfe/quack-rl | 198 | 192 | `2026-10-24T13:05:38.746438+00:00`, `2026-10-24T13:24:21.108263+00:00`, `2026-10-24T13:33:29.717778+00:00` |
+| Lighfe/quack-rl | 198 | 196 | `2026-10-24T18:44:36.230488+00:00`, `2026-10-24T20:43:21.752027+00:00`, `2026-10-25T08:55:04.126844+00:00`, `2026-10-25T09:03:52.229774+00:00` |
+| Lighfe/quack-rl | 198 | 197 | `2026-10-25T09:28:05.899697+00:00` |
+| Lighfe/quack-rl | 208 | 201 | `2026-10-25T18:47:09.523740+00:00` |
+| Lighfe/quack-rl | 208 | 202 | `2026-10-25T19:12:24.754607+00:00` |
+| Lighfe/quack-rl | 208 | 203 | `2026-10-25T19:45:27.507032+00:00` |
+| Lighfe/quack-rl | 208 | 204 | `2026-10-25T20:07:33.399152+00:00` |
+| Lighfe/quack-rl | 208 | 205 | `2026-10-26T08:34:15.450929+00:00` |
+| Lighfe/quack-rl | 208 | 206 | `2026-10-26T09:22:59.379815+00:00`, `2026-10-26T09:43:49.389615+00:00`, `2026-10-26T10:00:15.283132+00:00` |
+| Lighfe/quack-rl | 208 | 207 | `2026-10-26T10:54:01.647607+00:00` |
+| Lighfe/quack-rl | 208 | 213 | `2026-10-26T08:05:54.148880+00:00` |
+| Lighfe/quack-rl | 223 | 215 | `2026-10-26T17:31:29.642007+00:00` |
+| Lighfe/quack-rl | 223 | 216 | `2026-10-26T17:11:26.158555+00:00` |
+| Lighfe/quack-rl | 223 | 217 | `2026-10-26T17:55:36.622346+00:00` |
+| Lighfe/quack-rl | 223 | 218 | `2026-10-26T18:16:28.694156+00:00`, `2026-10-26T18:36:49.785025+00:00` |
+| Lighfe/quack-rl | 223 | 219 | `2026-10-26T19:17:50.574199+00:00` |
+| Lighfe/quack-rl | 239 | 230 | `2026-10-27T10:13:16.114751+00:00` |
+| Lighfe/quack-rl | 239 | 232 | `2026-10-27T10:32:14.224175+00:00` |
+| Lighfe/quack-rl | 239 | 233 | `2026-10-27T11:01:48.936374+00:00` |
+| Lighfe/quack-rl | 239 | 234 | `2026-10-27T11:25:11.386946+00:00` |
+| Lighfe/quack-rl | 239 | 235 | `2026-10-27T12:03:01.998739+00:00` |
+| Lighfe/quack-rl | 239 | 236 | `2026-10-27T12:22:49.460575+00:00` |
+| Lighfe/quack-rl | 252 | 243 | `2026-10-28T09:17:09.732840+00:00` |
+| Lighfe/quack-rl | 252 | 244 | `2026-10-28T09:39:05.581562+00:00` |
+| Lighfe/quack-rl | 252 | 245 | `2026-10-28T09:56:22.714226+00:00` |
+| Lighfe/quack-rl | 252 | 246 | `2026-10-28T10:19:15.101451+00:00`, `2026-10-28T10:32:43.745080+00:00` |
+| Lighfe/quack-rl | 252 | 247 | `2026-10-28T11:08:50.441558+00:00` |
+| Lighfe/quack-rl | 257 | 256 | `2026-11-02T10:50:14.713423+00:00` |
+| Lighfe/quack-rl | 257 | 258 | `2026-11-02T11:09:54.677908+00:00` |
+| Lighfe/quack-rl | 257 | 259 | `2026-11-02T11:30:17.240833+00:00`, `2026-11-02T11:46:51.962288+00:00` |
+| Lighfe/quack-rl | 257 | 260 | `2026-11-02T12:14:23.521591+00:00` |
+| Lighfe/quack-rl | 257 | 261 | `2026-11-02T12:37:51.673996+00:00` |
+| Lighfe/quack-rl | 267 | 253 | `2026-11-04T11:14:09.750230+00:00` |
+| Lighfe/quack-rl | 267 | 265 | `2026-11-04T11:00:22.279473+00:00` |
+| Lighfe/quack-rl | 267 | 266 | `2026-11-04T11:28:44.068011+00:00`, `2026-11-04T11:45:07.728975+00:00` |
+
 - Token meaning: on all 83 lines `cache_read_tokens` (the Codex `cached_input_tokens`) is not larger than `input_tokens`. This agrees with the OpenAI usage format, where the input count includes the cached input. If that is so, the new input is `input_tokens` minus `cache_read_tokens`, and the weights count the cached part twice (see "Report" below). The record alone cannot prove it; it needs a check against the Codex usage format
 
 ## Line kind: `issue`
@@ -247,3 +338,7 @@ Also found in the spec, not in the report: in the field table of `docs/specs/202
 5. **Spec: split the joined `id` and `project` rows of the run-record field table**
    - Reason: the field table of `docs/specs/2026-10-21-run-record.md` has no `project` row; its text is inside the `id` row
    - Criterion: the field table has a row whose first cell is `` `project` ``
+
+6. **Writer: a real `start` time on Codex QA lines**
+   - Reason: on every `qa-codex` line `start` equals `end` (the end time of the run), but the spec defines `start` as the first message of the launch. So the record gives no launch time for Codex QA
+   - Criterion: a writer test with one QA launch receipt at time T0 and one Codex run recorded at a later time T1 on the same issue writes one `qa-codex` line with `start` T0 and `end` T1
