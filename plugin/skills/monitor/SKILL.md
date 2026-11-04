@@ -33,3 +33,16 @@ This skill writes one row per step (assistant message) of each Claude Code launc
 - A missing stream folder gives no Codex rows and no error.
 
 The step file is `$STEPS_FILE`, else `$XDG_STATE_HOME/agent-graph-kit/steps.jsonl`, else `~/.local/state/agent-graph-kit/steps.jsonl`, with mode 0600. The `write` command of the run-record skill also writes the step rows of a stage. Spec: `docs/specs/2026-11-04-kit-monitoring.md`, Part 1.
+
+## Retry cases
+
+`cases.py` writes one row per return round of an issue, so the owner can see what a retry cost, what caused it and what changed. It sorts and judges nothing; the owner sorts the cases.
+
+```bash
+uv run --script "${CLAUDE_SKILL_DIR}/cases.py" collect --project <name> (--issues <file> | --repo-slug <owner/repo> --stage <n>) [--repo <project repo path>]
+```
+
+- `--issues`: a saved issue JSON file in the form that `run_record.py write --issues` reads, with an optional `userContentEdits` list (`{"editedAt": ...}`) per issue. `--repo-slug`: reads the sub-issues of stage `<n>`, their comments and their body edit times (GraphQL `userContentEdits`) with `gh`. All `gh` calls are reads; the script writes no comment and changes no label.
+- A round marker is a comment whose first line is `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## QA: INVALID`, `## QA: UNAVAILABLE`, `## Engineer: BLOCKED` or a `## ... NEEDS OWNER` line. It starts a round when a launch receipt (`## Launch: <role> ...`) comes after it before the next round marker. The round lasts until the next marker that starts a round, or the last comment. Comments by others than the owner are ignored.
+- Fields: `id` (`<project>:<issue>:<round>`), `project`, `stage`, `issue`, `round`, `marker`, `comment_url`, `failed_lines` (the `- [ ] ... - FAIL|INVALID|UNVERIFIABLE` lines of a QA marker), `criteria` (the matching `- [ ]` lines of the current issue body), `next_markers` (the PM, Engineer and QA result markers after the round marker), `body_edited` (null without edit data), `commit` (the `Commits:` range of the first `## Engineer: DONE` of the round), `files_changed`, `lines_added`, `lines_removed` (from `git diff --numstat` with `--repo`, else null), `tokens` (per provider, from the run-record lines that start in the round), `seconds` (the `duration_s` sum of the step rows in the round). No matching data gives null.
+- The case file is `$XDG_STATE_HOME/agent-graph-kit/retry-cases.jsonl`, else `~/.local/state/agent-graph-kit/retry-cases.jsonl`, mode 0600, rewritten as a whole on each run. Spec: `docs/specs/2026-11-04-kit-monitoring.md`, Part 2.

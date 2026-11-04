@@ -22,6 +22,9 @@ FAKE_GH_API=<path>       JSON object for `gh api <path> --paginate`, keyed by th
                          The parent read of the step extractor (issue #263), `gh api repos/{owner}/{repo}/issues/<n>/parent`,
                          uses the key "parent": a map of issue number to the parent issue object (or a
                          raw string); an issue not in the map exits 1, as gh does for an issue without parent
+                         The edit-time read of the case collector (issue #264), `gh api graphql -f query=...
+                         -F number=<n>`, uses the key "graphql": a map of issue number to the list of
+                         userContentEdits nodes ({"editedAt": ...}); an issue not in the map gives an empty list
 FAKE_GH_API_FAIL=<key>   only the `gh api` read with that key exits 1
 FAKE_GH_API_SLEEP=<key>:<s>  only the `gh api` read with that key sleeps <s> seconds before answering
 """
@@ -182,6 +185,16 @@ if args[:1] == ["api"] and len(args) == 2 and re.fullmatch(r"repos/[^/]+/[^/]+/i
         sys.exit(1)
     value = parents[n]
     sys.stdout.write(value if isinstance(value, str) else json.dumps(value))
+    sys.exit(0)
+
+# The edit-time read of the case collector (issue #264): gh api graphql -f query=<query> ... -F number=<n>
+if args[:2] == ["api", "graphql"]:
+    if env("FAKE_GH_API_FAIL") == "graphql":
+        fail()
+    numbers = [a.split("=", 1)[1] for i, a in enumerate(args) if args[i - 1] == "-F" and a.startswith("number=")]
+    nodes = api_data().get("graphql", {}).get(numbers[0] if numbers else "", [])
+    out = {"data": {"repository": {"issue": {"userContentEdits": {"nodes": nodes}}}}}
+    sys.stdout.write(nodes if isinstance(nodes, str) else json.dumps(out))
     sys.exit(0)
 
 sys.stderr.write(f"fake gh: unsupported call {args}\n")
