@@ -154,7 +154,55 @@ def test_weights_order(tmp_path, monkeypatch):
 def test_launch_of_record_line():
     record = {r["id"]: r for r in data.load_record(RECORD)}
     assert data.launch_of(record["example/proj:fixture-eng-1:claude-fixture"]) == "fixture-eng-1"
-    assert data.launch_of(record["example/proj:codex:1:2026-11-04T09:20:00Z"]) == "example__proj-1-20261104T092000"
+    # The fixture's Codex record time (09:22) is after the attempt start that names its stream (09:20).
+    codex = record["example/proj:codex:1:2026-11-04T09:22:00Z"]
+    assert data.launch_of(codex, data.load_steps(STEPS)) == "example__proj-1-20261104T092000"
+
+
+def test_codex_drill_down_on_the_fixtures_finds_its_steps():
+    steps = data.load_steps(STEPS)
+    rows = data.launches(data.load_record(RECORD), {"role": "qa-codex"}, steps=steps)
+    assert [r["launch"] for r in rows] == ["example__proj-1-20261104T092000"]
+    assert [s["seq"] for s in data.launch_steps(steps, rows[0]["launch"])] == [1]
+
+
+def codex_line(when, issue=1):
+    return {"id": f"example/proj:codex:{issue}:{when}", "project": "example/proj", "issue": issue,
+            "role": "qa-codex", "provider": "codex", "start": when, "end": when}
+
+
+def codex_step(launch, when, issue=1, seq=1):
+    return {"id": f"example/proj:{launch}:{seq}", "project": "example/proj", "issue": issue,
+            "role": "qa-codex", "launch": launch, "seq": seq, "time": when}
+
+
+def test_codex_record_time_after_attempt_start_joins_its_stream():
+    # qa-codex names the stream after the attempt start; the record line carries the completion time.
+    steps = [codex_step("example__proj-1-20261104T092000", "2026-11-04T09:20:00.000Z")]
+    line = codex_line("2026-11-04T09:22:00Z")
+    assert data.launch_of(line, steps) == "example__proj-1-20261104T092000"
+    rows = data.launches([line], {}, steps=steps)
+    assert [r["launch"] for r in rows] == ["example__proj-1-20261104T092000"]
+    assert len(data.launch_steps(steps, rows[0]["launch"])) == 1
+
+
+def test_codex_record_joins_the_newest_attempt_started_before_it():
+    steps = [codex_step("example__proj-1-20261104T092000", "2026-11-04T09:20:00.000Z"),
+             codex_step("example__proj-1-20261104T093000", "2026-11-04T09:30:00.000Z"),
+             codex_step("example__proj-2-20261104T092100", "2026-11-04T09:21:00.000Z", issue=2)]
+    assert data.launch_of(codex_line("2026-11-04T09:22:00Z"), steps) == "example__proj-1-20261104T092000"
+    assert data.launch_of(codex_line("2026-11-04T09:33:00Z"), steps) == "example__proj-1-20261104T093000"
+
+
+def test_codex_record_joins_a_stream_with_a_collision_suffix():
+    steps = [codex_step("example__proj-1-20261104T092000-2", "2026-11-04T09:20:00.000Z")]
+    assert data.launch_of(codex_line("2026-11-04T09:22:00Z"), steps) == "example__proj-1-20261104T092000-2"
+
+
+def test_codex_record_without_matching_steps_falls_back_to_the_derived_name():
+    later = [codex_step("example__proj-1-20261104T093000", "2026-11-04T09:30:00.000Z")]
+    assert data.launch_of(codex_line("2026-11-04T09:22:00Z"), later) == "example__proj-1-20261104T092200"
+    assert data.launch_of(codex_line("2026-11-04T09:22:00Z")) == "example__proj-1-20261104T092200"
 
 
 def test_launches_of_a_total():

@@ -135,10 +135,10 @@ def _(choices, data, filters, frame, group_by, mo, providers, record, weights):
 
 
 @app.cell
-def _(by, data, frame, mo, record, totals_table, where):
+def _(by, data, frame, mo, record, steps, totals_table, where):
     _picked = totals_table.value.to_dicts() if len(totals_table.value) else []
     _group = {f: _picked[0][f] for f in by + ["estimate"]} if _picked else {}
-    _rows = data.launches(record, where, _group) if _picked else []
+    _rows = data.launches(record, where, _group, steps) if _picked else []
     _cols = ["launch", "project", "stage", "issue", "role", "provider", "model", "retry", "estimate",
              "start", "end", "seconds", *data.TOKEN_KINDS]
     launch_table = mo.ui.table(frame(_rows, _cols), selection="single",

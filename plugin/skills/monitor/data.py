@@ -159,10 +159,35 @@ def totals(record, by, weights=None):
 
 # --- drill-down -------------------------------------------------------------------------------
 
-def launch_of(line):
-    """The `launch` value of the step rows of a record line: for a Claude line the middle part of
-    `<project>:<transcript name>:<model>`; for a Codex line the stream file name
-    `<project with / as __>-<issue>-<start %Y%m%dT%H%M%S>`. None when it cannot be built."""
+CODEX_ROLE = "qa-" + "codex"
+
+
+def codex_launch_starts(steps):
+    """{(project, issue): [(attempt start, launch)]} of the Codex QA step rows. The attempt start
+    is the earliest step `time` of the launch (every Codex row carries the attempt start)."""
+    firsts = {}
+    for row in steps or []:
+        launch, when = row.get("launch"), parse_time(row.get("time"))
+        if row.get("role") != CODEX_ROLE or launch is None or when is None:
+            continue
+        key = (row.get("project"), row.get("issue"), launch)
+        if key not in firsts or when < firsts[key]:
+            firsts[key] = when
+    out = {}
+    for (project, issue, launch), when in firsts.items():
+        out.setdefault((project, issue), []).append((when, launch))
+    return out
+
+
+def launch_of(line, steps=None, codex_starts=None):
+    """The `launch` value of the step rows of a record line, or None when it cannot be built.
+
+    Claude line: the middle part of `<project>:<transcript name>:<model>`.
+    Codex line: its `start` is the time Codex reported the usage, later than the attempt start that
+    names the stream file. So the launch is the Codex QA launch of the same project and issue in
+    `steps` with the newest attempt start at or before the line's `start` (this also finds a name
+    with a `-2` suffix). With no such launch: `<project with / as __>-<issue>-<start %Y%m%dT%H%M%S>`.
+    `codex_starts`: the result of `codex_launch_starts(steps)`, to reuse it for many lines."""
     ident, project = line.get("id"), line.get("project")
     if not isinstance(ident, str) or not isinstance(project, str) or not ident.startswith(project + ":"):
         return None
@@ -171,6 +196,11 @@ def launch_of(line):
         start = parse_time(line.get("start"))
         if start is None or line.get("issue") is None:
             return None
+        if codex_starts is None:
+            codex_starts = codex_launch_starts(steps)
+        before = [c for c in codex_starts.get((project, line["issue"]), []) if c[0] <= start]
+        if before:
+            return max(before)[1]
         return f"{project.replace('/', '__')}-{line['issue']}-{start.strftime('%Y%m%dT%H%M%S')}"
     model = line.get("model")
     if isinstance(model, str) and rest.endswith(":" + model):
@@ -178,14 +208,15 @@ def launch_of(line):
     return None
 
 
-def launches(record, where, group=None):
+def launches(record, where, group=None, steps=None):
     """The record lines of one total, each with `launch` and `seconds` added, sorted by start.
     `where`: the filters (None = any); `group`: the fields of the total row, matched exactly (None =
-    the field is null), with `estimate` as a bool."""
+    the field is null), with `estimate` as a bool; `steps`: the step rows, for the Codex join."""
     group = group or {}
     picked = [r for r in select(record, where)
               if all((bool(r.get(k)) if k == "estimate" else r.get(k)) == v for k, v in group.items())]
-    rows = [{**r, "launch": launch_of(r), "seconds": seconds(r)} for r in picked]
+    starts = codex_launch_starts(steps)
+    rows = [{**r, "launch": launch_of(r, codex_starts=starts), "seconds": seconds(r)} for r in picked]
     return sorted(rows, key=lambda r: str(r.get("start") or ""))
 
 
