@@ -50,5 +50,5 @@ def test_qa_browser_line_is_conditional_in_both_copies():
     for path in QA_PATHS:
         text = path.read_text(encoding="utf-8")
         assert "If your tool list has a browser tool, start the app" in text, path
-        assert "Without a browser tool, do not repeat a browser check." in text, path
+        assert "Without a browser tool (for example under Codex), run a headless browser check" in text, path
         assert "\nStart the app and run the browser check in one command" not in text, path

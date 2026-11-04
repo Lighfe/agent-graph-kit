@@ -54,7 +54,8 @@ def test_owner_effort_is_in_readme_not_role_file():
 def test_qa_line():
     qa = read("qa-engineer.md")
     assert "no systemd bus" in qa
-    assert "never a heavy job uncapped" in qa
+    assert "run it only under a memory cap" in qa
+    assert '"Memory-heavy jobs" in `docs/team/software-engineer.md`' in qa
 
 
 def test_orchestrator_hint():
