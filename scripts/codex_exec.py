@@ -25,6 +25,7 @@ class CodexRun:
     output: dict | None
     reason: str
     usage: dict | None = None  # token numbers of an "ok" run (usage_from_stdout), else None
+    stdout: str | None = None  # the event stream of a started process (partial after a timeout), else None
 
 
 # Keep the user config, AGENTS.md, skills, hooks and apps out of the run, report errors as
@@ -212,6 +213,15 @@ def _duration(seconds: int) -> str:
     return f"{seconds // 60} min" if seconds >= 60 and seconds % 60 == 0 else f"{seconds} s"
 
 
+def _partial(data) -> str:
+    """The partial stream of a timeout: `TimeoutExpired.stdout` holds bytes, also with text=True."""
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return str(data)
+
+
 def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str, effort: str,
               timeout_s: int, cwd: Path) -> CodexRun:
     tmp = Path(tempfile.mkdtemp(prefix="codex-"))
@@ -226,9 +236,10 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
             return CodexRun("unavailable", None, "codex is not installed")
         try:
             stdout, stderr = p.communicate(prompt, timeout=timeout_s)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             _kill_group(p)
-            return CodexRun("timeout", None, f"no result after {_duration(timeout_s)}")
+            return CodexRun("timeout", None, f"no result after {_duration(timeout_s)}",
+                            stdout=_partial(e.stdout))
         except BaseException:  # an interrupt (see catch_signals): no child outlives the caller
             _kill_group(p)
             raise
@@ -237,14 +248,14 @@ def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str,
         if p.returncode != 0:
             text = failure_text(stdout, stderr)
             reason = crash_reason(p.returncode, stdout, stderr) or failure_reason(stdout, stderr)
-            return CodexRun(classify_failure(p.returncode, text), None, reason)
+            return CodexRun(classify_failure(p.returncode, text), None, reason, stdout=stdout)
         try:
             data = json.loads(out.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
-            return CodexRun("invalid_output", None, f"output is not JSON: {_one_line(str(e))}")
+            return CodexRun("invalid_output", None, f"output is not JSON: {_one_line(str(e))}", stdout=stdout)
         if not isinstance(data, dict):
-            return CodexRun("invalid_output", None, "output is not a JSON object")
-        return CodexRun("ok", data, "", usage_from_stdout(stdout))
+            return CodexRun("invalid_output", None, "output is not a JSON object", stdout=stdout)
+        return CodexRun("ok", data, "", usage_from_stdout(stdout), stdout)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -346,6 +357,82 @@ def record_usage(issue: int, model: str, effort: str, usage: dict | None, now: d
             f.write(json.dumps(line) + "\n")
     except (OSError, RuntimeError):
         pass
+
+
+# --- the Codex event streams (#268) ----------------------------------------------------------------
+# The QA launcher keeps the whole stdout (`--json` events) of each attempt that started the Codex
+# process, in a private local folder outside the git tree: folder mode 0700, file mode 0600, and the
+# `*.jsonl` files older than STREAM_DAYS days are deleted at each save. The step extractor of the skill
+# `monitor` reads them. A failing save or prune changes no QA result.
+CODEX_RUNS_ENV = "CODEX_RUNS_DIR"
+STREAM_DAYS = 90
+
+
+def codex_runs_dir() -> Path:
+    custom = os.environ.get(CODEX_RUNS_ENV)
+    if custom:
+        return Path(custom)
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "agent-graph-kit" / "codex-runs"
+
+
+def stream_name(project: str, issue: int, attempt_time: datetime, n: int = 1) -> str:
+    """`<project with / as __>-<issue>-<attempt start, UTC %Y%m%dT%H%M%S>[-<n>].jsonl` (`-<n>` for n > 1)."""
+    stamp = attempt_time.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    suffix = f"-{n}" if n > 1 else ""
+    return f"{project.replace('/', '__')}-{issue}-{stamp}{suffix}.jsonl"
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+def save_stream(project: str, issue: int, attempt_time: datetime, stdout: str) -> Path | None:
+    """Write the stream to a new file in codex_runs_dir(). No file is overwritten: when the name
+    exists, `-2`, `-3`, … goes before `.jsonl`. Returns the path, or None when the save fails. Never raises."""
+    try:
+        folder = codex_runs_dir()
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(folder, 0o700)
+        data = (stdout or "").encode("utf-8", errors="replace")
+        for n in range(1, 1000):
+            path = folder / stream_name(project, issue, attempt_time, n)
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue
+            try:
+                os.fchmod(fd, 0o600)
+                _write_all(fd, data)
+            finally:
+                os.close(fd)
+            return path
+        return None
+    except Exception:  # noqa: BLE001 - a failing save never changes the QA result
+        return None
+
+
+def prune_streams(now: datetime, days: int = STREAM_DAYS) -> int:
+    """Delete the `*.jsonl` files of codex_runs_dir() whose modification time is more than `days`
+    days before `now`; newer files and other files stay. Returns the count deleted. Never raises."""
+    deleted = 0
+    try:
+        cutoff = now.timestamp() - days * 86400
+        folder = codex_runs_dir()
+        if not folder.is_dir():
+            return 0
+        for path in folder.glob("*.jsonl"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    deleted += 1
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001 - a failing prune never changes the QA result
+        pass
+    return deleted
 
 
 def read_limit() -> datetime | None:

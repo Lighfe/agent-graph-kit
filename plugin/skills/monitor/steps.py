@@ -2,9 +2,10 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Write step rows: one JSON line per assistant message of each Claude Code launch (issue #263).
+"""Write step rows: one JSON line per assistant message of each Claude Code launch (issue #263),
+and one per command and per turn of each Codex QA attempt (issue #268).
 
-  uv run --script steps.py collect --project <name> [--transcripts <folder>] [--stage <n>]
+  uv run --script steps.py collect --project <owner/name> [--transcripts <folder>] [--codex-runs <folder>] [--stage <n>]
 
 Reads the transcripts as they are, also while a launch still writes to them. Writes no prompt,
 thinking or tool output text: only sizes, names, paths and the cut Bash command. The only network
@@ -18,6 +19,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = 1
@@ -29,6 +31,8 @@ COMMAND_CUT = 300
 COMMAND_RE = re.compile(r"<command-name>\s*(/[^<\s]+)\s*</command-name>")  # matched at the start of a line
 ROLE_OF_COMMAND = {"/goal": "orchestrator", "/stage-start": "planner", "/agk:stage-start": "planner"}
 KIT_DOC_FILES = ("AGENTS.md", "docs/process.md", "docs/task-template.md")
+CODEX_ROLE = "qa-codex"
+STREAM_NAME_RE = re.compile(r"-(\d+)-(\d{8}T\d{6})(?:-\d+)?\.jsonl")
 
 
 def command_names(content):
@@ -66,6 +70,17 @@ def steps_path():
     state = os.environ.get("XDG_STATE_HOME")
     base = Path(state) if state else Path.home() / ".local" / "state"
     return base / "agent-graph-kit" / "steps.jsonl"
+
+
+def codex_runs_dir():
+    """The folder of the Codex event streams that the QA launcher saves (the same rule as
+    `codex_runs_dir()` in `codex_exec.py`)."""
+    env = os.environ.get("CODEX_RUNS_DIR")
+    if env:
+        return Path(env)
+    state = os.environ.get("XDG_STATE_HOME")
+    base = Path(state) if state else Path.home() / ".local" / "state"
+    return base / "agent-graph-kit" / "codex-runs"
 
 
 def default_transcripts(cwd=None):
@@ -202,6 +217,87 @@ def launch_rows(path, project, stage_of):
     return rows
 
 
+def _int(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def stream_files(folder, project):
+    """[(path, issue, attempt start)] of the stream files of one project, read from the file names."""
+    prefix = project.replace("/", "__")
+    out = []
+    for path in sorted(Path(folder).glob("*.jsonl")):
+        name = path.name
+        if not name.startswith(prefix) or not path.is_file():
+            continue
+        m = STREAM_NAME_RE.fullmatch(name[len(prefix):])
+        if not m:
+            continue
+        try:
+            start = datetime.strptime(m.group(2), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        out.append((path, int(m.group(1)), start))
+    return out
+
+
+def stream_events(path):
+    """The JSON object events of one stream file; a line that is not JSON (also a cut last line) is skipped."""
+    try:
+        raw = Path(path).read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    events = []
+    for line in raw.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict):
+            events.append(d)
+    return events
+
+
+def codex_rows(path, issue, start, project, stage_of):
+    """Rows of one Codex stream: one per `command_execution` item id (the newest event of the id wins),
+    one per `turn.completed`. No row holds command output or message text."""
+    launch = Path(path).name[:-len(".jsonl")]
+    stage = stage_of(issue)
+    steps = {}  # key -> step, in the order of the first event of the key
+    turns = 0
+    for event in stream_events(path):
+        kind = event.get("type")
+        item = event.get("item")
+        if (isinstance(kind, str) and kind.startswith("item.") and isinstance(item, dict)
+                and item.get("type") == "command_execution" and isinstance(item.get("id"), str)):
+            command = item.get("command")
+            output = item.get("aggregated_output")
+            code = item.get("exit_code")
+            steps["cmd:" + item["id"]] = {
+                "key": item["id"], "tool": ["command_execution"],
+                "target": [command[:COMMAND_CUT] if isinstance(command, str) else None],
+                "result_chars": len(output) if isinstance(output, str) else 0,
+                "is_error": isinstance(code, int) and not isinstance(code, bool) and code != 0,
+                "input_tokens": 0, "output_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0,
+                "context_tokens": 0}
+        elif kind == "turn.completed":
+            turns += 1
+            usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+            # the run-record mapping (`codex_lines`): Codex input_tokens includes the cached tokens
+            steps[f"turn:{turns}"] = {
+                "key": f"turn-{turns}", "tool": [], "target": [], "result_chars": 0, "is_error": False,
+                "input_tokens": _int(usage.get("input_tokens")), "output_tokens": _int(usage.get("output_tokens")),
+                "cache_creation_tokens": _int(usage.get("cache_write_input_tokens")),
+                "cache_read_tokens": _int(usage.get("cached_input_tokens")),
+                "context_tokens": _int(usage.get("input_tokens"))}
+    rows = []
+    for seq, step in enumerate(steps.values(), 1):
+        row = {"v": VERSION, "id": f"{project}:{launch}:{step['key']}", "project": project, "stage": stage,
+               "issue": issue, "role": CODEX_ROLE, "launch": launch, "seq": seq, "time": rr.iso(start),
+               "duration_s": None, "model": None, "kit_doc": None, **step}
+        rows.append({k: row[k] for k in FIELDS})
+    return rows
+
+
 def append_rows(rows):
     """Append each row whose id is not in the file yet. The file has mode 0600. Return the count written."""
     path = steps_path()
@@ -278,13 +374,19 @@ def stage_lookup(project, stage):
 
 def collect(args):
     folder = Path(args.transcripts) if args.transcripts else default_transcripts()
-    if not folder.is_dir():
-        print(f"No transcript folder: {folder}; no step rows")
-        return 0
+    runs = Path(args.codex_runs) if args.codex_runs else codex_runs_dir()
     stage_of = stage_lookup(args.project, args.stage)
     rows = []
-    for path in sorted(folder.rglob("*.jsonl")):
-        rows += launch_rows(path, args.project, stage_of)
+    if folder.is_dir():
+        for path in sorted(folder.rglob("*.jsonl")):
+            rows += launch_rows(path, args.project, stage_of)
+    else:
+        print(f"No transcript folder: {folder}; no transcript step rows")
+    if runs.is_dir():  # a missing stream folder gives no Codex rows and no error
+        for path, issue, start in stream_files(runs, args.project):
+            rows += codex_rows(path, issue, start, args.project, stage_of)
+    if not rows and not folder.is_dir():
+        return 0
     written = append_rows(rows)
     print(f"Wrote {written} step rows to {steps_path()} ({len(rows) - written} already there)")
     return 0
@@ -296,6 +398,8 @@ def main(argv=None):
     c = sub.add_parser("collect", help="append the step rows of every transcript of a folder")
     c.add_argument("--project", required=True)
     c.add_argument("--transcripts", help="transcript folder; default: the Claude Code folder of the current dir")
+    c.add_argument("--codex-runs", help="folder of the Codex QA event streams; default: $CODEX_RUNS_DIR, "
+                   "else $XDG_STATE_HOME/agent-graph-kit/codex-runs, else ~/.local/state/agent-graph-kit/codex-runs")
     c.add_argument("--stage", type=int)
     args = ap.parse_args(argv)
     return collect(args)

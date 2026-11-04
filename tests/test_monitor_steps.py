@@ -498,3 +498,177 @@ def test_failing_step_write_inside_extractor(tmp_path, fake_gh, monkeypatch, cap
     assert run_write(monkeypatch, tr, issues, tmp_path / "rec.jsonl") == 0
     assert "Warning: no step rows written: RuntimeError: synthetic failure" in capsys.readouterr().out
     assert (tmp_path / "rec.jsonl").read_text()
+
+
+# --- Codex QA streams (#268) ------------------------------------------------------------------
+
+CMD_OUT_MARK = "CMD-OUTPUT-MARK"
+MSG_MARK = "AGENT-MESSAGE-MARK"
+
+
+def cmd_event(kind, iid, command, output="", code=None, status="in_progress"):
+    return {"type": kind, "item": {"id": iid, "type": "command_execution", "command": command,
+                                   "aggregated_output": output, "exit_code": code, "status": status}}
+
+
+def turn(i=27461, cached=25088, write_=0, out=53):
+    u = {"input_tokens": i, "cached_input_tokens": cached, "output_tokens": out, "reasoning_output_tokens": 0}
+    if write_ is not None:
+        u["cache_write_input_tokens"] = write_
+    return {"type": "turn.completed", "usage": u}
+
+
+LONG_CMD = "/bin/bash -lc 'echo " + "x" * 400 + "'"
+FULL_STREAM = [
+    {"type": "thread.started", "thread_id": "t"}, {"type": "turn.started"},
+    cmd_event("item.started", "item_1", "/bin/bash -lc 'echo hello'"),
+    cmd_event("item.completed", "item_1", "/bin/bash -lc 'echo hello'", CMD_OUT_MARK + "\n", 0, "completed"),
+    {"type": "item.completed", "item": {"id": "item_2", "type": "agent_message", "text": MSG_MARK}},
+    cmd_event("item.started", "item_3", LONG_CMD),
+    cmd_event("item.completed", "item_3", LONG_CMD, "boom" + CMD_OUT_MARK, 2, "failed"),
+    turn(),
+]
+PARTIAL_STREAM = [
+    {"type": "thread.started", "thread_id": "t"},
+    cmd_event("item.started", "item_1", "ls"),
+    cmd_event("item.completed", "item_1", "ls", "a\nb\n", 0, "completed"),
+    cmd_event("item.started", "item_2", "sleep 99"),
+]
+CODEX_ROLE = "qa-" + "codex"
+
+
+def codex_collect(tmp_path, *extra, project="Synth/demo"):
+    return st.main(["collect", "--project", project, "--transcripts", str(tmp_path / "no-tr"),
+                    "--codex-runs", str(tmp_path / "runs"), *extra])
+
+
+def write_streams(tmp_path):
+    runs = tmp_path / "runs"
+    write(runs / "Synth__demo-12-20261104T090807.jsonl", FULL_STREAM)
+    write(runs / "Synth__demo-12-20261104T090807-2.jsonl", PARTIAL_STREAM, tail='{"type":"item.comp')
+    write(runs / "Other__repo-12-20261104T090807.jsonl", FULL_STREAM)  # another project
+    (runs / "Synth__demo-notes.txt").write_text("not a stream\n")
+    return runs
+
+
+def test_codex_stream_rows(tmp_path):
+    write_streams(tmp_path)
+    assert codex_collect(tmp_path, "--stage", "3") == 0
+    rows = read_rows()
+    assert all(list(r) == list(st.FIELDS) for r in rows)
+    by_launch = {}
+    for r in rows:
+        by_launch.setdefault(r["launch"], []).append(r)
+    assert set(by_launch) == {"Synth__demo-12-20261104T090807", "Synth__demo-12-20261104T090807-2"}
+    full = by_launch["Synth__demo-12-20261104T090807"]
+    assert [r["seq"] for r in full] == [1, 2, 3]
+    for r in rows:
+        assert (r["project"], r["stage"], r["issue"], r["role"]) == ("Synth/demo", 3, 12, CODEX_ROLE)
+        assert r["time"] == "2026-11-04T09:08:07.000Z" and r["duration_s"] is None and r["model"] is None
+        assert r["kit_doc"] is None and r["v"] == 1
+    c1, c3, t = full
+    assert c1["id"] == "Synth/demo:Synth__demo-12-20261104T090807:item_1"
+    assert (c1["tool"], c1["target"], c1["result_chars"], c1["is_error"]) == (
+        ["command_execution"], ["/bin/bash -lc 'echo hello'"], len(CMD_OUT_MARK) + 1, False)
+    assert c3["target"] == [LONG_CMD[:300]] and len(c3["target"][0]) == 300
+    assert c3["is_error"] is True and c3["result_chars"] == len("boom" + CMD_OUT_MARK)
+    for c in (c1, c3):
+        assert [c[k] for k in ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
+                               "context_tokens")] == [0, 0, 0, 0, 0]
+    assert (t["tool"], t["target"], t["result_chars"], t["is_error"]) == ([], [], 0, False)
+    assert (t["input_tokens"], t["cache_read_tokens"], t["cache_creation_tokens"], t["output_tokens"],
+            t["context_tokens"]) == (27461, 25088, 0, 53, 27461)
+    partial = by_launch["Synth__demo-12-20261104T090807-2"]
+    # the newest event of an id wins; exit code null is no error; no turn.completed gives no token row
+    assert [(r["target"], r["result_chars"], r["is_error"]) for r in partial] == [
+        (["ls"], 4, False), (["sleep 99"], 0, False)]
+    assert len(rows) == 5
+
+
+def test_codex_rows_hold_no_output_or_message_text(tmp_path):
+    write_streams(tmp_path)
+    codex_collect(tmp_path, "--stage", "3")
+    text_out = steps_file().read_text()
+    assert CMD_OUT_MARK not in text_out and MSG_MARK not in text_out and "boom" not in text_out
+
+
+def test_codex_cache_write_missing_is_0_and_exit_code_rules(tmp_path):
+    write(tmp_path / "runs" / "Synth__demo-4-20261104T000000.jsonl", [
+        cmd_event("item.completed", "a", "x", "", True, "completed"),  # a bool is not an int
+        cmd_event("item.completed", "b", "y", "", 0, "completed"),
+        cmd_event("item.completed", "c", "z", "", 1, "completed"),
+        turn(write_=None), turn(10, 2, 3, 4)])
+    codex_collect(tmp_path, "--stage", "1")
+    rows = read_rows()
+    assert [r["is_error"] for r in rows[:3]] == [False, False, True]
+    assert rows[3]["cache_creation_tokens"] == 0
+    assert (rows[4]["input_tokens"], rows[4]["cache_read_tokens"], rows[4]["cache_creation_tokens"],
+            rows[4]["context_tokens"]) == (10, 2, 3, 10)
+    assert [r["id"].rsplit(":", 1)[1] for r in rows] == ["a", "b", "c", "turn-1", "turn-2"]
+
+
+def test_second_codex_collect_adds_no_row(tmp_path, capsys):
+    write_streams(tmp_path)
+    codex_collect(tmp_path, "--stage", "3")
+    first = steps_file().read_text()
+    codex_collect(tmp_path, "--stage", "3")
+    assert steps_file().read_text() == first
+    assert "Wrote 0 step rows" in capsys.readouterr().out
+
+
+def test_missing_codex_folder_no_rows_no_error(tmp_path):
+    assert codex_collect(tmp_path, "--stage", "1") == 0  # neither folder exists
+    assert read_rows() == []
+    write(tmp_path / "tr" / "a.jsonl", [user("ROLE=pm ISSUE=7"), asst("m1", [text("x")])])
+    assert st.main(["collect", "--project", "o/r", "--transcripts", str(tmp_path / "tr"),
+                    "--codex-runs", str(tmp_path / "none"), "--stage", "1"]) == 0
+    assert [r["id"] for r in read_rows()] == ["o/r:a:m1"]
+
+
+def test_codex_rows_with_transcripts_and_default_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path / "runs"))
+    write_streams(tmp_path)
+    write(tmp_path / "tr" / "a.jsonl", [user("ROLE=pm ISSUE=7"), asst("m1", [text("x")])])
+    assert st.main(["collect", "--project", "Synth/demo", "--transcripts", str(tmp_path / "tr"), "--stage", "2"]) == 0
+    roles = [r["role"] for r in read_rows()]
+    assert roles.count("pm") == 1 and roles.count(CODEX_ROLE) == 5
+
+
+def test_codex_stage_from_gh_parent(tmp_path, fake_gh):
+    calls, api = fake_gh
+    api.write_text(json.dumps({"parent": {"12": {"number": 40}}}))
+    write_streams(tmp_path)
+    assert codex_collect(tmp_path) == 0
+    assert {r["stage"] for r in read_rows()} == {40}
+    assert len([c for c in gh_calls(calls) if c[:1] == ["api"]]) == 1
+
+
+def test_codex_runs_dir_rule(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path / "c"))
+    assert st.codex_runs_dir() == tmp_path / "c"
+    monkeypatch.delenv("CODEX_RUNS_DIR")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "x"))
+    assert st.codex_runs_dir() == tmp_path / "x" / "agent-graph-kit" / "codex-runs"
+    monkeypatch.delenv("XDG_STATE_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    assert st.codex_runs_dir() == tmp_path / "h" / ".local" / "state" / "agent-graph-kit" / "codex-runs"
+
+
+def test_reader_matches_the_writer_file_name(tmp_path, monkeypatch):
+    """The file name that codex_exec.save_stream writes is the one the reader parses."""
+    import codex_exec
+    from datetime import datetime, timezone
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path / "runs"))
+    when = datetime(2026, 11, 4, 9, 8, 7, tzinfo=timezone.utc)
+    for _ in range(2):
+        codex_exec.save_stream("Synth/demo", 12, when, "".join(json.dumps(e) + "\n" for e in FULL_STREAM))
+    found = st.stream_files(tmp_path / "runs", "Synth/demo")
+    assert [(p.name, n, t) for p, n, t in found] == [
+        ("Synth__demo-12-20261104T090807-2.jsonl", 12, when), ("Synth__demo-12-20261104T090807.jsonl", 12, when)]
+    codex_collect(tmp_path, "--stage", "1")
+    assert len(read_rows()) == 6
+
+
+def test_conftest_keeps_codex_runs_out_of_real_state_dir():
+    real = Path.home() / ".local" / "state" / "agent-graph-kit" / "codex-runs"
+    assert os.environ.get("CODEX_RUNS_DIR") and Path(os.environ["CODEX_RUNS_DIR"]) != real

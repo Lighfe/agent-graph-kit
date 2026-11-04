@@ -572,26 +572,55 @@ def _first_line(text: str) -> str:
     return next((line for line in codex_exec.redact(text).splitlines() if line.strip()), "")
 
 
-def _read_issue(number: int) -> tuple[issue_state.Issue | None, str]:
+UNKNOWN_PROJECT = "unknown"
+
+
+def project_of(url) -> str:
+    """`owner/name` from an issue URL `https://<host>/<owner>/<name>/issues/<n>`, else `unknown` (#268)."""
+    if isinstance(url, str):
+        m = re.fullmatch(r"https?://[^/]+/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/\d+/?", url.strip())
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    return UNKNOWN_PROJECT
+
+
+def _read_issue(number: int) -> tuple[issue_state.Issue | None, str, str]:
     """The one read of the issue (criteria, range and comments in one snapshot), outside the
-    sandbox. Returns (issue, "") or (None, the reason for `## QA: UNAVAILABLE`)."""
+    sandbox. Returns (issue, project, "") or (None, project, the reason for `## QA: UNAVAILABLE`).
+    The project is the `owner/name` of the issue URL, or `unknown`."""
     step = f"reading issue #{number} with gh issue view failed"
     try:
-        p = subprocess.run(["gh", "issue", "view", str(number), "--json", "number,state,labels,body,comments"],
+        p = subprocess.run(["gh", "issue", "view", str(number), "--json", "number,state,labels,body,comments,url"],
                            capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
-        return None, codex_exec._one_line(f"{step}: {e.strerror or e}")
+        return None, UNKNOWN_PROJECT, codex_exec._one_line(f"{step}: {e.strerror or e}")
     if p.returncode != 0:
         detail = _first_line(p.stderr) or _first_line(p.stdout) or f"exit code {p.returncode}"
-        return None, codex_exec._one_line(f"{step}: {detail}")
+        return None, UNKNOWN_PROJECT, codex_exec._one_line(f"{step}: {detail}")
     try:
         data = json.loads(p.stdout)
     except ValueError as e:
-        return None, codex_exec._one_line(f"{step}: output is not JSON: {e}")
+        return None, UNKNOWN_PROJECT, codex_exec._one_line(f"{step}: output is not JSON: {e}")
+    project = project_of(data.get("url")) if isinstance(data, dict) else UNKNOWN_PROJECT
     try:
-        return issue_state.parse_issue(data), ""
+        return issue_state.parse_issue(data), project, ""
     except (ValueError, KeyError, TypeError, AttributeError) as e:
-        return None, codex_exec._one_line(f"{step}: output cannot be parsed: {type(e).__name__}: {e}")
+        return None, project, codex_exec._one_line(f"{step}: output cannot be parsed: {type(e).__name__}: {e}")
+
+
+def keep_stream(project: str, number: int, attempt_time: datetime, run) -> None:
+    """Save the event stream of an attempt that started the Codex process, and prune old streams
+    (#268). Any failure is ignored: the QA result stays the same."""
+    if run.stdout is None:  # the process did not start
+        return
+    try:
+        codex_exec.save_stream(project, number, attempt_time, run.stdout)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        codex_exec.prune_streams(_now())
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # --- the GitHub state files (#89) --------------------------------------------------------
@@ -867,7 +896,7 @@ def _main(argv: list[str], sleep) -> int:
         return _post(number, render(output, criteria=criteria, marker=marker, reason=reason, head=head,
                                     retries=list(retries), done_head=done_head))
 
-    issue, read_error = _read_issue(number)
+    issue, project, read_error = _read_issue(number)
     if issue is None:
         print(f"qa-codex: {read_error}", file=sys.stderr)
         return post(UNAVAILABLE, read_error)  # no Codex run; if the post fails too, exit non-zero
@@ -931,8 +960,10 @@ def _main(argv: list[str], sleep) -> int:
         used: Counter = Counter()
         retries: list[str] = []
         while True:
+            attempt_time = _now()
             run = codex_exec.run_codex(prompt, schema=SCHEMA, sandbox_args=sandbox, model=QA_MODEL,
                                        effort=QA_EFFORT, timeout_s=timeout, cwd=worktree)
+            keep_stream(project, number, attempt_time, run)  # the event stream (#268), before any result
             status, reason = run.status, run.reason
             if status == "ok":
                 # token record (#224): only a run that ended "ok"; a failed run is skipped. A missing

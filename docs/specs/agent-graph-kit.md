@@ -411,6 +411,14 @@ After each Codex run that ends `ok` (before the schema check), `qa-codex` append
 - A run that ends in a failure writes no line (it has no `turn.completed` event). When stdout has no usage event, or the file cannot be written, no line is written and the QA result does not change.
 - `scripts/run_report.py --codex-usage <file>` sums the three token fields for each issue of the report.
 
+**Event streams** ([#268](https://github.com/Lighfe/agent-graph-kit/issues/268)). For each attempt that started the Codex process (ok, failed, invalid output, and timeout), `qa-codex` also saves the whole stdout of `codex exec --json` to a local file, before it looks at the result. A timeout saves the partial stream, decoded as UTF-8 with `errors="replace"`. The streams are local only: outside the git tree, never committed or posted. They can hold command output and messages, so the folder is private.
+
+- Folder: `$CODEX_RUNS_DIR`, else `$XDG_STATE_HOME/agent-graph-kit/codex-runs/`, else `~/.local/state/agent-graph-kit/codex-runs/`. Folder mode 0700, file mode 0600.
+- File name: `<project with / as __>-<issue>-<attempt start, UTC %Y%m%dT%H%M%S>.jsonl`, for example `Lighfe__quack-rl-12-20261104T090807.jsonl`. The project is the owner and name of the repo, joined by a slash, taken from the issue URL of the one `gh issue view` read, or `unknown`. When the name exists, `-2`, `-3`, … goes before `.jsonl`; no file is overwritten.
+- Retention: at each save, the `*.jsonl` files of the folder whose modification time is older than 90 days are deleted; newer files and other files stay.
+- A failing save or prune (for example a read-only folder) is ignored: the QA comment is the same. The skill `codex-review` saves no stream.
+- The step extractor of the skill `monitor` (`steps.py collect`) turns these files into step rows with role `qa-codex`: one row per `command_execution` item, one per `turn.completed` (tokens mapped as in the run record, `context_tokens` = Codex `input_tokens`). No row holds command output or message text.
+
 ## Run record
 
 At the end of a stage the orchestrator runs `plugin/skills/run-record/run_record.py write` (step 4 of "Stage end" in [docs/team/orchestrator.md](../team/orchestrator.md#stage-end)). The command appends lines to a local file outside the git tree. A failure of the command is named in the run notes and does not stop the loop.

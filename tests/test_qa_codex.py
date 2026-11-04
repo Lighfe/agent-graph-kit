@@ -100,6 +100,7 @@ class QaEnv:
             "QA_CODEX_TIMEOUT": "1",
             "QA_CODEX_LIMIT_FILE": str(tmp / "limit-state" / "reset"),
             "QA_CODEX_USAGE_FILE": str(tmp / "usage-state" / "codex-qa-usage.jsonl"),
+            "CODEX_RUNS_DIR": str(tmp / "runs-state" / "codex-runs"),
             "TZ": "UTC",
         }
         for key, value in env.items():
@@ -140,6 +141,7 @@ class QaEnv:
             comments = ["## Launch: engineer (attempt 1)\nAgent: software-engineer", self.done()]
         # a string is an owner comment; a dict is passed as is (to set or drop authorAssociation, #70)
         data = {"number": 7, "state": "OPEN", "labels": [{"name": "ready"}], "body": body,
+                "url": "https://github.com/Synthetic/demo/issues/7",
                 "comments": [{"body": c, "authorAssociation": "OWNER"} if isinstance(c, str) else c
                              for c in comments]}
         (self.tmp / "issue.json").write_text(json.dumps(data))
@@ -719,7 +721,7 @@ def test_one_issue_view_call_per_launch(qa_env):
     qa_env.run(["ok"])
     calls = [json.loads(line) for line in (qa_env.tmp / "gh-calls.log").read_text().splitlines()]
     views = [c for c in calls if c[:2] == ["issue", "view"]]
-    assert views == [["issue", "view", "7", "--json", "number,state,labels,body,comments"]]
+    assert views == [["issue", "view", "7", "--json", "number,state,labels,body,comments,url"]]
     # the other reads are the GitHub state reads (#89): `gh api`, each paged
     assert all(c[:2] in (["issue", "view"], ["issue", "comment"]) or (c[0] == "api" and "--paginate" in c)
                for c in calls)
@@ -3006,3 +3008,208 @@ def test_usage_file_path_default(monkeypatch, tmp_path):
     monkeypatch.delenv("QA_CODEX_USAGE_FILE", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     assert codex_exec.usage_file() == tmp_path / "agent-graph-kit" / "codex-qa-usage.jsonl"
+
+
+# --- the Codex event streams (#268) ----------------------------------------------------------------
+
+STAMP_RE = r"\d{8}T\d{6}"
+
+
+def _runs_dir():
+    return Path(os.environ["CODEX_RUNS_DIR"])
+
+
+def _streams():
+    folder = _runs_dir()
+    return sorted(p.name for p in folder.glob("*.jsonl")) if folder.is_dir() else []
+
+
+def test_setup_keeps_streams_in_a_temp_folder(qa_env):
+    real = Path.home() / ".local" / "state" / "agent-graph-kit" / "codex-runs"
+    assert _runs_dir() != real and str(_runs_dir()).startswith(str(qa_env.tmp))
+    assert codex_exec.codex_runs_dir() == _runs_dir()
+
+
+def test_codex_runs_dir_defaults(monkeypatch, tmp_path):
+    monkeypatch.delenv("CODEX_RUNS_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
+    assert codex_exec.codex_runs_dir() == tmp_path / "xdg" / "agent-graph-kit" / "codex-runs"
+    monkeypatch.delenv("XDG_STATE_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert codex_exec.codex_runs_dir() == tmp_path / "home" / ".local" / "state" / "agent-graph-kit" / "codex-runs"
+
+
+def test_ok_run_saves_its_stream_private(qa_env):
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    names = _streams()
+    assert len(names) == 1 and re.fullmatch(rf"Synthetic__demo-7-{STAMP_RE}\.jsonl", names[0])
+    path = _runs_dir() / names[0]
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [e["type"] for e in events] == ["thread.started", "turn.completed"]
+    assert stat_mode(_runs_dir()) == 0o700 and stat_mode(path) == 0o600
+
+
+def stat_mode(path):
+    return path.stat().st_mode & 0o777
+
+
+def test_file_name_is_the_attempt_start_in_utc(qa_env, monkeypatch):
+    start = datetime(2026, 11, 4, 9, 8, 7, tzinfo=timezone.utc)
+    monkeypatch.setattr(qa, "_now", lambda: start)
+    qa_env.run(["ok"])
+    assert _streams() == ["Synthetic__demo-7-20261104T090807.jsonl"]
+
+
+@pytest.mark.parametrize("modes", [["transient", "ok"], ["unknown"], ["missing", "ok"], ["timeout", "ok"]])
+def test_each_started_attempt_saves_a_stream(qa_env, modes):
+    qa_env.run(modes)
+    assert len(_streams()) == len(modes)
+
+
+def test_same_second_attempts_get_a_suffix_and_overwrite_nothing(qa_env, monkeypatch):
+    start = datetime(2026, 11, 4, 9, 8, 7, tzinfo=timezone.utc)
+    monkeypatch.setattr(qa, "_now", lambda: start)
+    _runs_dir().mkdir(parents=True)
+    taken = _runs_dir() / "Synthetic__demo-7-20261104T090807-3.jsonl"
+    taken.write_text("older\n")
+    comment, _ = qa_env.run(["transient", "transient", "ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert _streams() == ["Synthetic__demo-7-20261104T090807-2.jsonl", "Synthetic__demo-7-20261104T090807-3.jsonl",
+                          "Synthetic__demo-7-20261104T090807-4.jsonl", "Synthetic__demo-7-20261104T090807.jsonl"]
+    assert taken.read_text() == "older\n"
+    assert "turn.failed" in (_runs_dir() / "Synthetic__demo-7-20261104T090807.jsonl").read_text()
+    assert "turn.completed" in (_runs_dir() / "Synthetic__demo-7-20261104T090807-4.jsonl").read_text()
+
+
+def test_timeout_attempt_saves_the_partial_stream(qa_env, monkeypatch):
+    """The fake `codex` of this test prints one event and a cut UTF-8 character, then hangs."""
+    script = qa_env.tmp / "partial-codex"
+    script.write_text("#!/usr/bin/env python3\nimport os, sys, time\nsys.stdin.read()\n"
+                      "os.write(1, b'{\"type\":\"thread.started\",\"thread_id\":\"t\"}\\n'"
+                      " + b'{\"type\":\"item.started\",\"item\":{\"text\":\"\\xc3')\ntime.sleep(30)\n")
+    script.chmod(0o755)
+    (qa_env.bin / "codex").unlink()
+    (qa_env.bin / "codex").symlink_to(script)
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: INVALID"
+    names = _streams()
+    assert len(names) == 2
+    text = (_runs_dir() / names[0]).read_text(encoding="utf-8")
+    assert text.startswith('{"type":"thread.started","thread_id":"t"}\n')
+    assert text.endswith("\ufffd")
+
+
+def test_partial_timeout_stream_is_decoded_with_replace():
+    assert codex_exec._partial(None) == ""
+    assert codex_exec._partial(b'{"a":1}\n\xc3') == '{"a":1}\n\ufffd'
+    assert codex_exec._partial("text") == "text"
+
+
+def test_no_stream_when_codex_did_not_start(qa_env):
+    (qa_env.bin / "codex").unlink()
+    comment, _ = qa_env.run([])
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert _streams() == []
+
+
+def test_project_unknown_without_an_issue_url(qa_env):
+    data = json.loads((qa_env.tmp / "issue.json").read_text())
+    del data["url"]
+    (qa_env.tmp / "issue.json").write_text(json.dumps(data))
+    qa_env.run(["ok"])
+    names = _streams()
+    assert len(names) == 1 and re.fullmatch(rf"unknown-7-{STAMP_RE}\.jsonl", names[0])
+
+
+@pytest.mark.parametrize("url,project", [
+    ("https://github.com/Lighfe/quack-rl/issues/12", "Lighfe/quack-rl"),
+    ("https://github.example.com/org.x/repo_y/issues/3", "org.x/repo_y"),
+    ("https://github.com/Lighfe/quack-rl/pull/12", "unknown"),
+    ("not a url", "unknown"),
+    (None, "unknown"),
+])
+def test_project_of_issue_url(url, project):
+    assert qa.project_of(url) == project
+
+
+def test_save_at_each_attempt_prunes_old_streams(qa_env):
+    folder = _runs_dir()
+    folder.mkdir(parents=True)
+    now = time.time()
+    files = {"old.jsonl": 91, "new.jsonl": 89, "old.txt": 100}
+    for name, days in files.items():
+        (folder / name).write_text("{}\n")
+        os.utime(folder / name, (now - days * 86400, now - days * 86400))
+    (folder / "dir.jsonl").mkdir()
+    os.utime(folder / "dir.jsonl", (now - 100 * 86400, now - 100 * 86400))
+    qa_env.run(["ok"])
+    left = sorted(p.name for p in folder.iterdir())
+    assert "old.jsonl" not in left
+    assert {"new.jsonl", "old.txt", "dir.jsonl"} <= set(left)
+    assert len([n for n in left if n.startswith("Synthetic__demo-7-")]) == 1
+
+
+def test_prune_streams_counts_and_ignores_a_missing_folder(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path / "none"))
+    assert codex_exec.prune_streams(datetime.now(timezone.utc)) == 0
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path))
+    now = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    for name, days in (("a.jsonl", 90.5), ("b.jsonl", 10)):
+        (tmp_path / name).write_text("")
+        t = now.timestamp() - days * 86400
+        os.utime(tmp_path / name, (t, t))
+    assert codex_exec.prune_streams(now) == 1
+    assert codex_exec.prune_streams(now, days=5) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_save_stream_never_raises(monkeypatch, tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a folder\n")
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(blocker / "sub"))
+    assert codex_exec.save_stream("o/r", 7, datetime.now(timezone.utc), "x\n") is None
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(tmp_path / "ok"))
+    path = codex_exec.save_stream("o/r", 7, datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), "x\n")
+    assert path == tmp_path / "ok" / "o__r-7-20260102T030405.jsonl" and path.read_text() == "x\n"
+
+
+def _blocked_runs(qa_env, monkeypatch):
+    blocker = qa_env.tmp / "blocker"
+    blocker.write_text("a file, not a folder\n")
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(blocker / "sub"))
+
+
+def _raising(*_args, **_kwargs):
+    raise RuntimeError("synthetic save failure")
+
+
+@pytest.mark.parametrize("modes", [["ok"], ["fail"], ["timeout", "ok"], ["unknown"]])
+@pytest.mark.parametrize("breakage", ["unwritable", "raising", "read-only"])
+def test_failing_save_or_prune_keeps_the_comment(qa_env, monkeypatch, modes, breakage):
+    working, _ = qa_env.run(modes)
+    saved = _streams()
+    assert len(saved) == len(modes)
+    folder = _runs_dir()
+    with monkeypatch.context() as m:
+        if breakage == "unwritable":
+            _blocked_runs(qa_env, m)
+        elif breakage == "raising":
+            m.setattr(codex_exec, "save_stream", _raising)
+            m.setattr(codex_exec, "prune_streams", _raising)
+        else:  # a read-only folder whose mode cannot be changed back to 0700
+            folder.chmod(0o500)
+            m.setattr(codex_exec.os, "chmod", _raising_oserror)
+        try:
+            broken, _ = qa_env.run(modes)
+            code = qa_env.code
+        finally:
+            m.undo()
+            folder.chmod(0o700)
+    assert broken == working
+    assert code == 0
+    assert _streams() == saved  # nothing was saved by the broken run
+
+
+def _raising_oserror(*_args, **_kwargs):
+    raise PermissionError("synthetic read-only folder")
