@@ -1,6 +1,6 @@
 ---
 name: monitor
-description: "Write the step rows of Claude Code launches and Codex QA attempts: one JSON line per assistant message or Codex command and turn (tools, tokens, time), kept outside the repo. Use when the owner asks what a launch did or cost step by step, also while a stage still runs."
+description: "Write the step rows of Claude Code launches and Codex QA attempts: one JSON line per assistant message or Codex command and turn (tools, tokens, time), kept outside the repo. Use when the owner asks what a launch did or cost step by step, also while a stage still runs, or wants to explore tokens and time in the monitor notebook."
 ---
 
 # Monitor
@@ -46,3 +46,20 @@ uv run --script "${CLAUDE_SKILL_DIR}/cases.py" collect --project <name> (--issue
 - A round marker is a comment whose first line is `## QA: FAIL`, `## QA: UNVERIFIABLE`, `## QA: INVALID`, `## QA: UNAVAILABLE`, `## Engineer: BLOCKED` or a `## ... NEEDS OWNER` line. It starts a round when a launch receipt (`## Launch: <role> ...`) comes after it before the next round marker. The round lasts until the next marker that starts a round, or the last comment. Comments by others than the owner are ignored.
 - Fields: `id` (`<project>:<issue>:<round>`), `project`, `stage`, `issue`, `round`, `marker`, `comment_url`, `failed_lines` (the lines of a QA marker that start with `- [ ]`, not indented, and end with ` - FAIL`, ` - INVALID` or ` - UNVERIFIABLE`), `criteria` (the matching `- [ ]` lines of the current issue body), `next_markers` (the PM, Engineer and QA result markers after the round marker), `body_edited` (null without edit data), `commit` (the `Commits:` range of the first `## Engineer: DONE` of the round), `files_changed`, `lines_added`, `lines_removed` (from `git diff --numstat` with `--repo`, else null), `tokens` (per provider, from the run-record lines that start in the round), `seconds` (the `duration_s` sum of the step rows in the round). No matching data gives null.
 - The case file is `$XDG_STATE_HOME/agent-graph-kit/retry-cases.jsonl`, else `~/.local/state/agent-graph-kit/retry-cases.jsonl`, mode 0600, rewritten as a whole on each run. Spec: `docs/specs/2026-11-04-kit-monitoring.md`, Part 2.
+
+## Notebook
+
+`explore.py` is a marimo notebook to explore the run record and the step rows. Start it in the project root with one command:
+
+```bash
+uv run --with marimo --with polars marimo edit "${CLAUDE_SKILL_DIR}/explore.py"
+```
+
+marimo and polars are not part of the setup (`/agk:setup` does not install them); `uv run --with` fetches them for this one run. The notebook shows numbers and text only: no verdict, no recommendation, no automatic cause group.
+
+- Data: the run record (`$RUN_RECORD_FILE`, else `$XDG_STATE_HOME/agent-graph-kit/run-record.jsonl`, else `~/.local/state/agent-graph-kit/run-record.jsonl`; the last line per `id` counts) and the step rows (`$STEPS_FILE`, else `steps.jsonl` in the same folder). A missing file gives empty tables; a line that is not JSON is skipped. The loaders and joins are in `data.py` (standard library only).
+- Weights: `$RUN_WEIGHTS_FILE`, else `docs/run-weights.json` of the project when it exists, else `run-weights.json` of this skill (the same content as `docs/run-weights.json` of the kit repo).
+- Totals: the four token kinds and the time (`end` minus `start`) by project, stage, issue, role, model and retry, with a filter for each. Weighted totals per provider are an estimate from price ratios, not measured plan use; Claude and Codex are never added together, and lines with no provider have no weighted value. Lines with `estimate: true` are rows apart from the measured lines.
+- Drill-down: select a total to see its launches, and a launch to see its steps (tool, target, tokens, duration, context size over the steps). Kit document reads (`kit_doc` not null) per launch and per role. A launch with no step rows shows an empty table.
+- Running stage: the launches of the chosen stage with role, issue, start (first step time), run time, tokens so far and the last step (highest `seq`). A launch is active when its newest step time is at most 5 minutes before now. A Codex QA attempt counts as active only in the 5 minutes after its start, since its rows carry the attempt start as `time`.
+- Refresh: the button runs `steps.py collect --project <chosen project>` in the current folder, then reads the files again. Opening or exporting the notebook runs no collect.
