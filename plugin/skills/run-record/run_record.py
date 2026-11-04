@@ -101,17 +101,18 @@ def receipts(issue):
 def read_records(path):
     """Return the JSON object of each full line of a transcript, or None when the file cannot be read.
 
-    A line that is not a JSON object (for example a half-written last line) is skipped. Shared with
-    the step extractor of the monitor skill (issue #263)."""
+    A line that is not a JSON object in UTF-8 (for example a half-written last line, also one cut
+    inside a character) is skipped; the other lines are kept. Shared with the step extractor of the
+    monitor skill (issue #263)."""
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
+        lines = Path(path).read_bytes().splitlines()
+    except OSError:
         return None
     out = []
     for raw in lines:
         try:
-            d = json.loads(raw)
-        except ValueError:
+            d = json.loads(raw.decode("utf-8"))
+        except (UnicodeError, ValueError):
             continue
         if isinstance(d, dict):
             out.append(d)

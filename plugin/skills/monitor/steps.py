@@ -26,9 +26,25 @@ FIELDS = ("v", "id", "project", "stage", "issue", "role", "launch", "seq", "time
           "tool", "target", "result_chars", "is_error", "kit_doc")
 FILE_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 COMMAND_CUT = 300
-COMMAND_RE = re.compile(r"<command-name>\s*(/[^<\s]+)\s*</command-name>")
+COMMAND_RE = re.compile(r"<command-name>\s*(/[^<\s]+)\s*</command-name>")  # matched at the start of a line
 ROLE_OF_COMMAND = {"/goal": "orchestrator", "/stage-start": "planner", "/agk:stage-start": "planner"}
 KIT_DOC_FILES = ("AGENTS.md", "docs/process.md", "docs/task-template.md")
+
+
+def command_names(content):
+    """The command names of the lines of a user message that start with a `<command-name>` tag.
+
+    Each text line counts on its own (a string content, or each text part of a list), so a real
+    slash command line counts also after a `<command-message>` line, and a tag inside a sentence
+    does not count."""
+    parts = [content] if isinstance(content, str) else [
+        p.get("text") for p in content if isinstance(p, dict) and isinstance(p.get("text"), str)
+    ] if isinstance(content, list) else []
+    for part in parts:
+        for line in part.splitlines():
+            m = COMMAND_RE.match(line)
+            if m:
+                yield m.group(1)
 
 
 def _load_run_record():
@@ -120,7 +136,7 @@ def read_steps(path):
                 if m:
                     role, issue = m.group(1), int(m.group(2))
             if command_role is None:
-                for name in COMMAND_RE.findall(text):
+                for name in command_names(content):
                     if name in ROLE_OF_COMMAND:
                         command_role = ROLE_OF_COMMAND[name]
                         break

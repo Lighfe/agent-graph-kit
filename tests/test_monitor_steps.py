@@ -200,6 +200,10 @@ OTHER = "<command-message>doctor</command-message>\n<command-name>/doctor</comma
     ([OTHER, GOAL, STAGE], "orchestrator"),
     (["hello", OTHER], "main"),
     (["hello"], "main"),
+    (["Please explain <command-name>/goal</command-name> without running it."], "main"),
+    (["Run <command-name>/stage-start</command-name> later\nok"], "main"),
+    ([[text("intro"), text("<command-name>/goal</command-name>\n<command-message>goal</command-message>")]],
+     "orchestrator"),
 ])
 def test_role_without_role_prompt(tmp_path, prompts, role):
     write(tmp_path / "tr" / "main-1.jsonl", [*(user(p) for p in prompts), asst("m1", [text("hi")])])
@@ -303,6 +307,16 @@ def test_cut_last_line_gives_rows_of_full_lines(tmp_path):
                                         asst("m2", [text("y")], t="2026-11-04T10:00:20Z")], tail=cut)
     assert collect(tmp_path / "tr", "--stage", "1") == 0
     assert [r["id"] for r in read_rows()] == ["o/r:a:m1", "o/r:a:m2"]
+
+
+def test_last_line_cut_inside_utf8_character_keeps_full_lines(tmp_path):
+    path = tmp_path / "tr" / "a.jsonl"
+    write(path, [user("ROLE=pm ISSUE=7"), asst("m1", [text("x")])])
+    with open(path, "ab") as f:
+        f.write(json.dumps(asst("m2", [text("\u00e4\u00f6")]), ensure_ascii=False).encode()[:-5]
+                + "\u00e4".encode()[:1])
+    assert collect(tmp_path / "tr", "--stage", "1") == 0
+    assert [r["id"] for r in read_rows()] == ["o/r:a:m1"]
 
 
 def test_missing_folder_exits_0(tmp_path, capsys):
