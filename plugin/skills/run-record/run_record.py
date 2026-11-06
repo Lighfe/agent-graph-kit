@@ -5,6 +5,7 @@
 """Write the run record: one JSON line per Claude subagent launch and model (issue #242).
 
   uv run --script run_record.py write --project <name> --stage <n> --issues <issues.json> --transcripts <folder>
+      [--codex-runs <folder>]
 
 Reads local files only and calls no network. It appends to the record file and writes no prompt
 text, comment text or output text. Spec: docs/specs/2026-10-21-run-record.md
@@ -444,8 +445,9 @@ def append_lines(lines):
     return written
 
 
-def write_steps(paths, project, stage):
-    """Write the step rows of these transcripts with the monitor skill's extractor (issue #263).
+def write_steps(paths, project, stage, codex_runs=None, issues=None):
+    """Write the step rows of these transcripts with the monitor skill's extractor (issue #263),
+    and the Codex QA step rows of the stream files of `issues` in `codex_runs` (issue #272).
 
     The stage is given, so the extractor makes no `gh` call. Return the number of rows written."""
     import importlib.util
@@ -453,7 +455,7 @@ def write_steps(paths, project, stage):
     spec = importlib.util.spec_from_file_location("agk_steps", src)
     steps = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(steps)
-    return steps.write_steps(paths, project, stage)
+    return steps.write_steps(paths, project, stage, codex_runs, issues)
 
 
 def write_limit(args):
@@ -481,6 +483,9 @@ def main(argv=None):
     w.add_argument("--transcripts", required=True, help="folder of Claude Code subagent transcripts")
     w.add_argument("--orchestrator-transcript", help="main-session transcript; default: the newest one of the project folder")
     w.add_argument("--codex-usage", help="Codex QA token record codex-qa-usage.jsonl")
+    w.add_argument("--codex-runs", help="folder of the Codex QA event streams for the step rows; default: "
+                   "$CODEX_RUNS_DIR, else $XDG_STATE_HOME/agent-graph-kit/codex-runs, else "
+                   "~/.local/state/agent-graph-kit/codex-runs")
     lim = sub.add_parser("limit", help="enter the percent of the session limit used at the start or end of a stage")
     lim.add_argument("--project", required=True)
     lim.add_argument("--stage", type=int, required=True)
@@ -518,7 +523,7 @@ def main(argv=None):
     written = append_lines(lines)
     print(f"Wrote {written} lines to {record_path()} ({len(lines) - written} already there)")
     try:
-        steps = write_steps(step_paths, args.project, args.stage)
+        steps = write_steps(step_paths, args.project, args.stage, args.codex_runs, set(issues))
         print(f"Wrote {steps} step rows")
     except Exception as exc:  # a failing step write never changes the run-record result (issue #263)
         print(f"Warning: no step rows written: {type(exc).__name__}: {exc}")

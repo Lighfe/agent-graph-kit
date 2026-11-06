@@ -417,7 +417,7 @@ After each Codex run that ends `ok` (before the schema check), `qa-codex` append
 - File name: `<project with / as __>-<issue>-<attempt start, UTC %Y%m%dT%H%M%S>.jsonl`, for example `Lighfe__quack-rl-12-20261104T090807.jsonl`. The project is the owner and name of the repo, joined by a slash, taken from the issue URL of the one `gh issue view` read, or `unknown`. When the name exists, `-2`, `-3`, … goes before `.jsonl`; no file is overwritten.
 - Retention: at each save, the `*.jsonl` files of the folder whose modification time is older than 90 days are deleted; newer files and other files stay.
 - A failing save or prune (for example a read-only folder) is ignored: the QA comment is the same. The skill `codex-review` saves no stream.
-- The step extractor of the skill `monitor` (`steps.py collect`) turns these files into step rows with role `qa-codex`: one row per `command_execution` item, one per `turn.completed` (tokens mapped as in the run record, `context_tokens` = Codex `input_tokens`). No row holds command output or message text.
+- The step extractor of the skill `monitor` (`steps.py collect`, and the stage-end `run_record.py write` of the skill `run-record` for the files of its `--issues` issues, from `--codex-runs` or the default folder) turns these files into step rows with role `qa-codex`: one row per `command_execution` item, one per `turn.completed` (tokens mapped as in the run record, `context_tokens` = Codex `input_tokens`). No row holds command output or message text.
 
 ## Run record
 

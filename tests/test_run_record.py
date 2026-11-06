@@ -512,3 +512,79 @@ def test_limit_rejects_bad_input(tmp_path, monkeypatch):
         rr.main(["limit", "--project", "p", "--stage", "1", "--point", "middle", "--percent", "5", "--plan", "x"])
     assert e.value.code != 0
     assert not target.exists()
+
+
+# --- Codex QA step rows from `write` (#272) ---------------------------------------------------
+
+STREAM = [
+    {"type": "thread.started", "thread_id": "t"},
+    {"type": "item.completed", "item": {"id": "item_1", "type": "command_execution", "command": "ls",
+                                        "aggregated_output": "a\n", "exit_code": 0, "status": "completed"}},
+    {"type": "turn.completed", "usage": {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 2}},
+]
+QA_CODEX = "qa-" + "codex"
+
+
+def step_rows():
+    import os
+    p = Path(os.environ["STEPS_FILE"])
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def codex_step_rows():
+    return [r for r in step_rows() if r["role"] == QA_CODEX]
+
+
+def write_with_runs(tmp_path, monkeypatch, runs=None, record="rec.jsonl"):
+    rec = tmp_path / record
+    monkeypatch.setenv("RUN_RECORD_FILE", str(rec))
+    argv = ["write", "--project", "o/r", "--stage", "9",
+            "--issues", str(issues_file(tmp_path, [one_issue(5)])), "--transcripts", str(tmp_path / "tr")]
+    if runs is not None:
+        argv += ["--codex-runs", str(runs)]
+    assert rr.main(argv) == 0
+    return rec
+
+
+def test_write_codex_runs_gives_codex_step_rows(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    write(runs / "o__r-5-20261104T090807.jsonl", STREAM)
+    write_with_runs(tmp_path, monkeypatch, runs)
+    rows = codex_step_rows()
+    assert len(rows) == 2
+    assert {(r["role"], r["issue"], r["stage"]) for r in rows} == {(QA_CODEX, 5, 9)}
+    assert {r["launch"] for r in rows} == {"o__r-5-20261104T090807"}
+
+
+def test_write_codex_runs_skips_other_issue_and_other_project(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    write(runs / "o__r-77-20261104T090807.jsonl", STREAM)  # issue 77 is not in --issues
+    write(runs / "x__y-5-20261104T090807.jsonl", STREAM)  # another project
+    write_with_runs(tmp_path, monkeypatch, runs)
+    assert step_rows() == []
+
+
+def test_write_reads_codex_runs_dir_by_default(tmp_path, monkeypatch):
+    runs = tmp_path / "env-runs"
+    write(runs / "o__r-5-20261104T090807.jsonl", STREAM)
+    monkeypatch.setenv("CODEX_RUNS_DIR", str(runs))
+    write_with_runs(tmp_path, monkeypatch)
+    rows = codex_step_rows()
+    assert len(rows) == 2 and {r["issue"] for r in rows} == {5}
+
+
+def test_write_missing_codex_runs_folder_same_record(tmp_path, monkeypatch, capsys):
+    plain = write_with_runs(tmp_path, monkeypatch, record="plain.jsonl")
+    missing = write_with_runs(tmp_path, monkeypatch, tmp_path / "no-such-folder", record="missing.jsonl")
+    assert missing.read_text() == plain.read_text() and plain.read_text()
+    assert codex_step_rows() == []
+    assert "Warning" not in capsys.readouterr().out
+
+
+def test_write_twice_adds_no_second_codex_step_row(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    write(runs / "o__r-5-20261104T090807.jsonl", STREAM)
+    write_with_runs(tmp_path, monkeypatch, runs)
+    first = sorted(r["id"] for r in codex_step_rows())
+    write_with_runs(tmp_path, monkeypatch, runs)
+    assert sorted(r["id"] for r in codex_step_rows()) == first and len(first) == 2

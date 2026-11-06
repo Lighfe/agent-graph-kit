@@ -13,12 +13,12 @@ This skill keeps the cost of every subagent launch after Claude Code deletes its
 2. Run the script from this skill's folder:
 
    ```bash
-   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder> [--codex-usage <codex-qa-usage.jsonl>] [--orchestrator-transcript <main-session transcript>]
+   uv run --script "${CLAUDE_SKILL_DIR}/run_record.py" write --project <name> --stage <stage issue number> --issues <issues.json> --transcripts <transcript folder> [--codex-usage <codex-qa-usage.jsonl>] [--orchestrator-transcript <main-session transcript>] [--codex-runs <Codex stream folder>]
    ```
 
 3. The script writes the Claude lines, the Codex QA lines (with `--codex-usage`) and one line per issue (time and escalations). It prints how many lines it wrote. Running it again adds no second line.
 
-`write` also writes the step rows of the transcripts it reads (the launches of the `--issues` issues and the orchestrator transcript) with the extractor of the `monitor` skill, with stage `--stage` and no `gh` call; a failing step write prints a warning and does not change the run-record lines or the exit code.
+`write` also writes the step rows of the transcripts it reads (the launches of the `--issues` issues and the orchestrator transcript) with the extractor of the `monitor` skill, with stage `--stage` and no `gh` call. It also writes the Codex QA step rows (role `qa-codex`) of the `--issues` issues from the Codex event streams in `--codex-runs <folder>`; the default folder is `$CODEX_RUNS_DIR`, else `$XDG_STATE_HOME/agent-graph-kit/codex-runs`, else `~/.local/state/agent-graph-kit/codex-runs`. A missing folder gives no Codex step rows and no error. A failing step write prints a warning and does not change the run-record lines or the exit code.
 
 The record file is `$RUN_RECORD_FILE`, else `$XDG_STATE_HOME/agent-graph-kit/run-record.jsonl`, else `~/.local/state/agent-graph-kit/run-record.jsonl`. Spec: `docs/specs/2026-10-21-run-record.md`.
 

@@ -322,11 +322,22 @@ def append_rows(rows):
     return written
 
 
-def write_steps(paths, project, stage):
-    """Write the step rows of the given transcripts with a fixed stage (no `gh` call). Return the count."""
+def write_steps(paths, project, stage, codex_runs=None, issues=None):
+    """Write the step rows of the given transcripts with a fixed stage (no `gh` call). Return the count.
+
+    With `issues` (a set of issue numbers), also write the Codex QA step rows of the stream files of
+    these issues in `codex_runs` (default: `codex_runs_dir()`); a missing folder gives no Codex rows
+    (issue #272)."""
+    stage_of = lambda _issue: stage  # noqa: E731
     rows = []
     for p in paths:
-        rows += launch_rows(p, project, lambda _issue: stage)
+        rows += launch_rows(p, project, stage_of)
+    if issues is not None:
+        runs = Path(codex_runs) if codex_runs else codex_runs_dir()
+        if runs.is_dir():
+            for path, issue, start in stream_files(runs, project):
+                if issue in issues:
+                    rows += codex_rows(path, issue, start, project, stage_of)
     return append_rows(rows)
 
 
