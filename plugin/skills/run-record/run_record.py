@@ -399,14 +399,23 @@ def escalations(issue):
     return count
 
 
+def is_stage_issue(n, issue, stage):
+    """The stage issue: its number is the `--stage` value, or it has the label `stage` (issue #277)."""
+    names = [(x.get("name") if isinstance(x, dict) else x) for x in issue.get("labels") or []]
+    return n == stage or "stage" in names
+
+
 def issue_lines(issues, project, stage):
+    """One line per task issue; the stage issue gets none. `provider` is null, `source` is `issues`."""
     lines = []
     for n, issue in sorted(issues.items()):
+        if is_stage_issue(n, issue, stage):
+            continue
         row = {"v": VERSION, "id": f"{project}:issue:{n}", "project": project, "stage": stage,
                "issue": n, "role": "issue", "provider": None, "model": None, "effort": None,
                "input_tokens": 0, "output_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0,
                "start": iso(first_receipt(issue)), "end": iso(close_time(issue)), "retry": 0,
-               "estimate": False, "source": "transcript", "escalations": escalations(issue)}
+               "estimate": False, "source": "issues", "escalations": escalations(issue)}
         lines.append(row)
     return lines
 

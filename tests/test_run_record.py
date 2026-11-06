@@ -306,7 +306,7 @@ def test_issue_line(tmp_path, monkeypatch):
     assert (line["role"], line["issue"], line["stage"], line["escalations"]) == ("issue", 5, 9, 2)
     assert line["start"] == "2026-10-21T10:00:00.000Z" and line["end"] == "2026-10-21T12:00:00.000Z"
     assert (line["input_tokens"], line["output_tokens"], line["cache_creation_tokens"], line["cache_read_tokens"]) == (0, 0, 0, 0)
-    assert (line["source"], line["id"]) == ("transcript", "o/r:issue:5")
+    assert (line["source"], line["id"]) == ("issues", "o/r:issue:5")
 
 
 def test_issue_line_open_with_needs_owner_label(tmp_path, monkeypatch):
@@ -319,6 +319,40 @@ def test_issue_line_open_with_needs_owner_label(tmp_path, monkeypatch):
 def test_issue_line_repeated_run_adds_none(tmp_path, monkeypatch):
     assert len(run(tmp_path, [closed_issue()], monkeypatch, role="issue")) == 1
     assert len(run(tmp_path, [closed_issue()], monkeypatch, role="issue")) == 1
+
+
+def test_issue_line_provider_null_source_issues(tmp_path, monkeypatch):
+    (line,) = run(tmp_path, [closed_issue()], monkeypatch, role="issue")
+    assert line["provider"] is None and line["source"] == "issues"
+
+
+def test_no_issue_line_for_stage_issue(tmp_path, monkeypatch):
+    stage = closed_issue(9, labels=("stage",))
+    lines = run(tmp_path, [stage, closed_issue(5), closed_issue(6)], monkeypatch, role="issue")
+    assert sorted(x["issue"] for x in lines) == [5, 6]
+
+
+def test_no_issue_line_for_stage_label_alone(tmp_path, monkeypatch):
+    other = closed_issue(12)
+    other["labels"] = ["stage"]
+    lines = run(tmp_path, [other, closed_issue(5)], monkeypatch, role="issue")
+    assert [x["issue"] for x in lines] == [5]
+
+
+def test_no_issue_line_for_stage_number_alone(tmp_path, monkeypatch):
+    stage = one_issue(9)
+    assert "labels" not in stage
+    lines = run(tmp_path, [stage, closed_issue(5)], monkeypatch, role="issue")
+    assert [x["issue"] for x in lines] == [5]
+
+
+def test_stage_issue_keeps_launch_lines(tmp_path, monkeypatch):
+    write(tmp_path / "tr" / "a.jsonl", [
+        user("ROLE=planner ISSUE=9"),
+        asst("m1", "claude-x", (1, 2, 3, 4), "2026-10-21T10:01:00.000Z")])
+    stage = closed_issue(9, labels=("stage",))
+    lines = run(tmp_path, [stage], monkeypatch)
+    assert [(x["role"], x["issue"]) for x in lines] == [("planner", 9)]
 
 
 def test_start_end_are_first_and_last_message_not_min_max(tmp_path, monkeypatch):

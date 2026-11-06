@@ -33,17 +33,17 @@ Format: JSONL, append-only, one flat JSON object per line. Fields:
 | `id` | Launch id, stable text, so writing the same launch twice adds no second line. Claude subagent line: project, the subagent transcript file id, model. Codex line: project, issue, the `time` of the Codex record line. Orchestrator line: project, session id, model, `measured` or `estimate`. Issue line: project, issue || `project` | The repo name (`owner/repo` from the git remote, else the folder name). Issue numbers repeat across projects |
 | `stage` | The stage issue number, or null when unknown |
 | `issue` | The task issue number, or null (orchestrator lines have null) |
-| `role` | `pm`, `engineer`, `qa`, `qa-codex`, `orchestrator` (the role names `run_report.py` uses, plus the two new) |
-| `provider` | `claude` or `codex` |
+| `role` | `pm`, `engineer`, `qa`, `qa-codex`, `orchestrator` (the role names `run_report.py` uses, plus the two new), and `issue` for an issue line |
+| `provider` | `claude` or `codex`; null on an issue line |
 | `model` | The model name as the transcript or the Codex record gives it (for example `claude-sonnet-5-5`) |
 | `effort` | The effort value if the source gives one, else null |
 | `input_tokens`, `output_tokens`, `cache_creation_tokens`, `cache_read_tokens` | Raw counts. For Codex: `input_tokens`, `cached_input_tokens` (stored in `cache_read_tokens`), `output_tokens`; `cache_creation_tokens` is 0 |
 | `start`, `end` | UTC ISO 8601 time of the first and last message of the launch |
 | `retry` | 0 for the first launch of a role on an issue, 1 for the next, and so on (count of launch receipts of that role group before this one) |
 | `estimate` | `false` for measured lines. `true` for an estimated line (see "Orchestrator") |
-| `source` | `transcript`, `codex-record`, `session-total` |
+| `source` | `transcript`, `codex-record`, `session-total`, and `issues` on an issue line (the line comes from the `--issues` file) |
 
-One line per launch and model: a launch that used two models writes two lines with the same launch part of `id`. Weights are not stored. Per-issue facts that are not a launch (escalations, time from first receipt to close) are lines with role `issue`: `issue`, `stage`, `escalations` (count of `needs-owner` labels or `## ... NEEDS OWNER` markers, as in `run_report.py`), `start` (first receipt), `end` (close time), all token fields 0.
+One line per launch and model: a launch that used two models writes two lines with the same launch part of `id`. Weights are not stored. Per-issue facts that are not a launch (escalations, time from first receipt to close) are lines with role `issue`: `issue`, `stage`, `escalations` (count of `needs-owner` labels or `## ... NEEDS OWNER` markers, as in `run_report.py`), `start` (first receipt), `end` (close time), all token fields 0. The stage issue gets no issue line: an issue whose number is the `--stage` value, or that has the label `stage`, is skipped.
 
 ## Writer
 
