@@ -199,7 +199,7 @@ def test_codex_line_inside_window(tmp_path, monkeypatch):
     assert list(line) == list(rr.FIELDS)
     assert (line["role"], line["provider"], line["model"], line["effort"]) == ("qa-codex", "codex", "gpt-x", "high")
     assert (line["input_tokens"], line["cache_read_tokens"], line["cache_creation_tokens"], line["output_tokens"]) == (100, 60, 0, 7)
-    assert line["start"] == line["end"] == "2026-10-21T11:00:00Z"
+    assert line["start"] == "2026-10-21T10:00:00.000Z" and line["end"] == "2026-10-21T11:00:00Z"
     assert (line["retry"], line["source"], line["issue"], line["stage"]) == (0, "codex-record", 5, 9)
     assert line["id"] == "o/r:codex:5:2026-10-21T11:00:00Z"
 
@@ -273,6 +273,31 @@ def test_codex_retry_no_qa_receipt_is_zero(tmp_path, monkeypatch):
     f = codex_file(tmp_path, [crec(5, "2026-10-21T10:30:00Z")])
     (line,) = run(tmp_path, [qa_issue([("pm", "2026-10-21T10:00:00Z")])], monkeypatch, codex=f)
     assert line["retry"] == 0
+
+
+def starts(lines):
+    return {x["end"]: x["start"] for x in lines}
+
+
+def test_codex_start_is_newest_qa_receipt_at_or_before(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T11:00:00Z"), crec(5, "2026-10-21T10:30:00Z")])
+    lines = run(tmp_path, [qa_issue(QA3[:2])], monkeypatch, codex=f)
+    assert starts(lines) == {"2026-10-21T10:30:00Z": "2026-10-21T10:00:00.000Z",
+                             "2026-10-21T11:00:00Z": "2026-10-21T10:40:00.000Z"}
+
+
+def test_codex_start_receipt_at_exactly_usage_time_counts(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T10:40:00Z")])
+    (line,) = run(tmp_path, [qa_issue(QA3[:2])], monkeypatch, codex=f)
+    assert line["start"] == "2026-10-21T10:40:00.000Z" and line["end"] == "2026-10-21T10:40:00Z"
+
+
+def test_codex_start_without_qa_receipt_equals_end(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T10:30:00Z")])
+    (line,) = run(tmp_path, [qa_issue([("pm", "2026-10-21T10:00:00Z"), ("qa", "2026-10-21T11:00:00Z")])],
+                  monkeypatch, codex=f)
+    assert line["start"] == line["end"] == "2026-10-21T10:30:00Z"
+    assert line["id"] == "o/r:codex:5:2026-10-21T10:30:00Z"
 
 
 def test_issue_line(tmp_path, monkeypatch):

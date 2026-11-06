@@ -371,13 +371,16 @@ def codex_lines(usage_file, issues, project, stage):
             skipped += 1
             continue
         # retry: QA launch receipts on the issue at or before this Codex line, minus 1
-        retry = max(0, sum(1 for r in qa_receipts[n] if r <= t) - 1)
+        before = [r for r in qa_receipts[n] if r <= t]
+        retry = max(0, len(before) - 1)
+        # start: the newest QA launch receipt at or before this Codex line (the launch of this run)
+        start = iso(before[-1]) if before else when
         row = {"v": VERSION, "id": f"{project}:codex:{n}:{when}", "project": project, "stage": stage,
                "issue": n, "role": "qa-codex", "provider": "codex", "model": d.get("model"),
                "effort": d.get("effort"), "input_tokens": int(d.get("input_tokens") or 0),
                "output_tokens": int(d.get("output_tokens") or 0), "cache_creation_tokens": 0,
                "cache_read_tokens": int(d.get("cached_input_tokens") or 0),
-               "start": when, "end": when, "retry": retry, "estimate": False, "source": "codex-record"}
+               "start": start, "end": when, "retry": retry, "estimate": False, "source": "codex-record"}
         lines.append({k: row[k] for k in FIELDS})
     return lines, skipped
 

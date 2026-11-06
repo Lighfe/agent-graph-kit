@@ -54,6 +54,7 @@ A script in `plugin/bin/` (name is the builder's choice) with a command line lik
 - It skips a line whose `id` is in the file already, except orchestrator lines (see "Orchestrator"). A reader that sees one `id` twice takes the last line
 - Which transcripts count: only those whose first prompt has `ROLE=<role> ISSUE=<n>` with `<n>` in the issue list the writer got (as `run_report.py` does). All other transcripts in the folder are ignored, so other stages and sessions are no problem. The orchestrator session is the one exception: it is passed explicitly
 - Codex lines that match no issue of the list, or whose `time` is outside the window of that issue, are not written. The writer prints how many it skipped. The window runs from the first launch receipt of the issue to its close time, or to now when the issue is still open. Each Codex run is one line with its own `id`, so two runs of one issue never merge. My call: `qa-codex` is not changed, the Codex record keeps its fields
+- The `start` of a `qa-codex` line is the time of the newest `## Launch: qa (...)` receipt on its issue at or before the line's `time` (the launch of that Codex run); it equals `end` when there is none. `end` is the `time` of the Codex usage line
 - It never writes prompt text, comment text or output text
 
 The share of `run_report.py` that the writer needs (transcript reading, receipt counting, escalation reading) moves to a module that both use, so the plugin script does not copy the code. `run_report.py` itself stays in `scripts/` and reads the record when given `--record <file>`.
