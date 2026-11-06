@@ -8,6 +8,8 @@ import py_compile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "plugin" / "skills" / "monitor"
 FIXTURES = ROOT / "tests" / "fakes" / "monitor"
@@ -108,9 +110,25 @@ def test_weighted_totals_per_provider():
     one = by_key(rows, "issue")[(1,)]
     # issue 1: engineer + pm (claude), qa-codex (codex), the issue line (provider null)
     claude = (1000 + 100) * 1 + (100 + 10) * 5 + (2000 + 200) * 1.25 + (10000 + 1000) * 0.1
-    codex = 400 * 2 + 40 * 10 + 300 * 0.5
+    # Codex input_tokens includes the cached input: only the non-cached part gets the input factor
+    codex = (400 - 300) * 2 + 40 * 10 + 300 * 0.5
     assert one["weighted"] == {"claude": claude, "codex": codex}
     assert data.WEIGHT_LABEL == "estimate from price ratios, not measured plan use"
+
+
+def codex_usage_line(inp, cached, out):
+    return {"provider": "codex", "input_tokens": inp, "output_tokens": out,
+            "cache_creation_tokens": 0, "cache_read_tokens": cached}
+
+
+def test_codex_weighted_counts_cached_input_once():
+    weights = json.loads((ROOT / "docs" / "run-weights.json").read_text(encoding="utf-8"))
+    assert data.weighted(codex_usage_line(100, 80, 0), weights) == pytest.approx(28)
+
+
+def test_codex_weighted_cached_larger_than_input_is_not_negative():
+    weights = json.loads((ROOT / "docs" / "run-weights.json").read_text(encoding="utf-8"))
+    assert data.weighted(codex_usage_line(10, 50, 2), weights) == pytest.approx(15)
 
 
 def test_provider_null_lines_get_no_weighted_total():

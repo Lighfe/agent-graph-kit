@@ -254,15 +254,20 @@ def load_weights(path):
 
 
 def weighted(line, weights):
-    """Weighted token total of one record line: the sum of the token counts times the factors of its provider."""
+    """Weighted token total of one record line: the sum of the token counts times the factors of its provider.
+    A Codex line weighs max(input - cached, 0) as input, since its input_tokens includes the cached input."""
     table = weights.get(line.get("provider")) if isinstance(weights, dict) else None
     if not isinstance(table, dict):
         raise ReportError(f"weights: no factors for provider {line.get('provider')!r}")
+    counts = {field: float(line.get(field) or 0) for _kind, field in KINDS}
+    if line.get("provider") == "codex":
+        # Codex input_tokens includes the cached input (cache_read_tokens): weigh only the rest as input
+        counts["input_tokens"] = max(counts["input_tokens"] - counts["cache_read_tokens"], 0.0)
     total = 0.0
     for kind, field in KINDS:
         if kind not in table:
             raise ReportError(f"weights: no factor for {line.get('provider')}.{kind}")
-        total += float(line.get(field) or 0) * table[kind]
+        total += counts[field] * table[kind]
     return total
 
 

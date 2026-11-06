@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 import run_report
 
 
@@ -203,6 +205,18 @@ def test_weighted_applies_factors():
     assert run_report.weighted(rline("x", provider="codex", tok=(0, 0, 10, 0)), WEIGHTS) == 10.0
 
 
+def test_codex_weighted_counts_cached_input_once():
+    weights = run_report.load_weights(run_report.DEFAULT_WEIGHTS)
+    line = rline("x", provider="codex", tok=(100, 0, 0, 80))
+    assert run_report.weighted(line, weights) == pytest.approx(28)
+
+
+def test_codex_weighted_cached_larger_than_input_is_not_negative():
+    weights = run_report.load_weights(run_report.DEFAULT_WEIGHTS)
+    line = rline("x", provider="codex", tok=(10, 2, 0, 50))
+    assert run_report.weighted(line, weights) == pytest.approx(15)
+
+
 def test_record_report_sections(tmp_path, capsys):
     code, cap = run_record_report(tmp_path, record_rows(), capsys)
     assert code == 0
@@ -212,7 +226,7 @@ def test_record_report_sections(tmp_path, capsys):
     assert "| estimate | 1,100 | 110 | 0 | 0 |" in out
     assert "| o/b |" in out and "| gpt |" in out
     assert "estimate from price ratios, not measured plan use" in out
-    assert "| codex | 25 | 0 |" in out
+    assert "| codex | 15 | 0 |" in out
     assert "| #1 | 2h 05m | 2 |" in out
     assert "| qa | #1 | 2 |" in out
 

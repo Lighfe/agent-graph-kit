@@ -116,11 +116,16 @@ def seconds(line):
 
 
 def weighted(line, weights):
-    """The weighted tokens of one line, or None when its provider has no factors (also provider null)."""
+    """The weighted tokens of one line, or None when its provider has no factors (also provider null).
+    A Codex line weighs max(input - cached, 0) as input, since its input_tokens includes the cached input."""
     table = weights.get(line.get("provider")) if isinstance(weights, dict) and line.get("provider") else None
     if not isinstance(table, dict):
         return None
-    return sum(number(line.get(k)) * number(table.get(WEIGHT_KIND[k])) for k in TOKEN_KINDS)
+    counts = {k: number(line.get(k)) for k in TOKEN_KINDS}
+    if line.get("provider") == "codex":
+        # Codex input_tokens includes the cached input (cache_read_tokens): weigh only the rest as input
+        counts["input_tokens"] = max(counts["input_tokens"] - counts["cache_read_tokens"], 0)
+    return sum(counts[k] * number(table.get(WEIGHT_KIND[k])) for k in TOKEN_KINDS)
 
 
 def select(rows, where):
