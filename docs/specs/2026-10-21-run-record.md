@@ -30,7 +30,8 @@ Format: JSONL, append-only, one flat JSON object per line. Fields:
 | Field | Meaning |
 |---|---|
 | `v` | Format version, an integer. Starts at 1 |
-| `id` | Launch id, stable text, so writing the same launch twice adds no second line. Claude subagent line: project, the subagent transcript file id, model. Codex line: project, issue, the `time` of the Codex record line. Orchestrator line: project, session id, model, `measured` or `estimate`. Issue line: project, issue || `project` | The repo name (`owner/repo` from the git remote, else the folder name). Issue numbers repeat across projects |
+| `id` | Launch id, stable text, so writing the same launch twice adds no second line. Claude subagent line: project, the subagent transcript file id, model. Codex line: project, issue, the `time` of the Codex record line. Orchestrator line: project, session id, model, `measured` or `estimate`. Issue line: project, issue |
+| `project` | The repo name (`owner/repo` from the git remote, else the folder name). Issue numbers repeat across projects |
 | `stage` | The stage issue number, or null when unknown |
 | `issue` | The task issue number, or null (orchestrator lines have null) |
 | `role` | `pm`, `engineer`, `qa`, `qa-codex`, `orchestrator` (the role names `run_report.py` uses, plus the two new), and `issue` for an issue line |
