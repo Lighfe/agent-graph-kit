@@ -346,7 +346,7 @@ def codex_lines(usage_file, issues, project, stage):
         raws = Path(usage_file).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
         return lines, skipped
-    windows = {}
+    windows, qa_receipts = {}, {}
     for raw in raws:
         if not raw.strip():
             continue
@@ -365,16 +365,19 @@ def codex_lines(usage_file, issues, project, stage):
             continue
         if n not in windows:
             windows[n] = window(issues[n])
+            qa_receipts[n] = receipts(issues[n]).get(role_group("qa-codex"), [])
         w = windows[n]
         if w is None or not w[0] <= t <= w[1]:
             skipped += 1
             continue
+        # retry: QA launch receipts on the issue at or before this Codex line, minus 1
+        retry = max(0, sum(1 for r in qa_receipts[n] if r <= t) - 1)
         row = {"v": VERSION, "id": f"{project}:codex:{n}:{when}", "project": project, "stage": stage,
                "issue": n, "role": "qa-codex", "provider": "codex", "model": d.get("model"),
                "effort": d.get("effort"), "input_tokens": int(d.get("input_tokens") or 0),
                "output_tokens": int(d.get("output_tokens") or 0), "cache_creation_tokens": 0,
                "cache_read_tokens": int(d.get("cached_input_tokens") or 0),
-               "start": when, "end": when, "retry": 0, "estimate": False, "source": "codex-record"}
+               "start": when, "end": when, "retry": retry, "estimate": False, "source": "codex-record"}
         lines.append({k: row[k] for k in FIELDS})
     return lines, skipped
 

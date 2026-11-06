@@ -236,6 +236,45 @@ def test_two_codex_runs_two_lines_and_repeat_adds_none(tmp_path, monkeypatch):
     assert len(run(tmp_path, [closed_issue()], monkeypatch, codex=f)) == 2
 
 
+QA3 = [("qa", "2026-10-21T10:00:00Z"), ("qa", "2026-10-21T10:40:00Z"), ("qa", "2026-10-21T11:20:00Z")]
+
+
+def qa_issue(receipts, closed="2026-10-21T12:00:00Z"):
+    i = one_issue(5, receipts)
+    i["closedAt"] = closed
+    return i
+
+
+def retries(lines):
+    return [x["retry"] for x in sorted(lines, key=lambda x: x["start"])]
+
+
+def test_codex_retry_counts_qa_receipts(tmp_path, monkeypatch):
+    # usage lines written out of order; retry follows the receipts, not the file order
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T11:30:00Z"), crec(5, "2026-10-21T10:10:00Z"),
+                              crec(5, "2026-10-21T10:50:00Z")])
+    lines = run(tmp_path, [qa_issue(QA3)], monkeypatch, codex=f)
+    assert retries(lines) == [0, 1, 2]
+    assert len(run(tmp_path, [qa_issue(QA3)], monkeypatch, codex=f)) == 3
+
+
+def test_codex_retry_one_receipt_one_line(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T10:30:00Z")])
+    (line,) = run(tmp_path, [qa_issue(QA3[:1])], monkeypatch, codex=f)
+    assert line["retry"] == 0
+
+
+def test_codex_retry_counts_qa_launch_without_usage_line(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T10:10:00Z"), crec(5, "2026-10-21T11:30:00Z")])
+    assert retries(run(tmp_path, [qa_issue(QA3)], monkeypatch, codex=f)) == [0, 2]
+
+
+def test_codex_retry_no_qa_receipt_is_zero(tmp_path, monkeypatch):
+    f = codex_file(tmp_path, [crec(5, "2026-10-21T10:30:00Z")])
+    (line,) = run(tmp_path, [qa_issue([("pm", "2026-10-21T10:00:00Z")])], monkeypatch, codex=f)
+    assert line["retry"] == 0
+
+
 def test_issue_line(tmp_path, monkeypatch):
     issue = closed_issue(comments=["## PM: NEEDS OWNER\nwhy", "  ## QA: NEEDS OWNER  ", "no ## NEEDS OWNER"])
     (line,) = run(tmp_path, [issue], monkeypatch, role="issue")

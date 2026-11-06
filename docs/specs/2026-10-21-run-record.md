@@ -84,7 +84,7 @@ The owner can hand-enter the percent of the session limit used at the start and 
 
 ## Retries
 
-`retry` counts launches per role group on an issue. Both lines of a launch with two models carry the same value. It does not say why a launch was repeated (a QA FAIL, a miss, a limit stop). The report shows the count and claims nothing more.
+`retry` counts launches per role group on an issue. Both lines of a launch with two models carry the same value. A `qa-codex` line counts the `## Launch: qa (...)` receipts on its issue at or before the line's `time`, minus 1 (never below 0), so a QA launch that left no Codex usage line still counts. It does not say why a launch was repeated (a QA FAIL, a miss, a limit stop). The report shows the count and claims nothing more.
 
 ## What the report shows (the minimum)
 
