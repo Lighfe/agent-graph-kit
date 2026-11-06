@@ -9,6 +9,10 @@ The plugin cache of an installed project is keyed by the version in `plugin/.cla
 
 Run `uv run scripts/bump_plugin_version.py`. It builds the plugin copies, raises the patch number, writes `scripts/plugin-release.json` and checks that `scripts/build_plugin.py --release-status` prints `released`. When the status is `released` already, it changes nothing. When a step fails, it restores both files and exits non-zero.
 
-Then run the test command of `AGENTS.md` and commit the bump.
+Then, as the section "Kit-repo release steps" of `AGENTS.md` says:
+
+- When the script prints that no bump is needed, there is nothing to commit.
+- Otherwise run the test command of `AGENTS.md` and commit the bump (`plugin/.claude-plugin/plugin.json`, `scripts/plugin-release.json` and the rebuilt copies in `plugin/`).
+- When the script or the tests fail, do not commit: reset the files, name the failure in the run notes and go on.
 
 This skill is for this repo only. It is not part of the plugin.
