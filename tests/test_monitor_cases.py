@@ -411,3 +411,120 @@ def test_gh_failure_writes_nothing(tmp_path):
     res = run(["collect", "--project", PROJECT, "--repo-slug", "acme/widgets", "--stage", "3"], env)
     assert res.returncode == 1
     assert not (Path(os.environ["XDG_STATE_HOME"]) / "agent-graph-kit" / "retry-cases.jsonl").exists()
+
+
+# --- merge with the rows of other runs (issue #273) ----------------------------------------
+
+def out_path():
+    return Path(os.environ["XDG_STATE_HOME"]) / "agent-graph-kit" / "retry-cases.jsonl"
+
+
+def issues_file(tmp_path, numbers, name="issues.json"):
+    path = tmp_path / name
+    path.write_text(json.dumps([dict(standard_issue(), number=n) for n in numbers]))
+    return path
+
+
+def collect_file(path, stage=None, project=PROJECT):
+    args = ["collect", "--project", project, "--issues", str(path)]
+    if stage is not None:
+        args += ["--stage", str(stage)]
+    res = run(args)
+    assert res.returncode == 0, res.stderr
+    return res
+
+
+def rows_of():
+    return [json.loads(x) for x in out_path().read_text().splitlines()]
+
+
+def row(rid, project, stage, **extra):
+    return {"id": rid, "project": project, "stage": stage, **extra}
+
+
+def test_two_stages_of_one_project_are_both_kept(tmp_path):
+    collect_file(issues_file(tmp_path, [7], "a.json"), stage=1)
+    res = collect_file(issues_file(tmp_path, [9], "b.json"), stage=2)
+    assert "Wrote 1 cases to" in res.stdout
+    assert [(r["id"], r["stage"]) for r in rows_of()] == [(f"{PROJECT}:7:1", 1), (f"{PROJECT}:9:1", 2)]
+
+
+def test_second_run_replaces_only_its_project_and_stage(tmp_path):
+    other = [row(f"{PROJECT}:20:1", PROJECT, 2, note="b"), row("other/q:7:1", "other/q", 1, note="q1"),
+             row("other/q:8:1", "other/q", 2, note="q2")]
+    gone = row(f"{PROJECT}:11:1", PROJECT, 1, note="gone")
+    write_jsonl(out_path(), [other[0], gone, other[1], other[2]])
+    res = collect_file(issues_file(tmp_path, [7]), stage=1)
+    assert "Wrote 1 cases to" in res.stdout
+    rows = rows_of()
+    assert rows[:3] == other
+    assert [r["id"] for r in rows] == [f"{PROJECT}:20:1", "other/q:7:1", "other/q:8:1", f"{PROJECT}:7:1"]
+
+
+def test_run_without_cases_removes_only_its_rows(tmp_path):
+    keep = [row(f"{PROJECT}:20:1", PROJECT, 2), row("other/q:7:1", "other/q", 1)]
+    write_jsonl(out_path(), [row(f"{PROJECT}:7:1", PROJECT, 1), keep[0], keep[1]])
+    path = tmp_path / "empty.json"
+    path.write_text(json.dumps([{"number": 7, "body": BODY, "comments": []}]))
+    res = collect_file(path, stage=1)
+    assert "Wrote 0 cases to" in res.stdout
+    assert rows_of() == keep
+
+
+def test_issue_moved_to_another_stage_keeps_its_id_once(tmp_path):
+    write_jsonl(out_path(), [row(f"{PROJECT}:7:1", PROJECT, 1, note="old"), row(f"{PROJECT}:8:1", PROJECT, 1)])
+    collect_file(issues_file(tmp_path, [7]), stage=2)
+    rows = rows_of()
+    assert [r["id"] for r in rows] == [f"{PROJECT}:8:1", f"{PROJECT}:7:1"]
+    assert rows[1]["stage"] == 2 and "note" not in rows[1]
+
+
+def test_run_without_stage_replaces_only_rows_with_stage_null(tmp_path):
+    staged = row(f"{PROJECT}:20:1", PROJECT, 3)
+    write_jsonl(out_path(), [row(f"{PROJECT}:30:1", PROJECT, None), staged])
+    collect_file(issues_file(tmp_path, [7]))
+    rows = rows_of()
+    assert rows[0] == staged
+    assert [(r["id"], r["stage"]) for r in rows] == [(f"{PROJECT}:20:1", 3), (f"{PROJECT}:7:1", None)]
+
+
+def test_stage_compare_is_on_the_json_value(tmp_path):
+    keep = [row(f"{PROJECT}:20:1", PROJECT, "1"), row(f"{PROJECT}:21:1", PROJECT, None),
+            row(f"{PROJECT}:22:1", PROJECT, True)]
+    write_jsonl(out_path(), keep + [row(f"{PROJECT}:23:1", PROJECT, 1)])
+    collect_file(issues_file(tmp_path, [7]), stage=1)
+    assert rows_of()[:3] == keep and len(rows_of()) == 4
+
+
+def test_old_rows_keep_the_order_of_their_last_line_and_the_last_line_counts(tmp_path):
+    out = out_path()
+    out.parent.mkdir(parents=True)
+    a1, b, a2 = row("q:1:1", "q", 1, v=1), row("q:2:1", "q", 1), row("q:1:1", "q", 1, v=2)
+    out.write_text("".join(json.dumps(r) + "\n" for r in (a1, b, a2))
+                   + 'not json\n[1, 2]\n{"no_id": 1}\n{"id": null}\n')
+    collect_file(issues_file(tmp_path, [7]), stage=5)
+    assert [r for r in rows_of() if r["project"] == "q"] == [b, a2]
+    assert len(rows_of()) == 3
+
+
+def test_failed_run_leaves_old_file_byte_equal(tmp_path):
+    out = out_path()
+    out.parent.mkdir(parents=True)
+    data = b'{"id":"q:1:1","project":"q","stage":3}\nnot json\n'
+    out.write_bytes(data)
+    env = {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_FAIL": "1"}
+    res = run(["collect", "--project", PROJECT, "--repo-slug", "acme/widgets", "--stage", "3"], env)
+    assert res.returncode == 1
+    assert out.read_bytes() == data
+
+
+def test_merged_file_keeps_mode_0600_and_rename(tmp_path, monkeypatch):
+    write_jsonl(out_path(), [row("q:1:1", "q", 1)])
+    os.chmod(out_path(), 0o644)
+    renames = []
+    real = os.replace
+    monkeypatch.setattr(cs.os, "replace", lambda a, b: (renames.append((Path(a), Path(b))), real(a, b))[1])
+    cs.write_cases(PROJECT, 1, [])
+    assert renames == [(out_path().with_name("retry-cases.jsonl.tmp"), out_path())]
+    assert stat.S_IMODE(out_path().stat().st_mode) == 0o600
+    assert rows_of() == [row("q:1:1", "q", 1)]

@@ -344,13 +344,43 @@ def read_repo(slug, stage):
     return issues
 
 
-def write_cases(cases):
+def same_stage(value, stage):
+    """True when the JSON value `value` is the run's stage: null for null, the same int for an int."""
+    if stage is None:
+        return value is None
+    return isinstance(value, int) and not isinstance(value, bool) and value == stage
+
+
+def old_rows(path):
+    """The case rows of the old file: JSON objects with an `id`, last line per `id`, in the order of
+    their last line. Other lines are dropped; a missing file gives []."""
+    try:
+        raws = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+    by_id = {}
+    for raw in raws:
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("id") is not None:
+            by_id.pop(d["id"], None)
+            by_id[d["id"]] = d
+    return list(by_id.values())
+
+
+def write_cases(project, stage, cases):
+    """Replace the rows of this run (its project and stage, and rows with the id of a new case), keep the rest."""
     path = cases_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    new_ids = {case["id"] for case in cases}
+    kept = [r for r in old_rows(path)
+            if r["id"] not in new_ids and not (r.get("project") == project and same_stage(r.get("stage"), stage))]
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        for case in cases:
+        for case in kept + cases:
             f.write(json.dumps(case, separators=(",", ":")) + "\n")
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
@@ -370,7 +400,11 @@ def collect(args):
             print(f"cases: {e}", file=sys.stderr)
             return 1
     cases = build_cases(args.project, args.stage, issues, args.repo)
-    path = write_cases(cases)
+    try:
+        path = write_cases(args.project, args.stage, cases)
+    except (OSError, UnicodeError) as e:
+        print(f"cases: {e}", file=sys.stderr)
+        return 1
     print(f"Wrote {len(cases)} cases to {path}")
     return 0
 
