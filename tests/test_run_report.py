@@ -222,20 +222,20 @@ def test_record_report_sections(tmp_path, capsys):
     assert code == 0
     out = cap.out
     assert "| engineer | 105 | 15 | 45 | 1,005 |" in out
-    assert "orchestrator (measured up to the report; not complete)" in out
-    assert "| estimate | 1,100 | 110 | 0 | 0 |" in out
-    assert "| o/b |" in out and "| gpt |" in out
+    assert "orchestrator (measured up to the run of the record writer; not complete)" in out
+    assert "| orchestrator estimate (model m1) | 1,100 | 110 | 0 | 0 |" in out
+    assert "| o/b (claude) |" in out and "| gpt |" in out
     assert "estimate from price ratios, not measured plan use" in out
-    assert "| codex | 15 | 0 |" in out
+    assert "| o/a | 9 | codex | 15 | 0 |" in out
     assert "| #1 | 2h 05m | 2 |" in out
     assert "| qa | #1 | 2 |" in out
 
 
 def test_stage_and_project_filter(tmp_path, capsys):
     _c, cap = run_record_report(tmp_path, record_rows(), capsys, extra=["--stage", "3"])
-    assert "| o/b |" in cap.out and "| o/a |" not in cap.out
+    assert "| o/b (claude) |" in cap.out and "| o/a (claude) |" not in cap.out
     _c, cap = run_record_report(tmp_path, record_rows(), capsys, extra=["--project", "o/a"])
-    assert "| o/b |" not in cap.out
+    assert "| o/b (claude) |" not in cap.out
 
 
 def test_changed_weights_change_total_not_record(tmp_path, capsys):
@@ -289,6 +289,127 @@ def test_limits_next_to_weighted_total(tmp_path, capsys):
     assert "start 12%" in cap.out and "start 10%" not in cap.out
     assert "end not entered" in cap.out
     assert "o/b stage 3" in cap.out and "start not entered" in cap.out
+
+
+def table_rows(out, title):
+    """Return the body rows of the Markdown table under `## <title>` as lists of cells."""
+    part = out.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
+    rows = [ln for ln in part.splitlines() if ln.startswith("|")][2:]
+    return [[cell.strip() for cell in ln.strip("|").split("|")] for ln in rows]
+
+
+TOKEN_TABLES = ("Tokens per role", "Tokens per issue", "Tokens per model", "Tokens per project")
+WEIGHTED_TITLE = "Weighted totals per stage and provider"
+
+
+def two_model_rows():
+    """One stage: orchestrator measured and estimate lines for models m1 and m2, one Claude and one Codex
+    line on issue 4."""
+    return [
+        rline("e1", issue=4, tok=(100, 10, 40, 1000)),
+        rline("q1", role="qa-codex", issue=4, provider="codex", model="gpt", tok=(30, 3, 0, 20)),
+        rline("o1", role="orchestrator", issue=None, model="m1", tok=(1000, 100, 0, 0)),
+        rline("o2", role="orchestrator", issue=None, model="m1", tok=(1100, 110, 0, 0), estimate=True),
+        rline("o3", role="orchestrator", issue=None, model="m2", tok=(2000, 200, 0, 0)),
+        rline("o4", role="orchestrator", issue=None, model="m2", tok=(2200, 220, 0, 0), estimate=True),
+    ]
+
+
+def label_words(label):
+    for ch in "(),:;":
+        label = label.replace(ch, " ")
+    return label.split()
+
+
+def test_orchestrator_estimate_rows_name_model(tmp_path, capsys):
+    _c, cap = run_record_report(tmp_path, two_model_rows(), capsys)
+    for title in TOKEN_TABLES:
+        rows = table_rows(cap.out, title)
+        assert "estimate" not in [r[0] for r in rows], title
+        for model, nums in (("m1", ["1,100", "110", "0", "0"]), ("m2", ["2,200", "220", "0", "0"])):
+            hits = [r for r in rows if r[1:] == nums]
+            assert len(hits) == 1, (title, model, rows)
+            words = label_words(hits[0][0])
+            assert "orchestrator" in words and "estimate" in words and model in words, (title, hits)
+
+
+def test_issue_table_orchestrator_row_and_role_label(tmp_path, capsys):
+    _c, cap = run_record_report(tmp_path, two_model_rows(), capsys)
+    rows = table_rows(cap.out, "Tokens per issue")
+    assert "none" not in [r[0] for r in rows]
+    measured = [r for r in rows if r[1:] == ["3,000", "300", "0", "0"]]
+    assert len(measured) == 1, rows
+    assert "orchestrator" in label_words(measured[0][0]) and "estimate" not in label_words(measured[0][0])
+    assert "orchestrator (measured up to the run of the record writer; not complete)" in cap.out
+    assert "up to the report" not in cap.out
+
+
+def test_issue_and_project_rows_split_by_provider(tmp_path, capsys):
+    _c, cap = run_record_report(tmp_path, two_model_rows(), capsys)
+    issue = {r[0]: r[1:] for r in table_rows(cap.out, "Tokens per issue")}
+    assert issue["#4 (claude)"] == ["100", "10", "40", "1,000"]
+    assert issue["#4 (codex)"] == ["30", "3", "0", "20"]
+    project = {r[0]: r[1:] for r in table_rows(cap.out, "Tokens per project")}
+    assert project["o/a (claude)"] == ["3,100", "310", "40", "1,000"]
+    assert project["o/a (codex)"] == ["30", "3", "0", "20"]
+
+
+def test_weighted_table_says_estimate_not_added(tmp_path, capsys):
+    _c, cap = run_record_report(tmp_path, two_model_rows(), capsys)
+    part = " ".join(cap.out.split(f"## {WEIGHTED_TITLE}\n", 1)[1].split("\n## ", 1)[0].split())
+    assert "estimate column is the orchestrator estimate line" in part
+    assert "not added to the measured column" in part
+
+
+def two_stage_rows():
+    """Stages 3 and 9 of o/a (Claude lines in both, a Codex line in 9) and stage 3 of o/b."""
+    return [
+        rline("s3a", stage=3, issue=11, tok=(7, 3, 2, 90)),
+        rline("s3b", stage=3, issue=12, role="qa", tok=(11, 1, 0, 30)),
+        rline("s9a", stage=9, issue=21, tok=(13, 4, 8, 70)),
+        rline("s9c", stage=9, issue=21, role="qa-codex", provider="codex", model="gpt", tok=(437, 9, 0, 301)),
+        rline("s9o", stage=9, issue=None, role="orchestrator", tok=(50, 5, 0, 0)),
+        rline("s9e", stage=9, issue=None, role="orchestrator", tok=(55, 6, 0, 0), estimate=True),
+        rline("p3", project="o/b", stage=3, issue=31, tok=(17, 2, 0, 10)),
+    ]
+
+
+def test_weighted_total_per_stage_and_provider(tmp_path, capsys):
+    rows = two_stage_rows()
+    _c, cap = run_record_report(tmp_path, rows, capsys)
+    got = {(r[0], r[1], r[2]): r[3:] for r in table_rows(cap.out, WEIGHTED_TITLE)}
+
+    def total(project, stage, provider, estimate):
+        return run_report._num(sum(run_report.weighted(ln, WEIGHTS) for ln in rows
+                                   if ln["project"] == project and ln["stage"] == stage
+                                   and ln["provider"] == provider and ln["estimate"] == estimate))
+
+    keys = (("o/a", 3, "claude"), ("o/a", 9, "claude"), ("o/a", 9, "codex"), ("o/b", 3, "claude"))
+    expected = {(p, str(s), pr): [total(p, s, pr, False), total(p, s, pr, True)] for p, s, pr in keys}
+    assert got == expected
+    # the same stage number in two projects gives two rows
+    assert ("o/a", "3", "claude") in got and ("o/b", "3", "claude") in got
+    assert got[("o/a", "3", "claude")] != got[("o/b", "3", "claude")]
+
+
+def test_claude_and_codex_weighted_never_summed(tmp_path, capsys):
+    rows = two_stage_rows()
+    _c, cap = run_record_report(tmp_path, rows, capsys)
+    claude = sum(run_report.weighted(ln, WEIGHTS) for ln in rows
+                 if ln["stage"] == 9 and ln["provider"] == "claude" and not ln["estimate"])
+    codex = sum(run_report.weighted(ln, WEIGHTS) for ln in rows if ln["stage"] == 9 and ln["provider"] == "codex")
+    summed = run_report._num(claude + codex)
+    cells = {c for r in table_rows(cap.out, WEIGHTED_TITLE) for c in r[3:]}
+    assert run_report._num(claude) in cells and run_report._num(codex) in cells
+    assert summed not in cap.out
+
+
+def test_stage_help_names_both_modes(capsys):
+    with pytest.raises(SystemExit):
+        run_report.main(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    stage_help = text.split("--stage STAGE")[-1].split("--issues", 1)[0]  # the options part, not the usage line
+    assert "comments mode" in stage_help and "stage issue" in stage_help and "--record" in stage_help
 
 
 def test_repo_weights_file_is_valid():

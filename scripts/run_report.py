@@ -231,7 +231,7 @@ KINDS = (("input", "input_tokens"), ("output", "output_tokens"),
          ("cache_creation", "cache_creation_tokens"), ("cache_read", "cache_read_tokens"))
 PROVIDERS = ("claude", "codex")
 WEIGHTED_LABEL = "estimate from price ratios, not measured plan use"
-ORCHESTRATOR_LABEL = "measured up to the report; not complete"
+ORCHESTRATOR_LABEL = "measured up to the run of the record writer; not complete"
 
 
 class ReportError(Exception):
@@ -319,16 +319,22 @@ def _num(x):
     return f"{x:,.1f}".rstrip("0").rstrip(".") if isinstance(x, float) else f"{x:,}"
 
 
-def _tokens_table(out, title, key_name, lines, key):
+def estimate_label(ln):
+    """Row label of an orchestrator estimate line (estimate: true): it names the model of the line."""
+    return f"orchestrator estimate (model {ln.get('model')})"
+
+
+def _tokens_table(out, title, key_name, lines, key, est_key=estimate_label):
+    """One token table. Estimate lines get their own rows (est_key) after the measured rows."""
     groups = {}
     for ln in lines:
-        k = "estimate" if ln.get("estimate") else key(ln)
+        k = (True, est_key(ln)) if ln.get("estimate") else (False, key(ln))
         slot = groups.setdefault(k, [0, 0, 0, 0])
         for i, (_kind, field) in enumerate(KINDS):
             slot[i] += int(ln.get(field) or 0)
     out += [f"## {title}", "", f"| {key_name} | input | output | cache creation | cache read |", "|---|---|---|---|---|"]
-    for k in sorted(groups, key=lambda x: (x == "estimate", str(x))):
-        out.append(f"| {k} | " + " | ".join(_num(v) for v in groups[k]) + " |")
+    for k in sorted(groups, key=lambda x: (x[0], str(x[1]))):
+        out.append(f"| {k[1]} | " + " | ".join(_num(v) for v in groups[k]) + " |")
     if not groups:
         out.append("| none | 0 | 0 | 0 | 0 |")
     out.append("")
@@ -346,18 +352,44 @@ def build_record_report(lines, weights, limits=None, skipped=0, stage=None):
         return f"orchestrator ({ORCHESTRATOR_LABEL})" if role == "orchestrator" else str(role)
 
     _tokens_table(out, "Tokens per role", "role", usage, role_key)
-    _tokens_table(out, "Tokens per issue", "issue", usage,
-                  lambda ln: f"#{ln['issue']}" if ln.get("issue") is not None else "none")
-    _tokens_table(out, "Tokens per model", "model", usage, lambda ln: str(ln.get("model")))
-    _tokens_table(out, "Tokens per project", "project", usage, lambda ln: str(ln.get("project")))
+    def issue_key(ln):
+        # Claude and Codex count input in different ways: one row per issue and provider
+        if ln.get("issue") is not None:
+            name = f"#{ln['issue']}"
+        elif ln.get("role") == "orchestrator":
+            name = "orchestrator, no issue"
+        else:
+            name = f"no issue, {ln.get('role')}"
+        return f"{name} ({ln.get('provider')})"
 
-    out += ["## Weighted totals per provider", "", f"Label: {WEIGHTED_LABEL}. Claude and Codex are never added together.", "",
-            "| provider | measured | estimate |", "|---|---|---|"]
-    for provider in PROVIDERS:
-        mine = [ln for ln in usage if ln.get("provider") == provider]
+    _tokens_table(out, "Tokens per issue", "issue", usage, issue_key)
+    _tokens_table(out, "Tokens per model", "model", usage, lambda ln: str(ln.get("model")))
+    _tokens_table(out, "Tokens per project", "project", usage,
+                  lambda ln: f"{ln.get('project')} ({ln.get('provider')})",
+                  lambda ln: f"{ln.get('project')}: {estimate_label(ln)}")
+
+    out += ["## Weighted totals per stage and provider", "",
+            f"Label: {WEIGHTED_LABEL}. Claude and Codex are never added together.",
+            "The measured column holds every measured line of the stage, the measured orchestrator line included. "
+            "The orchestrator estimate column is the orchestrator estimate line alone (the measured orchestrator "
+            "counts times 1.1); it is not added to the measured column.", "",
+            "| project | stage | provider | measured | orchestrator estimate |", "|---|---|---|---|---|"]
+    groups = {}
+    for ln in usage:
+        groups.setdefault((ln.get("project"), ln.get("stage"), ln.get("provider")), []).append(ln)
+    order = {p: i for i, p in enumerate(PROVIDERS)}
+    def group_order(k):
+        project, st, provider = k
+        return (str(project), not isinstance(st, int), st if isinstance(st, int) else 0, str(st),
+                order.get(provider, len(order)), str(provider))
+
+    for project, st, provider in sorted(groups, key=group_order):
+        mine = groups[(project, st, provider)]
         measured = sum(weighted(ln, weights) for ln in mine if not ln.get("estimate"))
         est = sum(weighted(ln, weights) for ln in mine if ln.get("estimate"))
-        out.append(f"| {provider} | {_num(measured)} | {_num(est)} |")
+        out.append(f"| {project} | {st} | {provider} | {_num(measured)} | {_num(est)} |")
+    if not groups:
+        out.append("| no usage lines | n/a | n/a | 0 | 0 |")
     out.append("")
 
     out += ["## Time and escalations per issue", "", "| issue | time | escalations |", "|---|---|---|"]
@@ -429,7 +461,9 @@ def main_record(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--comments", help="JSON file: gh issue view --json number,comments,closedAt,labels")
-    ap.add_argument("--stage", type=int, help="stage issue number; its subIssues list is read from the JSON")
+    ap.add_argument("--stage", type=int,
+                    help="comments mode: stage issue number, its subIssues list is read from the JSON; "
+                         "with --record: only the record lines of this stage number")
     ap.add_argument("--issues", help="comma-separated issue numbers")
     ap.add_argument("--transcripts", help="folder of Claude Code subagent transcripts")
     ap.add_argument("--codex-usage", help="Codex QA token record (codex-qa-usage.jsonl)")

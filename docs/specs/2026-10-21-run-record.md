@@ -89,7 +89,12 @@ The owner can hand-enter the percent of the session limit used at the start and 
 
 ## What the report shows (the minimum)
 
-For a stage and for the record as a whole, from the file: tokens per role, per issue, per model, per project; weighted totals per provider; time per issue; escalations; retries. Read-only, Markdown to stdout, as `run_report.py` does.
+For a stage and for the record as a whole, from the file: tokens per role, per issue, per model, per project; weighted totals per stage and provider; time per issue; escalations; retries. Read-only, Markdown to stdout, as `run_report.py` does.
+
+- Orchestrator estimate rows: each line with `estimate: true` (the orchestrator estimate line) shows in the four token tables in its own row, after the measured rows, labelled `orchestrator estimate (model <model>)` (in the project table with the project in front). No row is labelled with the bare word `estimate`. The role row of the measured orchestrator line says it is measured up to the run of the record writer and is not complete
+- Provider split: the issue table and the project table have one row per issue (or project) and provider, for example `#4 (claude)` and `#4 (codex)`, because Claude and Codex count input in different ways. The measured orchestrator line (`issue` null) shows in the issue table as `orchestrator, no issue (<provider>)`
+- Weighted totals per stage and provider: one row per project, stage and provider, with the columns `measured` and `orchestrator estimate`. The measured column holds every measured line of the stage, the measured orchestrator line included; the orchestrator estimate column is the orchestrator estimate line alone and is not added to the measured column. Claude and Codex values are never added into one number. Two projects with the same stage number get separate rows
+- `--stage` filters the whole report to one stage number; without it all stages of the record show, each with its own weighted rows
 
 ## Left to the builder
 
