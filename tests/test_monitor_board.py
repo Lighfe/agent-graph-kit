@@ -276,13 +276,27 @@ def board_files():
     return files
 
 
+VARIABLE_VALUES = {"project": "example/proj", "stage": 9}  # synthetic values for the board variables
+
+
+def substitute(sql, names):
+    """Replace `${name}` and `$name` of each board variable with a synthetic value."""
+    for name in names:
+        value = str(VARIABLE_VALUES.get(name, "x"))
+        sql = sql.replace("${" + name + "}", value)
+        sql = re.sub(r"\$" + re.escape(name) + r"\b", lambda _m: value, sql)
+    return sql
+
+
 def queries():
     for path in board_files():
-        for panel in json.loads(path.read_text(encoding="utf-8"))["panels"]:
+        board = json.loads(path.read_text(encoding="utf-8"))
+        names = [v["name"] for v in (board.get("templating") or {}).get("list") or []]
+        for panel in board["panels"]:
             for target in panel.get("targets", []):
                 assert target["datasource"]["uid"] == "agk-monitor"
                 for key in ("rawQueryText", "queryText"):
-                    yield path.name, panel["title"], target[key]
+                    yield path.name, panel["title"], substitute(target[key], names)
 
 
 def test_stub_board_shows_the_last_load_time():
