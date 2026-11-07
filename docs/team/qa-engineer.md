@@ -13,7 +13,7 @@ Test run. The full test command of `AGENTS.md` (a whole test suite) is a heavy j
 
 1. The prompt of `scripts/qa-codex` says the run is already under a memory cap: run the full test command yourself, as it is. Do not start `systemd-run` (it does not work in the QA sandbox, and the cap is already set)
 2. Otherwise (the prompt says the run has no outer cap, or `scripts/qa-codex` did not start you): cap the run yourself where a cap tool exists, for example `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 <command>`
-3. Only when there is no cap at all: run the fast subset that `AGENTS.md` names, or, when it names none, only the test files that cover the changed criteria
+3. Without a cap tool (for example, the QA sandbox has no systemd bus) and without a capped run, so only when there is no cap at all: run the fast subset that `AGENTS.md` names, or, when it names none, only the test files that cover the changed criteria
 
 Check the numbers (command line, exit code, peak) recorded in `## Engineer: DONE`. The `Tests:` line names what ran: the command and its passed and failed counts. Without a test suite, write `Tests: not run (no test suite)`.
 
