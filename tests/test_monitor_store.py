@@ -489,18 +489,56 @@ def test_cut_last_step_line_is_skipped(env):
     assert [r[0] for r in env.rows("steps")] == [f"{PROJECT}:cut:1"]
 
 
-def test_cut_last_tag_line_waits_for_the_next_load(env):
+def test_cut_last_tag_line_is_skipped_and_loaded_once_when_complete(env):
     env.fill()
     env.load()
     line = json.dumps({"case_id": f"{PROJECT}:2:1", "tag": "cut tag", "note": "", "time": "2026-11-04T12:00:00Z"})
+    before = env.rows("cases")
     with open(env.tags, "a") as f:
         f.write(line[:25])
     env.load()
-    assert env.query("SELECT tag FROM cases WHERE id = ?", f"{PROJECT}:2:1")[0]["tag"] == ""
+    assert env.rows("cases") == before
     with open(env.tags, "a") as f:
         f.write(line[25:] + "\n")
     env.load()
     assert env.query("SELECT tag FROM cases WHERE id = ?", f"{PROJECT}:2:1")[0]["tag"] == "cut tag"
+
+
+def test_tag_line_of_valid_json_without_a_newline_is_skipped(env):
+    env.fill()
+    line = json.dumps({"case_id": f"{PROJECT}:2:1", "tag": "no newline", "note": "", "time": "2026-11-04T12:00:00Z"})
+    with open(env.tags, "a") as f:
+        f.write(line)
+    env.load()
+    assert env.query("SELECT tag FROM cases WHERE id = ?", f"{PROJECT}:2:1")[0]["tag"] != "no newline"
+    with open(env.tags, "a") as f:
+        f.write("\n")
+    env.load()
+    assert env.query("SELECT tag FROM cases WHERE id = ?", f"{PROJECT}:2:1")[0]["tag"] == "no newline"
+
+
+def case_lines():
+    return [line for line in FIXTURES.joinpath("retry-cases.jsonl").read_text().splitlines() if line.startswith("{")]
+
+
+def test_case_line_without_a_newline_is_skipped_and_loaded_once_when_complete(env):
+    lines = case_lines()
+    env.cases.write_text("\n".join(lines[:2]) + "\n" + lines[2])  # the last line is valid JSON, no newline
+    env.load()
+    assert sorted(r[0] for r in env.rows("cases")) == sorted(json.loads(x)["id"] for x in lines[:2])
+    with open(env.cases, "a") as f:
+        f.write("\n")
+    env.load()
+    assert sorted(r[0] for r in env.rows("cases")) == sorted(json.loads(x)["id"] for x in lines[:3])
+    env.load()
+    assert len(env.rows("cases")) == 3
+
+
+def test_cut_case_line_is_skipped(env):
+    lines = case_lines()
+    env.cases.write_text(lines[0] + "\n" + lines[1][:30])
+    env.load()
+    assert [r[0] for r in env.rows("cases")] == [json.loads(lines[0])["id"]]
 
 
 # --- rebuild ----------------------------------------------------------------------------------
@@ -523,6 +561,23 @@ def test_rebuild_after_delete_gives_the_same_rows_as_incremental_loads(env):
     assert {t: env.rows(t, order.get(t, "1")) for t in TABLES} == incremental
     assert env.query("SELECT project, launch, provider FROM active_launches ORDER BY launch") == active
     assert all(incremental[t] for t in TABLES), "every table has rows in this test"
+
+
+def test_rebuild_with_cut_last_lines_gives_the_same_rows_as_incremental_loads(env):
+    env.fill()
+    env.load(force=True)
+    for path in (env.record, env.steps, env.limits, env.tags):
+        with open(path, "a") as f:
+            f.write('{"id": "cut", "case_id": "cut"')
+    with open(env.cases, "a") as f:
+        f.write(case_lines()[0].replace(":1:1", ":77:1"))  # valid JSON without a newline
+    env.load()
+    order = {"issues": "project, issue", "limits": "line"}
+    incremental = {t: env.rows(t, order.get(t, "1")) for t in TABLES}
+    assert len(incremental["cases"]) == 3 and all(incremental[t] for t in TABLES)
+    env.db.unlink()
+    assert store.main(["rebuild"]) == 0
+    assert {t: env.rows(t, order.get(t, "1")) for t in TABLES} == incremental
 
 
 def test_rebuild_replaces_an_existing_db(env):
@@ -595,6 +650,22 @@ def test_load_error_writes_a_failed_row_exits_non_zero_and_changes_no_input(env,
     assert input_bytes(env) == before
     assert {t: env.rows(t) for t in TABLES} == rows_before  # the failed load was rolled back
     assert "failed" in (env.home / "monitor-load.log").read_text()
+
+
+@pytest.mark.parametrize("name", ["retry-cases.jsonl", "retry-tags.jsonl", "steps.jsonl", "run-record-limits.jsonl"])
+def test_an_input_that_cannot_be_read_fails_the_load(env, name):
+    env.fill()
+    assert store.main(["load", "--once"]) == 0
+    rows_before = {t: env.rows(t) for t in TABLES}
+    path = env.home / name
+    path.unlink()
+    path.mkdir()  # a folder where the file should be: reading it fails
+    before = input_bytes(env)
+    assert store.main(["load", "--once"]) == 1
+    last = env.query("SELECT status, message FROM loads ORDER BY id DESC LIMIT 1")[0]
+    assert last["status"] == "failed" and "IsADirectoryError" in last["message"], last
+    assert input_bytes(env) == before
+    assert {t: env.rows(t) for t in TABLES} == rows_before
 
 
 def test_failing_collector_of_one_project_does_not_stop_the_others(env):

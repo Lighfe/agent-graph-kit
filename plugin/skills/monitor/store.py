@@ -24,6 +24,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -361,9 +362,43 @@ def link_codex(con):
         con.execute("UPDATE launches SET launch = ? WHERE id = ?", (data.launch_of(line, codex_starts=starts), ident))
 
 
+def full_lines_of(path, reader):
+    """Return `reader(p)` for a path reader of `data.py` (`load_cases`, `load_tags`), where `p` shows
+    only the full lines of `path`: a last line without a newline is left out until it is complete.
+    The full lines go to the reader through a pipe, so nothing is written to disk. A file that
+    cannot be read raises the error (it is not taken as a missing file)."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    body = raw[:raw.rfind(b"\n") + 1]
+    r, w = os.pipe()
+
+    def feed():
+        try:
+            with os.fdopen(w, "wb") as out:
+                out.write(body)
+        except OSError:
+            pass  # the reader stopped early; it has the error
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    try:
+        result = reader(f"/dev/fd/{r}")
+        os.set_blocking(r, False)
+        try:
+            left = os.read(r, 1)  # b"" (end of file): the reader got every byte
+        except BlockingIOError:
+            left = b"?"
+        if left:
+            raise OSError(f"{path}: the reader did not read the full lines")
+        return result
+    finally:
+        os.close(r)
+        writer.join()
+
+
 def load_cases(con):
     """Read the case file and the tag file again when one of them changed (the case file is
-    rewritten as a whole). While the tag file ends in a cut line, wait for the next load."""
+    rewritten as a whole). Only full lines are read, so a cut last line waits for the next load."""
     cpath, tpath = data.cases_path(), data.tags_path()
     cstat, tstat = stat_or_none(cpath), stat_or_none(tpath)
     cprev, tprev = file_state(con, "cases"), file_state(con, "tags")
@@ -371,13 +406,9 @@ def load_cases(con):
                 ((tstat is None and tprev is None) or (tstat is not None and same(tprev, tpath, tstat)))
     if unchanged:
         return False
-    if tstat is not None and tstat.st_size:
-        with open(tpath, "rb") as f:
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                return False
-    raw = data.load_cases(cpath)
-    table = data.case_table(raw, data.load_tags(tpath))
+    raw = full_lines_of(cpath, data.load_cases) if cstat is not None else []
+    tags = full_lines_of(tpath, data.load_tags) if tstat is not None else {}
+    table = data.case_table(raw, tags)
     con.execute("DELETE FROM cases")
     for case, row in zip(raw, table):
         tokens = case.get("tokens") if isinstance(case.get("tokens"), dict) else {}
