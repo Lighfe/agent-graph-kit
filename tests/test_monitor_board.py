@@ -201,16 +201,30 @@ def test_no_phone_home_after_the_first_start():
     assert "grafana-advisor-app" in disabled and "frser-sqlite-datasource" not in disabled
 
 
-def test_grafana_go_heap_is_kept_small():
-    """The RAM budget (400 MB for Grafana and the loader together): the Go runtime of Grafana gets a
-    soft heap limit and a lower GC target. A soft limit, not a container memory cap, so Grafana is
-    never killed for memory."""
+def test_grafana_go_gc_target_is_low_without_a_heap_limit_or_cap():
+    """The RAM budget (400 MB for Grafana and the loader together): a lower GC target. No
+    GOMEMLIMIT (a tight one made the GC run all the time) and no container memory cap (it would
+    kill Grafana)."""
     service = grafana_service()
     env = service["environment"]
-    assert re.fullmatch(r"\d+MiB", env["GOMEMLIMIT"])
-    assert int(env["GOMEMLIMIT"][:-3]) <= 128
     assert int(env["GOGC"]) < 100
+    assert "GOMEMLIMIT" not in env
     assert "mem_limit" not in service and "deploy" not in service
+
+
+BUNDLED_DATA_SOURCES = ["elasticsearch", "grafana-postgresql-datasource", "grafana-pyroscope-datasource",
+                        "influxdb", "jaeger", "loki", "mssql", "mysql", "opentsdb", "prometheus",
+                        "stackdriver", "tempo", "zipkin"]
+
+
+def test_bundled_data_sources_are_off_and_sqlite_is_on():
+    """Each bundled data source runs its own backend process (about 25 MB each)."""
+    env = grafana_service()["environment"]
+    disabled = env["GF_PLUGINS_DISABLE_PLUGINS"].split(",")
+    for plugin in BUNDLED_DATA_SOURCES:
+        assert plugin in disabled, plugin
+    assert "frser-sqlite-datasource" not in disabled
+    assert env["GF_PLUGINS_PREINSTALL_SYNC"].startswith("frser-sqlite-datasource@")
 
 
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker CLI not installed")

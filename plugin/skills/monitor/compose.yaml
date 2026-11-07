@@ -15,8 +15,10 @@ services:
     environment:
       GF_PLUGINS_PREINSTALL_SYNC: "frser-sqlite-datasource@4.0.6"
       GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
-      # Grafana 13 downloads these app plugins on each new plugin folder; the board needs none.
-      GF_PLUGINS_DISABLE_PLUGINS: "grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-pyroscope-app"
+      # Grafana 13 downloads the app plugins below on each new plugin folder, and it starts a
+      # backend process (about 25 MB each) for each bundled data source. The board needs only
+      # the SQLite data source, so all others are off (measured: about 115 MiB instead of 250).
+      GF_PLUGINS_DISABLE_PLUGINS: "grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-pyroscope-app,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,prometheus,stackdriver,tempo,zipkin,grafana-azure-monitor-datasource,cloudwatch,grafana-testdata-datasource,parca"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -26,11 +28,11 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
-      # RAM budget: a soft heap limit and a lower GC target for Grafana's Go runtime (measured:
-      # about 185 MiB instead of 250 MiB). A soft limit, not a container memory cap, so Grafana
-      # is never killed for memory.
-      GOMEMLIMIT: "100MiB"
-      GOGC: "50"
+      # RAM budget: a lower GC target for Grafana's Go runtime (measured with the plugins above
+      # off: about 115 MiB instead of 170, CPU unchanged at about 2 %). No GOMEMLIMIT and no
+      # container memory cap: a heap limit of 100 MiB made Grafana run its GC all the time
+      # (300 % CPU), and a cap would kill it.
+      GOGC: "10"
       AGK_MONITOR_DB: "/var/lib/agk-monitor/${AGK_MONITOR_DB_NAME:?run board.py up}"
     secrets:
       - grafana_admin
