@@ -337,7 +337,7 @@ uv run --script <skill>/board.py down   # stop the stack; exit 0 also when it is
 
 - **URL.** `http://127.0.0.1:3000`, bound to localhost only.
 - **Password file.** User `admin`, password in `~/.local/state/agent-graph-kit/grafana-admin` (`$XDG_STATE_HOME` instead of `~/.local/state` when set), mode 0600. The first `up` writes a random value; later starts reuse it. The script prints the path, never the value.
-- **First start.** Docker downloads the Grafana image (`grafana/grafana:13.2.4`), and Grafana downloads the SQLite data source plugin (`frser-sqlite-datasource` 4.0.6) into a Docker volume. After that the stack uses no network.
+- **First start.** Docker downloads the Grafana image (`grafana/grafana:13.2.4`, about 480 MB), and Grafana downloads the SQLite data source plugin (`frser-sqlite-datasource` 4.0.6) into a Docker volume. After that the stack uses no network.
 - **What Grafana sees.** Only the folder of the db file (read only), its own provisioning and board files, and the password file. No GitHub token, Claude or Codex credential goes to the container. The loader runs on the host.
 
 The details are in the monitor skill (`plugin/skills/monitor/SKILL.md`, section "Grafana board (optional)").
