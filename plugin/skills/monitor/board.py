@@ -9,7 +9,7 @@
   uv run --script board.py down    stop the stack; exit 0 also when it is not running
 
 Grafana runs in Docker (`compose.yaml` next to this file) and reads `monitor.sqlite` read-only.
-The loader (`store.py load`) runs on the host. Docker is needed for this part only.
+The loader (the loop of `store.py load`) runs on the host, inside this process. Docker is needed for this part only.
 The admin password is in `<state dir>/grafana-admin` (mode 0600, made on the first `up`);
 this script prints the path of the file, never the value.
 Spec: docs/specs/2026-11-06-visual-monitoring.md, Part C
@@ -137,28 +137,18 @@ def ensure_password():
     return path
 
 
-class Loader:
-    """The loader `store.py load` as a child process; SIGINT and SIGTERM are passed on to it."""
+def run_loader():
+    """Run the loader loop (`store.loop`) in this process until SIGINT or SIGTERM. In this process,
+    not as a child, so the board costs one Python process less on the host (the RAM budget).
+    Return (exit code of the loop, True when a signal ended it)."""
+    status = store.loop()  # it installs its own SIGINT/SIGTERM handlers; 0 means a signal ended it
+    return status, status == 0
 
-    def __init__(self):
-        self.proc = None
-        self.stopped = False
 
-    def on_signal(self, signum, _frame):
-        self.stopped = True
-        if self.proc is not None and self.proc.poll() is None:
-            try:
-                self.proc.send_signal(signal.SIGINT if signum == signal.SIGINT else signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-
-    def run(self):
-        signal.signal(signal.SIGINT, self.on_signal)
-        signal.signal(signal.SIGTERM, self.on_signal)
-        self.proc = subprocess.Popen([sys.executable, str(STORE), "load"])
-        if self.stopped:  # a signal came before the child existed
-            self.proc.send_signal(signal.SIGINT)
-        return self.proc.wait()
+def ignore_signals():
+    """While the stack stops, a second Ctrl-C must not skip `compose down`."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
 def up():
@@ -190,16 +180,17 @@ def up():
     say(f"Grafana: http://127.0.0.1:{port()}  (user admin, password in {password_file})")
     say(f"db: {db}")
     say("the loader runs now; Ctrl-C stops the loader and the stack.")
-    loader = Loader()
+    status, stopped = 1, False
     try:
-        status = loader.run()
+        status, stopped = run_loader()
     finally:
+        ignore_signals()
         say("stopping the stack.")
         down_code = compose(env, "down")
     if down_code != 0:
         say(f"`docker compose down` failed (exit {down_code}).", err=True)
         return 1
-    if loader.stopped:
+    if stopped:
         return 0
     say(f"the loader ended with exit {status}; the stack is stopped.", err=True)
     return status or 1

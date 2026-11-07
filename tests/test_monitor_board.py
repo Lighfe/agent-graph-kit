@@ -201,6 +201,18 @@ def test_no_phone_home_after_the_first_start():
     assert "grafana-advisor-app" in disabled and "frser-sqlite-datasource" not in disabled
 
 
+def test_grafana_go_heap_is_kept_small():
+    """The RAM budget (400 MB for Grafana and the loader together): the Go runtime of Grafana gets a
+    soft heap limit and a lower GC target. A soft limit, not a container memory cap, so Grafana is
+    never killed for memory."""
+    service = grafana_service()
+    env = service["environment"]
+    assert re.fullmatch(r"\d+MiB", env["GOMEMLIMIT"])
+    assert int(env["GOMEMLIMIT"][:-3]) <= 128
+    assert int(env["GOGC"]) < 100
+    assert "mem_limit" not in service and "deploy" not in service
+
+
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker CLI not installed")
 def test_docker_compose_accepts_the_file(tmp_path):
     """`docker compose config` reads the file without a daemon."""
@@ -293,6 +305,10 @@ if args[:1] == ["info"]:
     sys.exit(int(os.environ.get("FAKE_DOCKER_INFO_EXIT", "0")))
 if args[:1] == ["compose"] and "up" in args:
     sys.exit(int(os.environ.get("FAKE_DOCKER_UP_EXIT", "0")))
+if args[:1] == ["compose"] and "down" in args and os.environ.get("FAKE_DOCKER_DOWN_SLEEP"):
+    import time
+    time.sleep(float(os.environ["FAKE_DOCKER_DOWN_SLEEP"]))
+    open(os.path.join(os.path.dirname(os.environ["FAKE_DOCKER_LOG"]), "down.done"), "w").close()
 sys.exit(0)
 """
 
@@ -319,7 +335,8 @@ class Rig:
             self.write_fake("docker", FAKE_DOCKER)
         env = dict(os.environ)
         for name in ("MONITOR_DB_FILE", "RUN_RECORD_FILE", "RUN_RECORD_LIMITS_FILE", "RUN_WEIGHTS_FILE",
-                     "AGK_GRAFANA_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT"):
+                     "AGK_GRAFANA_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT",
+                     "FAKE_DOCKER_DOWN_SLEEP"):
             env.pop(name, None)
         env.update(PATH=str(self.bin), HOME=str(self.home), XDG_STATE_HOME=str(tmp / "state"),
                    FAKE_DOCKER_LOG=str(self.log))
@@ -483,6 +500,58 @@ def test_sigint_stops_the_loader_and_the_stack(tmp_path):
     assert password not in out + err
     assert str(rig.password_file) in out
     assert "http://127.0.0.1:3000" in out
+
+
+def child_commands(pid):
+    """The command lines of the direct children of `pid` (Linux /proc)."""
+    out = []
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        for child in (task / "children").read_text().split():
+            try:
+                out.append(Path(f"/proc/{child}/cmdline").read_bytes().replace(b"\0", b" ").decode())
+            except OSError:
+                pass
+    return out
+
+
+@pytest.mark.skipif(not Path("/proc/self/task").exists(), reason="needs Linux /proc")
+def test_the_loader_runs_inside_board_py_not_as_a_child(tmp_path):
+    """One Python process less on the host while the board runs (RAM budget)."""
+    rig = Rig(tmp_path)
+    proc = subprocess.Popen([sys.executable, str(BOARD), "up"], cwd=rig.cwd, env=rig.env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert wait_for(lambda: loads_in(rig.db) > 0), "the loader made no load"
+        assert not [c for c in child_commands(proc.pid) if "store.py" in c]
+        proc.send_signal(signal.SIGINT)
+        proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == 0
+    assert rig.compose_calls()[-1][-1] == "down"
+
+
+def test_a_second_sigint_does_not_skip_compose_down(tmp_path):
+    """Ctrl-C pressed again while `compose down` runs: board.py waits for it and exits 0."""
+    rig = Rig(tmp_path)
+    proc = subprocess.Popen([sys.executable, str(BOARD), "up"], cwd=rig.cwd, start_new_session=True,
+                            env={**rig.env, "FAKE_DOCKER_DOWN_SLEEP": "2"},
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert wait_for(lambda: loads_in(rig.db) > 0), "the loader made no load"
+        proc.send_signal(signal.SIGINT)
+        assert wait_for(lambda: any("down" in c for c in rig.compose_calls()))
+        proc.send_signal(signal.SIGINT)
+        out, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == 0, err
+    assert "Traceback" not in err
+    assert (tmp_path / "down.done").exists()
 
 
 def test_down_exits_0_when_the_stack_is_not_running(tmp_path):

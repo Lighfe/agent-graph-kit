@@ -26,6 +26,11 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # RAM budget: a soft heap limit and a lower GC target for Grafana's Go runtime (measured:
+      # about 185 MiB instead of 250 MiB). A soft limit, not a container memory cap, so Grafana
+      # is never killed for memory.
+      GOMEMLIMIT: "100MiB"
+      GOGC: "50"
       AGK_MONITOR_DB: "/var/lib/agk-monitor/${AGK_MONITOR_DB_NAME:?run board.py up}"
     secrets:
       - grafana_admin
