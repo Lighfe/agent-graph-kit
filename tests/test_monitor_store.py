@@ -274,6 +274,94 @@ def test_limits_are_loaded_and_marked_as_entered_by_hand(env):
                     {"point": "end", "percent": 40, "plan": "fixture plan", "entered_by_hand": 1}]
 
 
+# --- live usage limits (issue #286) ------------------------------------------------------------
+
+def reading(provider, window, used, when="2026-01-01T10:00:00Z", resets="2026-01-01T13:00:00Z", **kw):
+    row = {"v": 1, "time": when, "provider": provider, "window": window, "used_percent": used,
+           "resets_at": resets, "source": "app-server" if provider == "codex" else "statusline"}
+    row.update(kw)
+    return row
+
+
+def live_rows_of(env):
+    return [(r["provider"], r["window"], r["used_percent"], r["time"], r["resets_at"], r["source"])
+            for r in env.query('SELECT provider, "window", used_percent, time, resets_at, source '
+                               "FROM usage_limits ORDER BY file, line")]
+
+
+def test_live_usage_limit_files_give_one_row_per_line(env):
+    claude, codex = env.home / "usage-limits-claude.jsonl", env.home / "usage-limits-codex.jsonl"
+    append(claude, reading("claude", "five_hour", 62.0, resets="2026-01-01T14:00:00Z"),
+           reading("claude", "seven_day", 20))
+    append(codex, reading("codex", "300_minutes", 41.5))
+    env.load()
+    assert live_rows_of(env) == [
+        ("claude", "five_hour", 62.0, "2026-01-01T10:00:00Z", "2026-01-01T14:00:00Z", "statusline"),
+        ("claude", "seven_day", 20, "2026-01-01T10:00:00Z", "2026-01-01T13:00:00Z", "statusline"),
+        ("codex", "300_minutes", 41.5, "2026-01-01T10:00:00Z", "2026-01-01T13:00:00Z", "app-server")]
+    assert env.query("SELECT time_s FROM usage_limits WHERE provider = 'codex'") == [
+        {"time_s": datetime(2026, 1, 1, 10, tzinfo=timezone.utc).timestamp()}]
+    loaded = env.rows("usage_limits", "file, line")
+    env.db.unlink()
+    assert store.main(["rebuild"]) == 0
+    assert env.rows("usage_limits", "file, line") == loaded
+
+
+def test_live_usage_limit_files_are_read_incrementally_and_a_cut_line_waits(env, monkeypatch):
+    codex = env.home / "usage-limits-codex.jsonl"
+    append(codex, reading("codex", "five_hour", 30.0))
+    with open(codex, "a") as f:
+        f.write(json.dumps(reading("codex", "seven_day", 12.0)))  # no newline yet
+    env.load()
+    assert [r[1] for r in live_rows_of(env)] == ["five_hour"]
+    offsets = []
+    real = store.complete_lines
+    monkeypatch.setattr(store, "complete_lines", lambda path, offset: offsets.append((Path(path).name, offset))
+                        or real(path, offset))
+    with open(codex, "a") as f:
+        f.write("\n")
+    env.load()
+    first = len(json.dumps(reading("codex", "five_hour", 30.0))) + 1
+    assert ("usage-limits-codex.jsonl", first) in offsets
+    assert [r[1] for r in live_rows_of(env)] == ["five_hour", "seven_day"]
+    env.load()
+    assert len(live_rows_of(env)) == 2
+
+
+def test_hand_rows_and_live_rows_do_not_remove_each_other(env):
+    env.fill()
+    claude, codex = env.home / "usage-limits-claude.jsonl", env.home / "usage-limits-codex.jsonl"
+    append(claude, reading("claude", "five_hour", 62.0))
+    append(codex, reading("codex", "five_hour", 41.0))
+    env.load()
+    assert len(env.rows("limits")) == 2 and len(live_rows_of(env)) == 2
+    env.limits.unlink()
+    env.load()
+    assert env.rows("limits") == []
+    assert [r[0] for r in live_rows_of(env)] == ["claude", "codex"]
+    env.fill()
+    env.load()
+    claude.unlink()
+    env.load()
+    assert len(env.rows("limits")) == 2
+    assert [r[0] for r in live_rows_of(env)] == ["codex"]
+
+
+def test_bad_live_usage_limit_lines_are_skipped(env):
+    codex = env.home / "usage-limits-codex.jsonl"
+    no_provider = reading("codex", "five_hour", 1.0)
+    del no_provider["provider"]
+    no_window = reading("codex", "five_hour", 2.0)
+    del no_window["window"]
+    append(codex, "not json", "[1, 2]", reading("codex", "five_hour", 3.0, v=2),
+           reading("codex", "five_hour", "4"), reading("codex", "five_hour", None),
+           reading("codex", "five_hour", True), no_provider, no_window,
+           reading("codex", "seven_day", 12.0))
+    status, _ = env.load()
+    assert status == "ok"
+    assert [(r[1], r[2]) for r in live_rows_of(env)] == [("seven_day", 12.0)]
+
+
 # --- active launches --------------------------------------------------------------------------
 
 def test_claude_launch_is_active_while_its_newest_step_is_at_most_5_minutes_old(env):
@@ -857,3 +945,11 @@ def test_skill_has_a_store_section_with_commands_tables_rule_config_and_log():
                    "`launches`", "`steps`", "`issues`", "`cases`", "`limits`", "`loads`", "`active_launches`",
                    "`escalation`", "`weighted_is_estimate`"):
         assert needed in section, needed
+
+
+def test_skill_names_the_live_usage_limit_files_table_panel_and_the_missing_writers():
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    for needed in ("usage-limits-claude.jsonl", "usage-limits-codex.jsonl", '"used_percent":41.0', '"v":1',
+                   "`usage_limits`", "Usage limit in percent (live, per account)", "ships no writer",
+                   "`statusLine` entry", "change of `qa-" + "codex`"):
+        assert needed in text, needed

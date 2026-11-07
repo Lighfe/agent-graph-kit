@@ -1,0 +1,3 @@
+{"v": 1, "time": "2026-01-01T10:00:00Z", "provider": "codex", "window": "five_hour", "used_percent": 30.0, "resets_at": "2026-01-01T13:00:00Z", "source": "app-server"}
+{"v": 1, "time": "2026-01-01T11:00:00Z", "provider": "codex", "window": "five_hour", "used_percent": 41.0, "resets_at": "2026-01-01T13:00:00Z", "source": "app-server"}
+{"v": 1, "time": "2026-01-01T10:30:00Z", "provider": "codex", "window": "seven_day", "used_percent": 12.0, "resets_at": "2026-01-05T10:00:00Z", "source": "app-server"}

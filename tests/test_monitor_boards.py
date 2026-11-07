@@ -115,12 +115,14 @@ class LiveDb:
         runs = home / "codex-runs"
         runs.mkdir(parents=True)
         self.db = home / "monitor.sqlite"
+        self.home = home
         monkeypatch.setenv("XDG_STATE_HOME", str(state))
         monkeypatch.setenv("MONITOR_DB_FILE", str(self.db))
         monkeypatch.setenv("CODEX_RUNS_DIR", str(runs))
         for name in ("RUN_RECORD_FILE", "RUN_RECORD_LIMITS_FILE", "RUN_WEIGHTS_FILE", "STEPS_FILE"):
             monkeypatch.delenv(name, raising=False)
-        for name in ("steps.jsonl", "record.jsonl", "run-record-limits.jsonl"):
+        # The live usage limits: a Codex file, no Claude file (issue #286).
+        for name in ("steps.jsonl", "record.jsonl", "run-record-limits.jsonl", "usage-limits-codex.jsonl"):
             target = home / ("run-record.jsonl" if name == "record.jsonl" else name)
             target.write_text(relative((FIXTURES / name).read_text(encoding="utf-8"), self.now), encoding="utf-8")
         # Codex stream files: the attempt of issue 2 still writes (30 s ago), the one of issue 1 ended long ago.
@@ -150,6 +152,9 @@ class LiveDb:
         if args[0] == "api":
             return json.dumps([{"number": n, "title": t, "state": "open"} for n, t in STAGE_TITLES.items()])
         raise AssertionError(f"unexpected gh call {args}")
+
+    def home_has_claude_file(self):
+        return (self.home / "usage-limits-claude.jsonl").exists()
 
     def rows(self, sql):
         con = sqlite3.connect(self.db)
@@ -346,6 +351,41 @@ def test_usage_limit_panels(live_db):
         ("start", 12.5, "fixture plan", 1)]
     texts = [p for p in live_board()["panels"] if p["type"] == "text"]
     assert [p["options"]["content"] for p in texts] == ["no live source; weighted tokens are an estimate"]
+
+
+LIVE_LIMIT_TITLE = "Usage limit in percent (live, per account)"
+
+
+def test_live_usage_limit_panel_gives_the_newest_reading_per_provider_and_window(live_db):
+    panel = live_panel(LIVE_LIMIT_TITLE)
+    sql = panel_sql(panel)
+    assert "${project}" not in sql and "${stage}" not in sql and "$project" not in sql and "$stage" not in sql
+    assert not (live_db.home_has_claude_file())
+    rows = live_db.rows(sql)
+    assert [(r["provider"], r["window"], r["used_percent"], r["note"]) for r in rows] == [
+        ("claude", None, None, "no live source; weighted tokens are an estimate"),
+        ("codex", "five_hour", 41.0, None),
+        ("codex", "seven_day", 12.0, None)]
+    codex = {r["window"]: r for r in rows if r["provider"] == "codex"}
+    assert (codex["five_hour"]["time"], codex["five_hour"]["resets_at"]) == (
+        "2026-01-01T11:00:00Z", "2026-01-01T13:00:00Z")
+    assert (codex["seven_day"]["time"], codex["seven_day"]["resets_at"]) == (
+        "2026-01-01T10:30:00Z", "2026-01-05T10:00:00Z")
+    for name in ("provider", "window", "used_percent", "time", "resets_at"):
+        assert name in live_db.columns(sql), name
+
+
+def test_live_usage_limit_panel_without_any_live_file_says_no_live_source(tmp_path):
+    con = store.connect(tmp_path / "monitor.sqlite")
+    try:
+        cur = con.execute(panel_sql(live_panel(LIVE_LIMIT_TITLE)))
+        names = [d[0] for d in cur.description]
+        rows = [dict(zip(names, r)) for r in cur.fetchall()]
+    finally:
+        con.close()
+    assert [(r["provider"], r["used_percent"], r["note"]) for r in rows] == [
+        ("claude", None, "no live source; weighted tokens are an estimate"),
+        ("codex", None, "no live source; weighted tokens are an estimate")]
 
 
 def test_loads_panel_shows_the_last_and_the_last_failed_load(live_db):

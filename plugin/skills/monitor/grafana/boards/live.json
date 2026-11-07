@@ -305,6 +305,64 @@
       }
     },
     {
+      "id": 7,
+      "type": "table",
+      "title": "Usage limit in percent (live, per account)",
+      "description": "The newest reading per provider and window from usage-limits-claude.jsonl and usage-limits-codex.jsonl in the state folder. A reading is for the whole account: no project or stage filter. The kit ships no writer for these files yet.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "agk-monitor"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "agk-monitor"
+          },
+          "queryType": "table",
+          "timeColumns": [],
+          "rawQueryText": "WITH p(provider) AS (VALUES ('claude'), ('codex')), r AS (SELECT provider, \"window\", used_percent, time, resets_at, ROW_NUMBER() OVER (PARTITION BY provider, \"window\" ORDER BY time_s DESC, file DESC, line DESC) AS n FROM usage_limits) SELECT p.provider, r.\"window\" AS \"window\", r.used_percent, r.time, r.resets_at, CASE WHEN r.provider IS NULL THEN 'no live source; weighted tokens are an estimate' END AS note FROM p LEFT JOIN r ON r.provider = p.provider AND r.n = 1 ORDER BY p.provider, r.\"window\"",
+          "queryText": "WITH p(provider) AS (VALUES ('claude'), ('codex')), r AS (SELECT provider, \"window\", used_percent, time, resets_at, ROW_NUMBER() OVER (PARTITION BY provider, \"window\" ORDER BY time_s DESC, file DESC, line DESC) AS n FROM usage_limits) SELECT p.provider, r.\"window\" AS \"window\", r.used_percent, r.time, r.resets_at, CASE WHEN r.provider IS NULL THEN 'no live source; weighted tokens are an estimate' END AS note FROM p LEFT JOIN r ON r.provider = p.provider AND r.n = 1 ORDER BY p.provider, r.\"window\""
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "table",
       "title": "Loads",

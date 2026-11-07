@@ -173,6 +173,9 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE TABLE IF NOT EXISTS limits (
   line INTEGER PRIMARY KEY, project TEXT, stage INTEGER, time TEXT, time_s REAL, point TEXT,
   percent REAL, plan TEXT, entered_by_hand INTEGER);
+CREATE TABLE IF NOT EXISTS usage_limits (
+  file TEXT, line INTEGER, provider TEXT, "window" TEXT, used_percent REAL, time TEXT, time_s REAL,
+  resets_at TEXT, resets_at_s REAL, source TEXT, PRIMARY KEY (file, line));
 CREATE TABLE IF NOT EXISTS loads (
   id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, time_s REAL, status TEXT, message TEXT,
   stage_read INTEGER);
@@ -261,15 +264,17 @@ def same(prev, path, stat):
             and (prev["inode"], prev["size"], prev["mtime_ns"]) == (stat.st_ino, stat.st_size, stat.st_mtime_ns))
 
 
-def load_appended(con, kind, path, table, put):
+def load_appended(con, kind, path, table, put, scope=None):
     """Load the new full lines of an appended file into `table` with `put(con, offset, row)`.
-    A missing file empties the table; a shorter or other file is read again from the start.
-    Return True when something was read or removed."""
+    A missing file empties the table (with `scope` = (column, value): only the rows of this file);
+    a shorter or other file is read again from the start. Return True when something was read or
+    removed."""
     stat, prev = stat_or_none(path), file_state(con, kind)
+    where, params = (f" WHERE {scope[0]} = ?", (scope[1],)) if scope else ("", ())
     if stat is None:
         if prev is None:
             return False
-        con.execute(f"DELETE FROM {table}")
+        con.execute(f"DELETE FROM {table}{where}", params)
         con.execute("DELETE FROM files WHERE kind = ?", (kind,))
         return True
     if same(prev, path, stat):
@@ -278,7 +283,7 @@ def load_appended(con, kind, path, table, put):
     if prev is not None and prev["path"] == str(path) and prev["inode"] == stat.st_ino and stat.st_size >= prev["offset"]:
         start = prev["offset"]
     elif prev is not None:
-        con.execute(f"DELETE FROM {table}")
+        con.execute(f"DELETE FROM {table}{where}", params)
     rows, end = complete_lines(path, start)
     for offset, row in rows:
         put(con, offset, row)
@@ -350,6 +355,35 @@ class Loader:
         put_row(con, "limits", (
             offset, row.get("project"), num(row.get("stage")), row.get("time"),
             epoch(data.parse_time(row.get("time"))), row.get("point"), num(row.get("percent")), row.get("plan"), 1))
+
+
+LIVE_LIMIT_FILES = ("claude", "codex")  # usage-limits-<name>.jsonl in the state dir
+
+
+def usage_limits_path(name):
+    """`<state dir>/agent-graph-kit/usage-limits-<name>.jsonl`: the live readings of the plan usage
+    limit in percent (docs/research/usage-limit-source.md). The kit ships no writer for them yet."""
+    return data.state_dir() / f"usage-limits-{name}.jsonl"
+
+
+def seconds_of(text):
+    return epoch(data.parse_time(text)) if isinstance(text, str) else None
+
+
+def put_usage_limit(name):
+    """The put of one usage limit file. A line counts only when `v` is 1, `used_percent` is a
+    number and `provider` and `window` are non-empty text; any other line is skipped."""
+    def put(con, offset, row):
+        v, provider, window = row.get("v"), row.get("provider"), row.get("window")
+        if not (type(v) is int and v == 1) or num(row.get("used_percent")) is None:
+            return
+        if not (isinstance(provider, str) and provider and isinstance(window, str) and window):
+            return
+        when, resets = row.get("time"), row.get("resets_at")
+        put_row(con, "usage_limits", (
+            name, offset, provider, window, num(row.get("used_percent")), as_text(when), seconds_of(when),
+            as_text(resets), seconds_of(resets), as_text(row.get("source"))))
+    return put
 
 
 def link_codex(con):
@@ -456,6 +490,9 @@ def load_files(con, entries):
     record = load_appended(con, "record", rr.record_path(), "launches", loader.put_launch)
     steps = load_appended(con, "steps", data.steps_path(), "steps", loader.put_step)
     limits = load_appended(con, "limits", rr.limits_path(), "limits", loader.put_limit)
+    for name in LIVE_LIMIT_FILES:
+        limits = load_appended(con, f"usage-limits-{name}", usage_limits_path(name), "usage_limits",
+                               put_usage_limit(name), scope=("file", name)) or limits
     if record or steps:
         link_codex(con)
     cases = load_cases(con)
