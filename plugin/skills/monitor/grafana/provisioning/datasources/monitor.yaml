@@ -1,0 +1,13 @@
+# The SQLite data source on monitor.sqlite, read only (issue #283).
+apiVersion: 1
+datasources:
+  - name: monitor
+    uid: agk-monitor
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      path: $AGK_MONITOR_DB
+      pathPrefix: "file:"
+      pathOptions: "mode=ro"

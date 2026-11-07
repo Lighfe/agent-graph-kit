@@ -1,0 +1,83 @@
+{
+  "uid": "agk-monitor-stub",
+  "title": "agk monitor (stub)",
+  "description": "The time of the last load of monitor.sqlite (issue #283). The real panels come with #284 and #285.",
+  "tags": ["agent-graph-kit"],
+  "timezone": "browser",
+  "editable": false,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Last load",
+      "gridPos": {"h": 5, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": "/^last_load$/"},
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+          "queryType": "table",
+          "timeColumns": [],
+          "rawQueryText": "SELECT time AS last_load FROM loads ORDER BY id DESC LIMIT 1",
+          "queryText": "SELECT time AS last_load FROM loads ORDER BY id DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Seconds since the last load",
+      "gridPos": {"h": 5, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+      "options": {
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": "/^age_s$/"},
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 120}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+          "queryType": "table",
+          "timeColumns": [],
+          "rawQueryText": "SELECT CAST((julianday('now') - 2440587.5) * 86400.0 - time_s AS INTEGER) AS age_s FROM loads ORDER BY id DESC LIMIT 1",
+          "queryText": "SELECT CAST((julianday('now') - 2440587.5) * 86400.0 - time_s AS INTEGER) AS age_s FROM loads ORDER BY id DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Last ten loads",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 5},
+      "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "frser-sqlite-datasource", "uid": "agk-monitor"},
+          "queryType": "table",
+          "timeColumns": [],
+          "rawQueryText": "SELECT time, status, message, stage_read FROM loads ORDER BY id DESC LIMIT 10",
+          "queryText": "SELECT time, status, message, stage_read FROM loads ORDER BY id DESC LIMIT 10"
+        }
+      ]
+    }
+  ]
+}

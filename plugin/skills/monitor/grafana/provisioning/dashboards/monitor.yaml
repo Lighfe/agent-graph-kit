@@ -1,0 +1,12 @@
+# The board provider: every JSON file in grafana/boards/ is a board (issue #283).
+apiVersion: 1
+providers:
+  - name: agk-monitor
+    folder: agent-graph-kit
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/agk-boards
+      foldersFromFilesStructure: false

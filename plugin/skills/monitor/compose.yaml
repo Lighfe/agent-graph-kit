@@ -1,0 +1,58 @@
+# The optional Grafana stack of the monitor skill (issue #283). Start and stop it with
+# `board.py up` and `board.py down`; board.py sets the AGK_* variables below.
+# Grafana reads monitor.sqlite read-only; the loader (store.py) runs on the host.
+# Spec: docs/specs/2026-11-06-visual-monitoring.md, Part C
+name: agk-monitor
+
+services:
+  grafana:
+    image: grafana/grafana:13.2.4
+    restart: "no"
+    # The db is mode 0600 for the host user, so Grafana runs with the host uid/gid.
+    user: "${AGK_UID:?run board.py up}:${AGK_GID:?run board.py up}"
+    ports:
+      - "127.0.0.1:${AGK_GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_PLUGINS_PREINSTALL_SYNC: "frser-sqlite-datasource@4.0.6"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      # Grafana 13 downloads these app plugins on each new plugin folder; the board needs none.
+      GF_PLUGINS_DISABLE_PLUGINS: "grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-pyroscope-app"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: "/run/secrets/grafana_admin"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      AGK_MONITOR_DB: "/var/lib/agk-monitor/${AGK_MONITOR_DB_NAME:?run board.py up}"
+    secrets:
+      - grafana_admin
+    volumes:
+      # The folder of the db, not the file: `store.py rebuild` replaces the file (a new inode),
+      # and the rollback journal is created next to it.
+      - type: bind
+        source: "${AGK_MONITOR_DB_DIR:?run board.py up}"
+        target: /var/lib/agk-monitor
+        read_only: true
+      - type: bind
+        source: ./grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+      - type: bind
+        source: ./grafana/boards
+        target: /var/lib/agk-boards
+        read_only: true
+      # Only the plugin folder is kept, so the plugin downloads once. Grafana's own db starts
+      # fresh on each `up`, so the admin password always is the one of the password file.
+      - type: volume
+        source: grafana-plugins
+        target: /var/lib/grafana/plugins
+
+secrets:
+  grafana_admin:
+    file: "${AGK_GRAFANA_ADMIN_FILE:?run board.py up}"
+
+volumes:
+  grafana-plugins:

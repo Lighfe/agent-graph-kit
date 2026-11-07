@@ -98,3 +98,20 @@ Tables (times as ISO text, and as Unix seconds in the `_s` columns):
 Active rule (only in the view, computed at the time of the query, not of the load): a Claude launch is active while its newest step time is at most 5 minutes old; a Codex QA attempt is active while the modification time of its stream file (stored at load) is at most 5 minutes old, since its rows carry only the attempt start.
 
 Weighted tokens: `weighted` of `data.py` with the weights of each project (`$RUN_WEIGHTS_FILE`, else `docs/run-weights.json` of the project repo, else the skill copy) and the Codex rule of the notebook. They are estimates from price ratios, not measured plan use (`weighted_is_estimate` 1); a line with no provider has none. No column adds Claude and Codex values together.
+
+## Grafana board (optional)
+
+`board.py` starts an optional Grafana stack that shows `monitor.sqlite` as boards. Docker is needed for this part only; the rest of the skill runs without it. `/agk:setup` does not install Docker. Run it from any folder:
+
+```bash
+uv run --script "${CLAUDE_SKILL_DIR}/board.py" up     # check Docker, start Grafana, then run the loader (store.py load) in the foreground; Ctrl-C stops the loader and the stack
+uv run --script "${CLAUDE_SKILL_DIR}/board.py" down   # stop the stack; exit 0 also when it is not running
+```
+
+- URL: `http://127.0.0.1:3000` (bound to localhost only; `AGK_GRAFANA_PORT` sets another port). The stub board is "agk monitor (stub)" in the folder `agent-graph-kit`: the time of the last load and the last ten loads.
+- Login: user `admin`, password in `<state dir>/grafana-admin` (`$XDG_STATE_HOME/agent-graph-kit/grafana-admin`, else under `~/.local/state`), mode 0600. `up` writes a random value on the first start and reuses it after. `board.py` prints the path of the file, never the value. Anonymous access and sign-up are off.
+- First start: Docker downloads the image `grafana/grafana:13.2.4` (about 200 MB compressed), and Grafana downloads the SQLite data source plugin `frser-sqlite-datasource` 4.0.6 into the Docker volume `agk-monitor_grafana-plugins`. After that the stack uses no network: update checks, usage reports and the news feed are off. Grafana's own settings db starts fresh on each `up`; the data source and the boards come from the files in `grafana/`.
+- What the container sees: the folder of the db file (read only, so `store.py rebuild` and the journal file work while Grafana runs), `grafana/provisioning/` and `grafana/boards/` (read only) and the password file. No token or credential: no `gh`, Claude or Codex folder or variable. `up` refuses a db folder that is the home folder or holds `~/.claude`, `~/.codex`, `~/.config/gh` or `~/.ssh`; set `MONITOR_DB_FILE` to a file in a folder of its own. Grafana runs with your uid and gid, so it can read the 0600 db file.
+- Failures: without `docker` on PATH, or when `docker info` fails (daemon not running, no access), `up` names Docker, exits 2 and starts nothing. When `docker compose up` fails (for example the port is in use), `up` exits 1 and does not start the loader.
+- RAM: Grafana uses about 250 MB, the loader about 30 MB.
+- Boards: each JSON file in `grafana/boards/` is a board (data source uid `agk-monitor`). Grafana reads changes of the folder every 30 s.
