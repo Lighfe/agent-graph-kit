@@ -351,6 +351,12 @@ The pre-step runs repository code outside the sandbox. This accepted risk is des
 
 ### Codex run
 
+**Memory cap** ([#304](https://github.com/Lighfe/agent-graph-kit/issues/304)). Inside the sandbox `systemd-run` cannot reach the user bus, so the launcher sets the cap from outside. Once per launch, before the first Codex run, it checks `systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=0 true` (timeout 30 s). The cap value `8G` is the constant `MEMORY_CAP` in `scripts/qa-codex`.
+
+- The check exits 0: every Codex run starts in a memory-capped scope, `systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=0 codex exec …` (same process, new scope). The prompt says the whole run is already under a memory cap of 8G, so QA runs the full test command of `AGENTS.md` itself and does not start `systemd-run`. A missing `codex` then gives the text `Failed to find executable codex: No such file or directory`, which the error table maps to `## QA: UNAVAILABLE`.
+- No cap (`systemd-run` not found, the check exits non-zero, or it gives no answer within 30 s; for example on macOS or in a container without a user bus): Codex runs as before, without the prefix, and the launcher prints one stderr line with the reason and `Codex runs without the outer memory cap`. The prompt says the run has no outer memory cap, so the rule "Test run" of the QA role applies as written (cap the run yourself where a cap tool works, else the subset). The launch does not stop.
+- The codex-review skill calls the same `run_codex` with no prefix; its command line has no cap.
+
 `codex exec` runs in the worktree with:
 
 - the flags that keep the user config, `AGENTS.md`, skills, hooks and apps out of the run (`BASE_FLAGS` in `codex_exec.py`: `--json`, `--ephemeral`, `--ignore-user-config`, `--disable hooks`, `--disable apps`, `--disable unbounded_connection_retries`, `-c project_doc_max_bytes=0`, `-c skills.include_instructions=false`),

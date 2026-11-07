@@ -61,6 +61,34 @@ Synthetic goal.
 """
 
 
+# The fake `systemd-run` (#304), written into each test's bin folder. FAKE_SYSTEMD_RUN picks the
+# mode: unset or `ok` runs the command after the options in the same process (like the real
+# `--scope`), with the real "Failed to find executable" text for a missing program; `fail` prints
+# the sandbox error and exits 1; `hang` sleeps. Each call appends its argv to FAKE_SYSTEMD_LOG.
+FAKE_SYSTEMD_RUN = """import json, os, shutil, sys, time
+args = sys.argv[1:]
+log = os.environ.get("FAKE_SYSTEMD_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps(args) + "\\n")
+mode = os.environ.get("FAKE_SYSTEMD_RUN", "ok")
+if mode == "fail":
+    print("Failed to connect to bus: Operation not permitted", file=sys.stderr)
+    sys.exit(1)
+if mode == "hang":
+    time.sleep(30)
+    sys.exit(0)
+i = 0
+while i < len(args) and args[i].startswith("-"):
+    i += 2 if args[i] == "-p" else 1
+cmd = args[i:]
+if shutil.which(cmd[0]) is None:
+    print(f"Failed to find executable {cmd[0]}: No such file or directory", file=sys.stderr)
+    sys.exit(1)
+os.execvp(cmd[0], cmd)
+"""
+
+
 def git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
@@ -81,6 +109,9 @@ class QaEnv:
         self.bin.mkdir()
         for tool in ("gh", "codex", "npm", "npx"):
             (self.bin / tool).symlink_to(FAKES / tool)
+        # a fake `systemd-run` first on PATH (#304): the real one in /usr/bin is never started
+        (self.bin / "systemd-run").write_text(f"#!{sys.executable}\n" + FAKE_SYSTEMD_RUN)
+        (self.bin / "systemd-run").chmod(0o755)
         path = os.pathsep.join([str(self.bin), str(Path(shutil.which("git")).parent),
                                 str(Path(sys.executable).parent)])
         env = {
@@ -97,6 +128,7 @@ class QaEnv:
             "FAKE_CODEX_N": "2",
             "FAKE_CODEX_PID": str(tmp / "child.pid"),
             "FAKE_TOOL_LOG": str(tmp / "tools.log"),
+            "FAKE_SYSTEMD_LOG": str(tmp / "systemd-run.log"),
             "QA_CODEX_TIMEOUT": "1",
             "QA_CODEX_LIMIT_FILE": str(tmp / "limit-state" / "reset"),
             "QA_CODEX_USAGE_FILE": str(tmp / "usage-state" / "codex-qa-usage.jsonl"),
@@ -106,7 +138,7 @@ class QaEnv:
         for key, value in env.items():
             monkeypatch.setenv(key, value)
         for key in ("FAKE_GH_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_GH_VIEW_FAIL", "FAKE_GH_STDERR", "FAKE_GH_API_FAIL",
-                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_NPX_FAIL", "FAKE_BUN_FAIL", "FAKE_BUN_X_FAIL", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE"):
+                    "FAKE_NPM_FAIL", "FAKE_NPM_WAIT", "FAKE_NPX_FAIL", "FAKE_BUN_FAIL", "FAKE_BUN_X_FAIL", "FAKE_UV_FAIL", "FAKE_UV_WAIT", "UV_CACHE_DIR", "UV_OFFLINE", "GIT_DIR", "GIT_WORK_TREE", "FAKE_SYSTEMD_RUN"):
             monkeypatch.delenv(key, raising=False)
         self.repo = tmp / "repo"
         self.repo.mkdir()
@@ -158,6 +190,10 @@ class QaEnv:
         if not log.exists():
             return []
         return [json.loads(line)["body"] for line in log.read_text().splitlines()]
+
+    def systemd_calls(self):
+        log = self.tmp / "systemd-run.log"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     def calls(self, tool=None):
         log = self.tmp / "tools.log"
@@ -424,7 +460,8 @@ def test_unreadable_state_file_runs_codex(qa_env, monkeypatch):
     assert comment.splitlines()[0] == "## QA: PASS"
 
 
-def test_codex_not_installed_is_unavailable(qa_env):
+def test_codex_not_installed_is_unavailable(qa_env, monkeypatch):
+    monkeypatch.setenv("FAKE_SYSTEMD_RUN", "fail")  # no cap: Popen of `codex` itself fails (capped case: #304 tests)
     (qa_env.bin / "codex").unlink()
     assert shutil.which("codex", path=os.environ["PATH"]) is None
     comment, slept = qa_env.run([])
@@ -3106,7 +3143,8 @@ def test_partial_timeout_stream_is_decoded_with_replace():
     assert codex_exec._partial("text") == "text"
 
 
-def test_no_stream_when_codex_did_not_start(qa_env):
+def test_no_stream_when_codex_did_not_start(qa_env, monkeypatch):
+    monkeypatch.setenv("FAKE_SYSTEMD_RUN", "fail")  # no cap: no process starts at all
     (qa_env.bin / "codex").unlink()
     comment, _ = qa_env.run([])
     assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
@@ -3213,3 +3251,159 @@ def test_failing_save_or_prune_keeps_the_comment(qa_env, monkeypatch, modes, bre
 
 def _raising_oserror(*_args, **_kwargs):
     raise PermissionError("synthetic read-only folder")
+
+
+# --- the outer memory cap (#304) ----------------------------------------------------------
+
+CAP = ["systemd-run", "--user", "--scope", "--quiet", "-p", "MemoryMax=8G", "-p", "MemorySwapMax=0"]
+
+
+def test_cap_value_is_one_constant():
+    assert qa.MEMORY_CAP == "8G"
+    assert qa.CAP_PREFIX == CAP
+    assert qa.CAP_PROBE_TIMEOUT_S <= 30
+
+
+def _codex_command(monkeypatch):
+    """Record the command that codex_exec.start gets for the Codex run."""
+    seen = []
+    original = codex_exec.start
+
+    def start(cmd, **kwargs):
+        seen.append(list(cmd))
+        return original(cmd, **kwargs)
+
+    monkeypatch.setattr(codex_exec, "start", start)
+    return seen
+
+
+def test_capped_command_line(qa_env, monkeypatch):
+    seen = _codex_command(monkeypatch)
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert len(seen) == 1
+    cmd = seen[0]
+    assert cmd[:len(CAP) + 2] == CAP + ["codex", "exec"]
+    # the probe ran once, before the Codex run, then the Codex run itself
+    assert qa_env.systemd_calls()[0] == CAP[1:] + ["true"]
+    assert qa_env.systemd_calls()[1][:len(CAP) + 1] == CAP[1:] + ["codex", "exec"]
+    assert len(qa_env.systemd_calls()) == 2
+
+
+def test_probe_runs_once_per_launch(qa_env, monkeypatch):
+    seen = _codex_command(monkeypatch)
+    comment, _ = qa_env.run(["transient", "ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"
+    assert len(seen) == 2 and all(c[:len(CAP)] == CAP for c in seen)
+    probes = [c for c in qa_env.systemd_calls() if c[-1] == "true"]
+    assert probes == [CAP[1:] + ["true"]]
+
+
+def test_probe_command_and_timeout(monkeypatch):
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen["cmd"], seen["timeout"] = cmd, kwargs.get("timeout")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(qa.shutil, "which", lambda name: "/fake/" + name)
+    monkeypatch.setattr(qa.subprocess, "run", run)
+    assert qa.memory_cap() == (CAP, "")
+    assert seen["cmd"] == CAP + ["true"]
+    assert 0 < seen["timeout"] <= 30
+
+
+def _no_systemd_run(monkeypatch):
+    original = shutil.which
+    monkeypatch.setattr(qa.shutil, "which", lambda name, *a, **k: None if name == "systemd-run" else original(name, *a, **k))
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("missing", "`systemd-run` not found"),
+    ("fail", "exited 1"),
+    ("hang", "no answer after"),
+])
+def test_no_cap_cases(qa_env, monkeypatch, capsys, case, reason):
+    if case == "missing":
+        _no_systemd_run(monkeypatch)
+    else:
+        monkeypatch.setenv("FAKE_SYSTEMD_RUN", case)
+        monkeypatch.setattr(qa, "CAP_PROBE_TIMEOUT_S", 0.5)
+    seen = _codex_command(monkeypatch)
+    comment, _ = qa_env.run(["ok"])
+    assert comment.splitlines()[0] == "## QA: PASS"  # the run goes on
+    assert len(seen) == 1 and seen[0][:2] == ["codex", "exec"]  # the command line as before #304
+    assert "systemd-run" not in seen[0]
+    lines = [line for line in capsys.readouterr().err.splitlines() if "memory cap" in line]
+    assert len(lines) == 1
+    assert reason in lines[0]
+    assert "Codex runs without the outer memory cap" in lines[0]
+    assert lines[0].startswith("qa-codex: ")
+    prompt = qa_env.calls("codex")[0]["stdin"]
+    assert qa.cap_rule(False) in prompt
+    assert qa.cap_rule(True) not in prompt
+
+
+def test_memory_cap_cases_unit(monkeypatch):
+    monkeypatch.setattr(qa.shutil, "which", lambda name: None)
+    prefix, reason = qa.memory_cap()
+    assert prefix == [] and "`systemd-run` not found" in reason
+    monkeypatch.setattr(qa.shutil, "which", lambda name: "/fake/" + name)
+
+    def failing(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "Failed to connect to bus: Operation not permitted\n")
+
+    monkeypatch.setattr(qa.subprocess, "run", failing)
+    prefix, reason = qa.memory_cap()
+    assert prefix == [] and "exited 1" in reason and "Failed to connect to bus" in reason
+
+    def hanging(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(qa.subprocess, "run", hanging)
+    prefix, reason = qa.memory_cap()
+    assert prefix == [] and "no answer after" in reason
+
+
+def test_prompt_texts_for_cap(qa_env):
+    capped, uncapped = qa.cap_rule(True), qa.cap_rule(False)
+    assert "already under a memory cap of 8G" in capped
+    assert "full test command of `AGENTS.md`" in capped
+    assert "do not start `systemd-run`" in capped
+    assert "no outer memory cap" in uncapped
+    prompt = qa.build_prompt([CRIT_1], "b" * 40, "a" * 40, capped=True)
+    assert capped in prompt and uncapped not in prompt
+    prompt = qa.build_prompt([CRIT_1], "b" * 40, "a" * 40, capped=False)
+    assert uncapped in prompt and capped not in prompt
+    # the flow: with the working fake, the prompt that Codex reads is the capped one
+    qa_env.run(["ok"])
+    stdin = qa_env.calls("codex")[0]["stdin"]
+    assert capped in stdin and uncapped not in stdin
+
+
+def test_missing_codex_with_cap_is_unavailable(qa_env, monkeypatch):
+    (qa_env.bin / "codex").unlink()
+    path = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if not (Path(p) / "codex").exists())
+    monkeypatch.setenv("PATH", path)
+    seen = _codex_command(monkeypatch)
+    comment, _ = qa_env.run(["ok"])
+    assert seen and seen[0][:len(CAP)] == CAP  # the cap was on
+    assert comment.splitlines()[0] == "## QA: UNAVAILABLE"
+    assert "Failed to find executable codex: No such file or directory" in comment
+    assert qa_env.code == 0
+
+
+def test_run_codex_default_has_no_prefix(monkeypatch, tmp_path):
+    seen = []
+
+    def start(cmd, **kwargs):
+        seen.append(list(cmd))
+        raise FileNotFoundError
+
+    monkeypatch.setattr(codex_exec, "start", start)
+    codex_exec.run_codex("p", schema=tmp_path / "s.json", sandbox_args=[], model="m", effort="e",
+                         timeout_s=1, cwd=tmp_path)
+    codex_exec.run_codex("p", schema=tmp_path / "s.json", sandbox_args=[], model="m", effort="e",
+                         timeout_s=1, cwd=tmp_path, prefix=["wrap", "-x"])
+    assert seen[0][:2] == ["codex", "exec"]
+    assert seen[1][:4] == ["wrap", "-x", "codex", "exec"]

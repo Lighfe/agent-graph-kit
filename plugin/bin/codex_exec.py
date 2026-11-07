@@ -223,10 +223,12 @@ def _partial(data) -> str:
 
 
 def run_codex(prompt: str, *, schema: Path, sandbox_args: list[str], model: str, effort: str,
-              timeout_s: int, cwd: Path) -> CodexRun:
+              timeout_s: int, cwd: Path, prefix: list[str] | tuple[str, ...] = ()) -> CodexRun:
+    """One `codex exec` run. `prefix` goes before `codex` (the memory-capped scope of qa-codex, #304);
+    the default is no prefix, so the codex-review command line is unchanged."""
     tmp = Path(tempfile.mkdtemp(prefix="codex-"))
     out = tmp / "last.json"  # fresh path per run: failed runs leave an old file in place (docs/research/spike-codex-cli.md#q1---output-schema-and--o)
-    cmd = ["codex", "exec", *BASE_FLAGS, "-m", model, "-c", f'model_reasoning_effort="{effort}"',
+    cmd = [*prefix, "codex", "exec", *BASE_FLAGS, "-m", model, "-c", f'model_reasoning_effort="{effort}"',
            *sandbox_args, "-C", str(cwd), "--output-schema", str(schema), "-o", str(out), "-"]
     try:
         try:

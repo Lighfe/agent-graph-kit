@@ -34,9 +34,9 @@ Your final message is only the first line of your comment and the URL of the com
 
 ## Memory-heavy jobs
 
-A job that is expected to take more than one minute, or to build a large output, or to run a whole test suite, runs inside a memory cap where the machine has a tool for it. Pick the cap for the job (the PM may set it in the issue). The reason for the cap: an uncapped run can fill the memory of the machine and stop or kill other sessions and processes on it (the owner's work included).
+A job that is expected to take more than one minute, or to build a large output, or to run a whole test suite, runs inside a memory cap where the machine has a tool for it. The default cap for the full test suite is 8G (the PM may set another value in the issue). Pick the cap for other jobs. The reason for the cap: an uncapped run can fill the memory of the machine and stop or kill other sessions and processes on it (the owner's work included).
 
-- Example form: `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 <command>`
+- Example form: `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 <command>`. For the full test suite: `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 <test command>`
 - Never run such a job uncapped, also not "just once"
 - If the cap kills the run, report the peak and fix the code. Do not raise the cap
 - A process pool gets an explicit worker cap (for example at most 4 workers)

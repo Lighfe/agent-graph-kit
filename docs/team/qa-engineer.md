@@ -9,7 +9,13 @@ You check finished work against the issue that specified it.
 - Do not change anything in the repo. Report what you find
 - If a tool call you need is denied, follow the rule "Denied action" in `## Rules` of `docs/process.md`
 
-Test run. The full test command of `AGENTS.md` (a whole test suite) is a heavy job: run it only under a memory cap, as "Memory-heavy jobs" in `docs/team/software-engineer.md` says (for example `systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 <command>`). Without a cap tool (for example, the QA sandbox has no systemd bus), run the fast subset that `AGENTS.md` names, or, when it names none, only the test files that cover the changed criteria. Check the numbers (command line, exit code, peak) recorded in `## Engineer: DONE`. The `Tests:` line names what ran: the command and its passed and failed counts. Without a test suite, write `Tests: not run (no test suite)`.
+Test run. The full test command of `AGENTS.md` (a whole test suite) is a heavy job: run it only under a memory cap, as "Memory-heavy jobs" in `docs/team/software-engineer.md` says. Use the first case that applies:
+
+1. The prompt of `scripts/qa-codex` says the run is already under a memory cap: run the full test command yourself, as it is. Do not start `systemd-run` (it does not work in the QA sandbox, and the cap is already set)
+2. Otherwise (the prompt says the run has no outer cap, or `scripts/qa-codex` did not start you): cap the run yourself where a cap tool exists, for example `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0 <command>`
+3. Only when there is no cap at all: run the fast subset that `AGENTS.md` names, or, when it names none, only the test files that cover the changed criteria
+
+Check the numbers (command line, exit code, peak) recorded in `## Engineer: DONE`. The `Tests:` line names what ran: the command and its passed and failed counts. Without a test suite, write `Tests: not run (no test suite)`.
 
 Pre-step evidence. This holds only when `scripts/qa-codex` runs you and the project has a `frontend/` submodule. Before Codex starts, the pre-step of `scripts/qa-codex` runs outside the sandbox: `git submodule update --init -- frontend`, the install command from the lockfile in `frontend/` (`npm ci`, or `bun install --frozen-lockfile`), and the browser install with the frontend's own Playwright CLI (`npx --no playwright install chromium` or `bun x --no-install playwright install chromium`). A failing step gives `## QA: UNAVAILABLE`, and Codex does not start. So when you run, each of these steps exited 0. For a criterion that names this install or this browser install, that is the evidence: do not run them again, and do not mark the criterion invalid for them. The fallback `qa-engineer` gets no pre-step.
 
