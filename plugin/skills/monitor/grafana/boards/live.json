@@ -26,13 +26,7 @@
           "type": "frser-sqlite-datasource",
           "uid": "agk-monitor"
         },
-        "query": {
-          "refId": "A",
-          "queryType": "table",
-          "timeColumns": [],
-          "rawQueryText": "SELECT project FROM (SELECT project FROM steps UNION SELECT project FROM launches UNION SELECT project FROM issues UNION SELECT project FROM limits) WHERE project IS NOT NULL ORDER BY project",
-          "queryText": "SELECT project FROM (SELECT project FROM steps UNION SELECT project FROM launches UNION SELECT project FROM issues UNION SELECT project FROM limits) WHERE project IS NOT NULL ORDER BY project"
-        },
+        "query": "SELECT project FROM (SELECT project FROM steps UNION SELECT project FROM launches UNION SELECT project FROM issues UNION SELECT project FROM limits) WHERE project IS NOT NULL ORDER BY project",
         "definition": "SELECT project FROM (SELECT project FROM steps UNION SELECT project FROM launches UNION SELECT project FROM issues UNION SELECT project FROM limits) WHERE project IS NOT NULL ORDER BY project",
         "refresh": 2,
         "multi": false,
@@ -50,13 +44,7 @@
           "type": "frser-sqlite-datasource",
           "uid": "agk-monitor"
         },
-        "query": {
-          "refId": "A",
-          "queryType": "table",
-          "timeColumns": [],
-          "rawQueryText": "SELECT stage FROM (SELECT stage FROM steps WHERE project = '${project}' UNION SELECT stage FROM launches WHERE project = '${project}' UNION SELECT stage FROM issues WHERE project = '${project}' UNION SELECT stage FROM limits WHERE project = '${project}') WHERE stage IS NOT NULL ORDER BY stage DESC",
-          "queryText": "SELECT stage FROM (SELECT stage FROM steps WHERE project = '${project}' UNION SELECT stage FROM launches WHERE project = '${project}' UNION SELECT stage FROM issues WHERE project = '${project}' UNION SELECT stage FROM limits WHERE project = '${project}') WHERE stage IS NOT NULL ORDER BY stage DESC"
-        },
+        "query": "SELECT stage FROM (SELECT stage FROM steps WHERE project = '${project}' UNION SELECT stage FROM launches WHERE project = '${project}' UNION SELECT stage FROM issues WHERE project = '${project}' UNION SELECT stage FROM limits WHERE project = '${project}') WHERE stage IS NOT NULL ORDER BY stage DESC",
         "definition": "SELECT stage FROM (SELECT stage FROM steps WHERE project = '${project}' UNION SELECT stage FROM launches WHERE project = '${project}' UNION SELECT stage FROM issues WHERE project = '${project}' UNION SELECT stage FROM limits WHERE project = '${project}') WHERE stage IS NOT NULL ORDER BY stage DESC",
         "refresh": 2,
         "multi": false,

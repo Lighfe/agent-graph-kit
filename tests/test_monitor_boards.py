@@ -195,6 +195,8 @@ def test_live_board_refreshes_every_30_s_and_has_two_single_value_variables():
         assert var["datasource"]["uid"] == "agk-monitor"
         assert var["multi"] is False and var["includeAll"] is False
         assert var["sort"] == 0  # the query order counts: the newest stage first
+        # The plugin's metricFindQuery takes the variable query as the SQL text itself.
+        assert isinstance(var["query"], str) and var["query"] == var["definition"]
     assert "${project}" in variable_sql(variables[1]) or "$project" in variable_sql(variables[1])
 
 
