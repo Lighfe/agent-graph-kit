@@ -431,6 +431,19 @@ At the end of a stage the orchestrator runs `plugin/skills/run-record/run_record
 - **Weights.** Not stored. `scripts/run_report.py --record` applies the factors of `docs/run-weights.json` (per token kind, Claude and Codex apart) when it reads, and prints Claude and Codex totals separately, as an estimate from price ratios.
 - **Limits file.** `run-record-limits.jsonl` next to the record (`RUN_RECORD_LIMITS_FILE` sets the whole path). `run_record.py limit` appends a line with `v`, `project`, `stage`, `time`, `point` (`start` or `end`), `percent` (0 to 100) and `plan`, entered by hand. `run_report.py --limits` prints it next to the weighted total. Nothing reads the percent automatically.
 
+## Monitoring stack (optional)
+
+The skill `monitor` has an optional Grafana stack that shows the run data as boards. The details (tables, boards, failures) are in "Store" and "Grafana board (optional)" of [plugin/skills/monitor/SKILL.md](../../plugin/skills/monitor/SKILL.md); the stack spec is [docs/specs/2026-11-06-visual-monitoring.md](2026-11-06-visual-monitoring.md). In short:
+
+- **Loader.** `plugin/skills/monitor/store.py` runs on the host and loads every 30 s. It reads the run record, the step rows, the hand-entered limits file, the two live usage-limit files (`usage-limits-claude.jsonl`, `usage-limits-codex.jsonl` in the state dir), the retry cases and tags, and the modification times of the Codex stream files. It runs `steps.py collect` and, at most every 5 minutes, `cases.py collect`, which use `gh` for reads only.
+- **Writes.** The loader writes only `monitor.sqlite` (mode 0600, in the state dir), its log `monitor-load.log`, and once the projects file `monitor-projects.json`. It writes nothing to GitHub.
+- **Start and stop.** `plugin/skills/monitor/board.py up` starts Grafana and runs the loader in the foreground; Ctrl-C stops both. `board.py down` stops the stack. Docker is needed only for this part; `/agk:setup` does not install it.
+- **Access.** Grafana binds to `127.0.0.1` (port 3000 by default). Login user `admin`, with the password in a local 0600 file in the state dir, not in the repo. Anonymous access is off.
+- **Credentials.** No GitHub token and no Claude or Codex credential goes into the container (see `plugin/skills/monitor/compose.yaml`).
+- **RAM.** Budget 400 MB for the stack with both boards open; measured peak about 370 MB (352 MiB).
+- **O1.** No hook, script or role reads monitoring data to decide anything.
+- **O2.** A failing monitoring write, a loader error or a stopped stack never changes a QA result, a retry count, a comment or a hook decision.
+
 ## Stage model
 
 The loop steps for stages (pick order, promotion, stage end) are in "Stages" of [docs/process.md](../process.md#stages) and in [docs/team/orchestrator.md](../team/orchestrator.md); stage set-up and the stage review are in [docs/team/planner.md](../team/planner.md). The form of a stage issue is "Stage issue" in `docs/task-template.md`. In short:
