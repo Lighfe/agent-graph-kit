@@ -101,7 +101,7 @@ Weighted tokens: `weighted` of `data.py` with the weights of each project (`$RUN
 
 ## Grafana board (optional)
 
-`board.py` starts an optional Grafana stack that shows `monitor.sqlite` as boards. Docker is needed for this part only; the rest of the skill runs without it. `/agk:setup` does not install Docker. Run it from any folder:
+`board.py` starts an optional Grafana stack that shows `monitor.sqlite` as boards. Docker is needed for this part only; the rest of the skill runs without it. `/agk:setup` does not install Docker. Run it from any folder (the first time from the project root, or after `monitor-projects.json` exists, since the loader writes that file from the current folder, see "Store"):
 
 ```bash
 uv run --script "${CLAUDE_SKILL_DIR}/board.py" up     # check Docker, start Grafana, then run the loader (store.py load) in the foreground; Ctrl-C stops the loader and the stack

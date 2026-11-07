@@ -340,7 +340,7 @@ uv run --script <skill>/board.py down   # stop the stack; exit 0 also when it is
 - **First start.** Docker downloads the Grafana image (`grafana/grafana:13.2.4`), and Grafana downloads the SQLite data source plugin (`frser-sqlite-datasource` 4.0.6) into a Docker volume. After that the stack uses no network.
 - **What Grafana sees.** Only the folder of the db file (read only), its own provisioning and board files, and the password file. No GitHub token, Claude or Codex credential goes to the container. The loader runs on the host.
 
-The details are in the monitor skill (`plugin/skills/monitor/SKILL.md`, section "Grafana board").
+The details are in the monitor skill (`plugin/skills/monitor/SKILL.md`, section "Grafana board (optional)").
 
 ## Background
 
