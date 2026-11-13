@@ -1,0 +1,11 @@
+# The Prometheus data source of the monitor stack (metrics).
+# The address comes from the Grafana environment (compose.yaml), so it is a setting.
+apiVersion: 1
+datasources:
+  - name: prometheus
+    uid: agk-prometheus
+    type: prometheus
+    access: proxy
+    url: ${AGK_PROMETHEUS_URL}
+    isDefault: true
+    editable: false

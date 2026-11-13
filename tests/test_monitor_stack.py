@@ -212,10 +212,12 @@ def test_grafana_login_rules_and_provisioned_data_sources():
     disabled = env["GF_PLUGINS_DISABLE_PLUGINS"].split(",")
     assert "prometheus" not in disabled and "loki" not in disabled
     assert "frser-sqlite-datasource" not in COMPOSE.read_text(encoding="utf-8")
-    (file,) = sorted((GRAFANA / "provisioning" / "datasources").glob("*.yaml"))
-    sources = read_yaml(file)["datasources"]
-    assert [(s["type"], s["uid"]) for s in sources] == [("prometheus", "agk-prometheus"), ("loki", "agk-loki")]
-    assert "sqlite" not in file.read_text(encoding="utf-8").lower()
+    files = sorted((GRAFANA / "provisioning" / "datasources").glob("*.yaml"))
+    assert [f.name for f in files] == ["loki.yaml", "prometheus.yaml"]
+    by_file = {f.name: read_yaml(f)["datasources"] for f in files}
+    assert [(s["type"], s["uid"]) for s in by_file["prometheus.yaml"]] == [("prometheus", "agk-prometheus")]
+    assert [(s["type"], s["uid"]) for s in by_file["loki.yaml"]] == [("loki", "agk-loki")]
+    assert all("sqlite" not in f.read_text(encoding="utf-8").lower() for f in files)
 
 
 def test_removed_files_are_gone():

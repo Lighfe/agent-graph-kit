@@ -1,0 +1,10 @@
+# The Loki data source of the monitor stack (logs).
+# The address comes from the Grafana environment (compose.yaml), so it is a setting.
+apiVersion: 1
+datasources:
+  - name: loki
+    uid: agk-loki
+    type: loki
+    access: proxy
+    url: ${AGK_LOKI_URL}
+    editable: false
