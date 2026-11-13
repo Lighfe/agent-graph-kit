@@ -182,7 +182,13 @@ def test_launch_table_columns():
             if prop["id"] == "custom.width":
                 widths[o["matcher"]["options"]] = prop["value"]
     assert set(widths) == {"tokens above typical", "active time above typical"}
-    assert all(isinstance(w, int) and 0 < w <= 60 for w in widths.values()), widths
+    # Grafana 13 draws a column at least 50 px wide but sizes the other columns with the set width,
+    # so a smaller width pushes the last column out of the panel
+    assert all(isinstance(w, int) and 50 <= w <= 60 for w in widths.values()), widths
+    # the long header of a narrow marker column wraps instead of being cut
+    for name in widths:
+        ov = next(o for o in p["fieldConfig"]["overrides"] if o["matcher"]["options"] == name)
+        assert {"id": "custom.wrapHeaderText", "value": True} in ov["properties"], name
     # the marker columns: "▲" in rose, from a p75 grouped and joined by role
     by_ref = {t["refId"]: t["expr"] for t in p["targets"]}
     for ref in ("B", "D"):

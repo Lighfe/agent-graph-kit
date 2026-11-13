@@ -1245,7 +1245,7 @@
         "x": 0,
         "y": 26,
         "w": 24,
-        "h": 10
+        "h": 12
       },
       "targets": [
         {
@@ -1626,7 +1626,11 @@
               },
               {
                 "id": "custom.width",
-                "value": 40
+                "value": 60
+              },
+              {
+                "id": "custom.wrapHeaderText",
+                "value": true
               }
             ]
           },
@@ -1730,7 +1734,11 @@
               },
               {
                 "id": "custom.width",
-                "value": 40
+                "value": 60
+              },
+              {
+                "id": "custom.wrapHeaderText",
+                "value": true
               }
             ]
           },
@@ -1768,7 +1776,7 @@
       "collapsed": true,
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 38,
         "w": 24,
         "h": 1
       },
