@@ -1055,6 +1055,7 @@ class MonitorCheck:
 
     def clean(self, text: str) -> str:
         text = codex_exec.redact(text)
+        self.read_password()  # the file may have appeared during a step (board.py up writes it)
         return text.replace(self.password, codex_exec.REDACTED) if self.password else text
 
     # -- steps
@@ -1071,7 +1072,9 @@ class MonitorCheck:
             if e.code is not None:
                 entry["exit_code"] = e.code
             if e.log:
-                entry["log"] = [line[:300] for line in e.log.splitlines() if line.strip()][-MONITOR_LOG_LINES:]
+                # redact the whole text first, then cut: cutting first leaves a secret prefix
+                entry["log"] = [line[:300] for line in self.clean(e.log).splitlines()
+                                if line.strip()][-MONITOR_LOG_LINES:]
         except _MonitorTimeout:
             self.timed_out = True
             entry.update(result="fail", reason="timeout")

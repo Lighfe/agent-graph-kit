@@ -316,6 +316,24 @@ def test_no_secret_in_any_file(env, stack, monkeypatch):
     assert steps["board.py up"]["log"] and len(cleanup["containers"]) == 1
 
 
+def test_password_at_the_cut_boundary_is_redacted_before_the_cut(env, stack, monkeypatch):
+    commit_monitor(env)
+    stack()
+    line = "x" * 290 + PASSWORD + " tail"
+
+    def failing(self, cmd):  # like board.py up: the password file exists, the step fails
+        d = self.state / "agent-graph-kit"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "grafana-admin").write_text(PASSWORD + "\n")
+        return 1, line
+
+    monkeypatch.setattr(qa.MonitorCheck, "run_cmd", failing)
+    steps, _, folder = run_check(env)
+    text = "".join(p.read_text() for p in folder.iterdir())
+    assert PASSWORD[:10] not in text
+    assert "[redacted]" in text and steps["board.py up"]["log"]
+
+
 def test_log_is_cut_to_the_last_20_lines(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
