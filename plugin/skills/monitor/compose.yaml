@@ -39,7 +39,8 @@ services:
       - --web.enable-remote-write-receiver
     ports:
       - "127.0.0.1:${AGK_PROMETHEUS_PORT:-9090}:9090"
-    # The host process facts.py (issue #310) is scraped on the host.
+    # The host process facts.py (issue #310) is scraped on the host. `board.py up` sets AGK_FACTS_HOST to
+    # the gateway of this compose network (the address facts.py listens on); the name below is the fallback.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     configs:
@@ -124,7 +125,7 @@ services:
 configs:
   # The target list of the scrape job `facts`; the port is a setting.
   facts_targets:
-    content: '[{"targets": ["host.docker.internal:${AGK_FACTS_PORT:-9464}"]}]'
+    content: '[{"targets": ["${AGK_FACTS_HOST:-host.docker.internal}:${AGK_FACTS_PORT:-9464}"]}]'
 
 secrets:
   grafana_admin:

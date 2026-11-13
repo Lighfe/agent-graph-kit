@@ -191,6 +191,7 @@ def test_prometheus_scrapes_facts_and_loads_rules():
     (job,) = [j for j in prom["scrape_configs"] if j["job_name"] == "facts"]
     assert job["file_sd_configs"] == [{"files": ["/etc/prometheus/targets/facts.json"]}]
     targets = compose()["configs"]["facts_targets"]["content"]
+    targets = targets.replace("${AGK_FACTS_HOST:-host.docker.internal}", "host.docker.internal")
     assert json.loads(targets.replace("${AGK_FACTS_PORT:-9464}", "9464")) == [
         {"targets": ["host.docker.internal:9464"]}]
     assert "host.docker.internal:host-gateway" in service("prometheus")["extra_hosts"]
@@ -235,7 +236,7 @@ def test_docker_compose_accepts_the_file(tmp_path):
     pw = tmp_path / "pw"
     pw.write_text("x")
     env = dict(os.environ, AGK_UID="1000", AGK_GID="1000", AGK_GRAFANA_ADMIN_FILE=str(pw),
-               AGK_PROJECT_PATTERN="^(a/b)$", AGK_FACTS_PORT="9555")
+               AGK_PROJECT_PATTERN="^(a/b)$", AGK_FACTS_PORT="9555", AGK_FACTS_HOST="172.19.0.1")
     res = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "config", "--format", "json"],
                          capture_output=True, text=True, env=env, cwd=tmp_path)
     assert res.returncode == 0, res.stderr
@@ -244,7 +245,7 @@ def test_docker_compose_accepts_the_file(tmp_path):
     for svc in cfg["services"].values():
         assert svc["restart"] == "no"
         assert all(p["host_ip"] == "127.0.0.1" for p in svc["ports"])
-    assert "host.docker.internal:9555" in cfg["configs"]["facts_targets"]["content"]
+    assert "172.19.0.1:9555" in cfg["configs"]["facts_targets"]["content"]
 
 
 # --- the Collector ----------------------------------------------------------------------------

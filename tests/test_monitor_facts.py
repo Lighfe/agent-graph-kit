@@ -249,3 +249,28 @@ def test_facts_py_does_not_write():
     for word in ("write_text", "write_bytes", "os.remove", "unlink", '"-X"', "--method"):
         assert word not in text, word
     assert "open(" not in text
+
+
+# --- the listen address (issue #321) ----------------------------------------------------------
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "", "  ", "8.8.8.8", "example.com", None])
+def test_facts_refuses_unsafe_hosts(host):
+    with pytest.raises(facts.HostRefused):
+        facts.check_host(host)
+    with pytest.raises(facts.HostRefused):
+        facts.make_server(facts.Facts(), 0, host)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", ""])
+def test_facts_main_refuses_to_start_on_a_wildcard_host(host):
+    assert facts.main(["--host", host]) == 2
+
+
+def test_facts_default_host_is_loopback_and_accepts_a_private_gateway():
+    assert facts.HOST == "127.0.0.1"
+    assert facts.check_host("172.19.0.1") == "172.19.0.1"
+    server = facts.make_server(facts.Facts(), 0)
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()

@@ -3,14 +3,15 @@
 # requires-python = ">=3.11"
 # ///
 """Facts for the monitoring boards (issue #310): stage issues, the attribution marker and usage limits
-as Prometheus metrics on 127.0.0.1.
+as Prometheus metrics on 127.0.0.1 or, when `board.py up` asks, on the gateway of the Docker network.
 
-  uv run --script facts.py [--port N] [--interval SECONDS]
+  uv run --script facts.py [--host ADDRESS] [--port N] [--interval SECONDS]
 
 Every 30 s it reads GitHub with `gh` (read only: `issue list`, `issue view`, `api` GET) for each project of
 `<state dir>/monitor-projects.json`, and the usage-limit files `usage-limits-claude.jsonl` and
 `usage-limits-codex.jsonl` in the same folder. It serves the result at
-`http://127.0.0.1:<AGK_FACTS_PORT, default 9464>/metrics`. `board.py up` starts it and `board.py down` stops it.
+`http://<host, default 127.0.0.1>:<AGK_FACTS_PORT, default 9464>/metrics`.
+The host must be a private or loopback IP address; `0.0.0.0`, `::`, an empty host and a public address are refused. `board.py up` starts it and `board.py down` stops it.
 An error in a read never stops the server: the previous metrics stay and the error goes to stderr (the log).
 It writes no comment, no label and no file of a repo.
 Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, "Attribution to project, stage and issue"
@@ -18,6 +19,7 @@ Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, "Attribution to project, 
 
 import argparse
 import importlib.util
+import ipaddress
 import json
 import math
 import os
@@ -40,6 +42,25 @@ ROLES = "pm|engineer|qa|planner"
 LAUNCH = re.compile(rf"^## Launch: ((?:{ROLES}) \((?:attempt|continued, round) (\d+)\))$")
 RECEIPT_ROLE = re.compile(rf"^({ROLES}) ")
 NOT_STARTED = "## Launch not started: "
+
+
+class HostRefused(ValueError):
+    """The listen address is not one that facts.py may use."""
+
+
+def check_host(host):
+    """The listen address as a string, or raise HostRefused. Only a private, loopback or link-local IP
+    address passes: never `0.0.0.0`, `::`, an empty host, a name or a public address."""
+    text = (host or "").strip() if isinstance(host, str) else ""
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        raise HostRefused(f"host {host!r} is not an IP address") from None
+    if addr.is_unspecified or addr.is_multicast:
+        raise HostRefused(f"host {text} listens on every interface")
+    if not (addr.is_private or addr.is_loopback or addr.is_link_local):
+        raise HostRefused(f"host {text} is a public address")
+    return text
 
 
 class ReadError(Exception):
@@ -331,7 +352,8 @@ class Facts:
             return self.text
 
 
-def make_server(facts, port):
+def make_server(facts, port, host=HOST):
+    host = check_host(host)
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path.split("?")[0] != "/metrics":
@@ -347,7 +369,7 @@ def make_server(facts, port):
         def log_message(self, fmt, *args):
             pass
 
-    server = ThreadingHTTPServer((HOST, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     return server
 
@@ -358,12 +380,12 @@ def refresh_loop(facts, interval, stop):
         stop.wait(interval)
 
 
-def serve(port, interval, directory=None):
+def serve(port, interval, directory=None, host=HOST):
     facts = Facts(directory)
-    server = make_server(facts, port)
+    server = make_server(facts, port, host)
     stop = threading.Event()
     threading.Thread(target=refresh_loop, args=(facts, interval, stop), daemon=True).start()
-    log(f"serving http://{HOST}:{server.server_address[1]}/metrics every {interval:g} s")
+    log(f"serving http://{host}:{server.server_address[1]}/metrics every {interval:g} s")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -376,10 +398,16 @@ def serve(port, interval, directory=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--host", default=HOST, help="listen address (default 127.0.0.1); never 0.0.0.0 or a public address")
     ap.add_argument("--port", type=int, default=int(os.environ.get("AGK_FACTS_PORT") or DEFAULT_PORT))
     ap.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
     args = ap.parse_args(argv)
-    return serve(args.port, args.interval)
+    try:
+        host = check_host(args.host)
+    except HostRefused as e:
+        log(f"refused: {e}")
+        return 2
+    return serve(args.port, args.interval, host=host)
 
 
 if __name__ == "__main__":

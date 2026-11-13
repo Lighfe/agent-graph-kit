@@ -50,6 +50,9 @@ with open(os.environ["FAKE_DOCKER_LOG"], "a") as f:
     f.write(json.dumps({{"args": args, "env": {{k: v for k, v in os.environ.items() if k.startswith("AGK_")}}}}) + "\\n")
 if args[:1] == ["info"]:
     sys.exit(int(os.environ.get("FAKE_DOCKER_INFO_EXIT", "0")))
+if args[:2] == ["network", "inspect"]:
+    print(os.environ.get("FAKE_DOCKER_NETWORK", '[{{"IPAM": {{"Config": [{{"Subnet": "127.0.0.0/8", "Gateway": "127.0.0.1"}}]}}}}]'))
+    sys.exit(0)
 if args[:1] == ["compose"] and "up" in args:
     sys.exit(int(os.environ.get("FAKE_DOCKER_UP_EXIT", "0")))
 if args[:1] == ["compose"] and "down" in args and os.environ.get("FAKE_DOCKER_DOWN_SLEEP"):
@@ -135,7 +138,8 @@ class Rig:
             self.write_fake("docker", FAKE_DOCKER)
         env = dict(os.environ)
         for name in ("AGK_OTLP_GRPC_PORT", "AGK_OTLP_HTTP_PORT", "AGK_PROMETHEUS_PORT", "AGK_LOKI_PORT",
-                     "AGK_GRAFANA_PORT", "AGK_FACTS_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT"):
+                     "AGK_GRAFANA_PORT", "AGK_FACTS_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT",
+                     "FAKE_DOCKER_NETWORK"):
             env.pop(name, None)
         env.update(PATH=str(self.bin), HOME=str(self.home), XDG_STATE_HOME=str(tmp / "state"),
                    FAKE_DOCKER_LOG=str(self.log), FAKE_GH_MODE=str(self.gh_mode),
@@ -185,7 +189,7 @@ def output(res):
 
 
 def up_call(rig):
-    (call,) = [c for c in rig.calls() if "up" in c["args"]]
+    call = [c for c in rig.calls() if "up" in c["args"]][0]
     return call
 
 
@@ -347,3 +351,73 @@ def test_down_exits_0_when_facts_is_not_running(tmp_path):
     rig.facts_pid_file.write_text("999999999\n")
     assert rig.run("down").returncode == 0
     assert not rig.facts_pid_file.exists()
+
+
+# --- the listen address of facts.py (issue #321) ----------------------------------------------
+
+def board_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("agk_board_under_test", BOARD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def inspect_text(*gateways):
+    return json.dumps([{"Name": "agk-monitor_default", "IPAM": {"Config": [
+        {"Subnet": "x", "Gateway": g} if g is not None else {"Subnet": "x"} for g in gateways]}}])
+
+
+def test_gateway_from_a_normal_output():
+    board = board_module()
+    assert board.gateway_from_inspect(inspect_text("172.19.0.1")) == "172.19.0.1"
+    assert board.gateway_from_inspect(inspect_text("fd00::1", "172.19.0.1")) == "172.19.0.1"
+
+
+@pytest.mark.parametrize("text", [
+    "",
+    "not json {",
+    "[]",
+    "null",
+    inspect_text(None),
+    inspect_text("fd00::1"),
+    inspect_text("0.0.0.0"),
+    inspect_text("8.8.8.8"),
+    json.dumps([{"IPAM": {"Config": None}}]),
+])
+def test_gateway_not_found(text):
+    assert board_module().gateway_from_inspect(text) is None
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "", "8.8.8.8", "localhost"])
+def test_facts_command_refuses_unsafe_hosts(host):
+    with pytest.raises(ValueError):
+        board_module().facts_command(host)
+
+
+def test_facts_command_passes_the_host():
+    cmd = board_module().facts_command("172.19.0.1")
+    assert cmd[-2:] == ["--host", "172.19.0.1"]
+
+
+def test_up_passes_the_gateway_to_prometheus_and_facts(tmp_path):
+    rig = Rig(tmp_path)
+    res = rig.run("up")
+    assert res.returncode == 0, output(res)
+    ups = [c for c in rig.calls() if "up" in c["args"]]
+    assert ups[-1]["env"]["AGK_FACTS_HOST"] == "127.0.0.1"
+    assert "AGK_FACTS_HOST" not in ups[0]["env"]
+    cmdline = Path(f"/proc/{int(rig.facts_pid_file.read_text())}/cmdline").read_bytes().split(b"\0")
+    assert b"--host" in cmdline and cmdline[cmdline.index(b"--host") + 1] == b"127.0.0.1"
+    assert b"0.0.0.0" not in cmdline
+
+
+@pytest.mark.parametrize("text", ["", "not json", inspect_text("fd00::1"), inspect_text("0.0.0.0")])
+def test_up_without_an_address_starts_no_facts_and_goes_on(tmp_path, text):
+    rig = Rig(tmp_path)
+    res = rig.run("up", FAKE_DOCKER_NETWORK=text)
+    assert res.returncode == 0, output(res)
+    assert not rig.facts_pid_file.exists()
+    lines = [l for l in output(res).splitlines() if "facts.py was not started" in l]
+    assert len(lines) == 1 and "gateway" in lines[0]
+    assert "Grafana:" in res.stdout

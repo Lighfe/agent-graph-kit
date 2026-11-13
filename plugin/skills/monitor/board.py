@@ -12,12 +12,14 @@ Every port is on 127.0.0.1 only. Docker is needed for this part only.
 The Collector keeps only data of the projects in `<state dir>/monitor-projects.json`; `up` writes that
 file once with the current project when it is missing. The admin password of Grafana is in
 `<state dir>/grafana-admin` (mode 0600, made on the first `up`); this script prints the path, never the value.
-`facts.py` (issue #310) runs on the host: its process id is in `<state dir>/facts.pid`, its log in `<state dir>/facts.log`.
+`facts.py` (issue #310) runs on the host and listens on the gateway address of the compose network (never on
+0.0.0.0), the address Prometheus scrapes (issue #321). Its process id is in `<state dir>/facts.pid`, its log in `<state dir>/facts.log`.
 Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, Part B
 """
 
 import argparse
 import importlib.util
+import ipaddress
 import json
 import os
 import re
@@ -33,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 COMPOSE = HERE / "compose.yaml"
 DATA = HERE / "data.py"
 FACTS = HERE / "facts.py"
+NETWORK = "agk-monitor_default"  # the compose network of the project `agk-monitor` (compose.yaml `name`)
 
 # The ports of the stack: environment variable and default. `compose.yaml` has the same defaults.
 PORTS = {
@@ -176,6 +179,43 @@ def port_in_use(number):
     return False
 
 
+def gateway_from_inspect(text):
+    """The IPv4 gateway address of a network, from the text output of `docker network inspect`, or None
+    ("not found"). None for empty text, invalid JSON, no gateway, an IPv6-only gateway, and for an address
+    that is `0.0.0.0` or not a private or loopback address. Takes the text, not the docker call."""
+    try:
+        networks = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(networks, dict):
+        networks = [networks]
+    if not isinstance(networks, list):
+        return None
+    for net in networks:
+        ipam = net.get("IPAM") if isinstance(net, dict) else None
+        configs = ipam.get("Config") if isinstance(ipam, dict) else None
+        for cfg in configs if isinstance(configs, list) else []:
+            gateway = cfg.get("Gateway") if isinstance(cfg, dict) else None
+            try:
+                addr = ipaddress.ip_address(gateway)
+            except ValueError:
+                continue
+            if addr.version != 4 or addr.is_unspecified or addr.is_multicast:
+                continue
+            if addr.is_private or addr.is_loopback:
+                return str(addr)
+    return None
+
+
+def network_gateway():
+    """The gateway address of the compose network, or None when it cannot be found."""
+    try:
+        res = subprocess.run(["docker", "network", "inspect", NETWORK], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return gateway_from_inspect(res.stdout) if res.returncode == 0 else None
+
+
 def facts_pid():
     """The process id of the running facts.py from the pid file, else None. A dead process, a pid that
     is not facts.py (pid reuse) and an unreadable file give None."""
@@ -215,20 +255,36 @@ def stop_facts():
         say(f"could not stop facts.py: {e}", err=True)
 
 
-def start_facts(env):
-    """Start facts.py in the background; its log goes to facts.log. A failure here is only a message:
-    it never stops `up`."""
+def facts_command(host):
+    """The command that starts facts.py. Raise ValueError for a host that must never be used."""
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        raise ValueError(f"not an IP address: {host!r}") from None
+    if addr.is_unspecified or addr.is_multicast or not (addr.is_private or addr.is_loopback):
+        raise ValueError(f"refused listen address {host}")
+    return [sys.executable, str(FACTS), "--host", str(addr)]
+
+
+def start_facts(env, host):
+    """Start facts.py on `host` in the background; its log goes to facts.log. A failure here is only a
+    message: it never stops `up`."""
+    try:
+        cmd = facts_command(host)
+    except ValueError as e:
+        say(f"facts.py did not start: {e}", err=True)
+        return False
     try:
         log_path = facts_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "ab") as log:
-            proc = subprocess.Popen([sys.executable, str(FACTS)], env=env, stdin=subprocess.DEVNULL,
+            proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
                                     stdout=log, stderr=log, start_new_session=True)
         write_private(facts_pid_path(), f"{proc.pid}\n")
     except OSError as e:
         say(f"facts.py did not start: {e}", err=True)
         return False
-    say(f"facts.py: http://127.0.0.1:{port('AGK_FACTS_PORT')}/metrics  (pid file {facts_pid_path()}, log {facts_log_path()})")
+    say(f"facts.py: http://{host}:{port('AGK_FACTS_PORT')}/metrics  (pid file {facts_pid_path()}, log {facts_log_path()})")
     return True
 
 
@@ -237,6 +293,29 @@ def compose(env, *args):
 
 
 # --- up / down --------------------------------------------------------------------------------
+
+def start_facts_for_prometheus(env):
+    """Find the gateway of the compose network, point the Prometheus target at it and start facts.py on
+    it. When the address cannot be found, print one line with the cause and start no facts.py."""
+    host = network_gateway()
+    if host is None:
+        say(f"facts.py was not started: no IPv4 gateway address found for the Docker network {NETWORK} "
+            "(`docker network inspect`). The boards miss the facts metrics; the rest runs.", err=True)
+        return False
+    try:
+        facts_command(host)
+    except ValueError as e:
+        say(f"facts.py was not started: {e}. The boards miss the facts metrics; the rest runs.", err=True)
+        return False
+    # Prometheus gets the same address as its scrape target. Compose does not see the changed config
+    # text, so Prometheus is recreated by force (its data is in a volume); no other service restarts.
+    env["AGK_FACTS_HOST"] = host
+    if compose(env, "up", "-d", "--force-recreate", "--no-deps", "prometheus") != 0:
+        say("facts.py was not started: `docker compose up` could not set the scrape address "
+            f"{host}. The boards miss the facts metrics; the rest runs.", err=True)
+        return False
+    return start_facts(env, host)
+
 
 def ensure_password():
     """The password file: mode 0600, a random value on the first call, the same value after."""
@@ -286,7 +365,7 @@ def up():
             f"(ports: {', '.join(f'{n}={port(n)}' for n in PORTS)}).", err=True)
         compose(env, "down")
         return 1
-    start_facts(env)
+    start_facts_for_prometheus(env)
     say(f"Grafana: http://127.0.0.1:{port('AGK_GRAFANA_PORT')}  (user admin, password in {password_file})")
     say(f"OTLP: gRPC 127.0.0.1:{port('AGK_OTLP_GRPC_PORT')}, HTTP http://127.0.0.1:{port('AGK_OTLP_HTTP_PORT')}")
     say(f"Prometheus: http://127.0.0.1:{port('AGK_PROMETHEUS_PORT')}  Loki: http://127.0.0.1:{port('AGK_LOKI_PORT')}")
