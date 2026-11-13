@@ -1623,6 +1623,10 @@
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 40
               }
             ]
           },
@@ -1723,6 +1727,10 @@
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "custom.width",
+                "value": 40
               }
             ]
           },

@@ -170,11 +170,19 @@ def test_launch_table_columns():
             assert re.match(r"(sum|min|topk) by \(key\) \(", t["expr"]), t["refId"]
     keep = next(t for t in p["transformations"] if t["id"] == "filterFieldsByName")["options"]["include"]["names"]
     assert keep == order
-    # no fixed width, no wrap
+    # no wrap; a fixed width of at most 60 px only on the two marker columns (Grafana cannot make a column
+    # narrower than its share without one); no other column has a fixed width, no column has a minimum width
     assert p["fieldConfig"]["defaults"]["custom"]["wrapText"] is False
+    for prop_id in ("width", "minWidth"):
+        assert prop_id not in p["fieldConfig"]["defaults"]["custom"]
+    widths = {}
     for o in p["fieldConfig"]["overrides"]:
         for prop in o["properties"]:
-            assert prop["id"] not in ("custom.width", "custom.minWidth")
+            assert prop["id"] != "custom.minWidth", o["matcher"]
+            if prop["id"] == "custom.width":
+                widths[o["matcher"]["options"]] = prop["value"]
+    assert set(widths) == {"tokens above typical", "active time above typical"}
+    assert all(isinstance(w, int) and 0 < w <= 60 for w in widths.values()), widths
     # the marker columns: "▲" in rose, from a p75 grouped and joined by role
     by_ref = {t["refId"]: t["expr"] for t in p["targets"]}
     for ref in ("B", "D"):
