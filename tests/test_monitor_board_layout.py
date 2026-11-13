@@ -490,11 +490,14 @@ def htop():
 def test_history_board_header():
     b = history()
     assert b["title"] == "Stages"
-    assert [v["name"] for v in b["templating"]["list"]] == ["project", "stage", "issue", "launch"]
+    names = [v["name"] for v in b["templating"]["list"]]
+    assert names == ["project", "stage", "issue", "launch", "launch_ago", "launch_span"]
     # the lists of earlier stages do not depend on the board range: an instant query over the stored year
     for v in b["templating"]["list"]:
         assert v["query"]["query"].startswith("query_result(")
-        assert "[365d]" in v["query"]["query"]
+        assert "[365d" in v["query"]["query"]
+        # the filters are shown; the window of the launch (for the steps panels) is hidden
+        assert v.get("hide", 0) == (2 if v["name"].startswith("launch_") else 0), v["name"]
 
 
 def test_history_panel_types():
@@ -522,7 +525,10 @@ def test_history_panel_types():
     assert "add (int .input_tokens) (int .cache_read_tokens) (int .cache_creation_tokens)" in by_ref["B"]
     line = next(o for o in steps["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "B"})
     assert {"id": "custom.drawStyle", "value": "line"} in line["properties"]
-    assert steps["targets"][0]["legendFormat"] == "{{tool_name}} · {{agk_target}}"  # the hover: tool and target
+    assert {"id": "displayName", "value": "context size"} in line["properties"]
+    # the hover: tool and target of the one call under the mouse
+    assert steps["fieldConfig"]["defaults"]["displayName"] == "${__field.labels.tool_name} · ${__field.labels.agk_target}"
+    assert steps["options"]["tooltip"]["mode"] == "single"
     # panel 9: one bar per role, the documents only in the hover
     reads = t["Kit document reads per role"]
     assert reads["options"]["xField"] == "role" and reads["options"]["colorByField"] == "role"
@@ -547,9 +553,10 @@ def test_history_drilldown_links():
         assert "var-issue=${__data.fields.issue}" in _link(t[title]), title
     assert "var-stage=${__data.fields.stage}" in _link(t["Most expensive issues of all stages"])
     url = _link(t["Launches of the issue"])
-    assert "var-launch=${__data.fields.launch}" in url
-    # the time range of the launch, relative to now, so the fixed range of the other panels holds
-    assert "&from=now-${__data.fields.from}s&to=now-${__data.fields.to}s" in url
+    # the launch link sets only the launch: the steps panels take the window of the launch from the variables
+    # launch_ago and launch_span, so the board range (and the fixed range of the other panels) is not touched
+    assert url.endswith("&var-launch=${__data.fields.launch}")
+    assert "from=" not in url and "to=" not in url
     for p in history()["panels"]:
         if "links" in p["fieldConfig"]["defaults"]:
             url = _link(p)
@@ -563,12 +570,6 @@ def test_history_drilldown_links():
         assert ext["format"] == "regexp"
         m = re.match(ext["regExp"].strip("/").replace("(?<", "(?P<"), sample)
         assert m and m.groupdict() == want, title
-    # the link fields of the launches table: start and end of the launch in seconds before now
-    by_ref = {x["refId"]: x["expr"] for x in t["Launches of the issue"]["targets"]}
-    assert by_ref["F"].startswith("time() - min by (key)") and by_ref["F"].endswith("+ 60")
-    assert by_ref["G"].startswith("time() - max by (key)")
-    for ref in ("F", "G"):
-        assert "timestamp(agk:active_seconds:1m{" in by_ref[ref]
 
 
 def _visible_columns(panel):
@@ -586,7 +587,7 @@ def test_history_table_columns():
     t = htop()
     shown, hidden = _visible_columns(t["Launches of the issue"])
     assert shown == ["issue", "role", "tokens", "active time", "return", "model", "start"]
-    assert hidden == ["launch", "from", "to"]
+    assert hidden == ["launch"]
     shown, hidden = _visible_columns(t["Steps of the launch (table)"])
     assert shown == ["step", "tool", "target", "duration", "tokens", "time"]
     assert hidden == []
@@ -614,10 +615,17 @@ def test_history_colours():
         got = mapping_colours(t[title])
         for role, colour in ROLE_COLOURS.items():
             assert got[role] == colour, (title, role)
-    # the long tool calls in rose: the bars of query C and the duration cell above 2 minutes
+    # the long tool calls in rose: the series of query C (only calls above 2 minutes; the partition into series
+    # per tool and target drops the refId, so the match is by value) and the duration cell above 2 minutes
     steps = t["Steps of the launch"]
-    c = next(o for o in steps["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "C"})
-    assert c["properties"] == [{"id": "color", "value": {"mode": "fixed", "fixedColor": ROSE}}]
+    overrides = steps["fieldConfig"]["overrides"]
+    rose = {"id": "byValue", "options": {"reducer": "max", "op": "gt", "value": 120000}}
+    c = next(i for i, o in enumerate(overrides) if o["matcher"] == rose)
+    assert overrides[c]["properties"] == [{"id": "color", "value": {"mode": "fixed", "fixedColor": ROSE}}]
+    # the context size line (B) comes later, so its teal wins over the rose of a context above 120000 tokens
+    b = next(i for i, o in enumerate(overrides) if o["matcher"] == {"id": "byFrameRefID", "options": "B"})
+    assert b > c and {"id": "color", "value": {"mode": "fixed", "fixedColor": TEAL}} in overrides[b]["properties"]
+    assert steps["fieldConfig"]["defaults"]["color"] == {"mode": "fixed", "fixedColor": "#DDDDDD"}
     dur = next(o for o in t["Steps of the launch (table)"]["fieldConfig"]["overrides"]
                if o["matcher"]["options"] == "duration")
     steps_of = next(p["value"]["steps"] for p in dur["properties"] if p["id"] == "thresholds")
@@ -641,13 +649,40 @@ def test_history_typical_stage_needs_three_stages():
 
 
 def test_history_time_ranges():
-    """Panels 1-5 and 7 keep one year, panel 9 30 days (Loki refuses longer queries); the steps follow the board."""
+    """Panels 1-5 and 7 keep one year, panel 9 30 days (Loki refuses longer queries); the steps the launch window."""
     t = htop()
     for title, _ in HISTORY_PANELS:
-        want = {"Steps of the launch": None, "Steps of the launch (table)": None,
+        want = {"Steps of the launch": "${launch_span}s", "Steps of the launch (table)": "${launch_span}s",
                 "Kit document reads per role": "30d"}.get(title, "365d")
         assert t[title].get("timeFrom") == want, title
+        assert t[title].get("timeShift") == ("${launch_ago}s" if want == "${launch_span}s" else None), title
     assert history()["time"] == {"from": "now-24h", "to": "now"}
+
+
+def _launch_window(now, samples):
+    """The steps range Grafana makes from the board: timeFrom launch_span, timeShift launch_ago, both computed
+    from the absolute sample times when the board loads (the formulas of the two hidden variables)."""
+    import math
+    first, last = min(samples), max(samples)
+    ago = math.floor(now - last)
+    span = math.ceil(last - first + 62)
+    return now - ago - span, now - ago
+
+
+def test_history_launch_window_is_stable():
+    """The window of a launch is its first to last minute, the same after a reload at any later time."""
+    v = {x["name"]: x["query"]["query"] for x in history()["templating"]["list"]}
+    ts = 'timestamp(agk:active_seconds:1m{agk_project="$project",issue="$issue",launch="$launch"})'
+    assert v["launch_ago"] == f"query_result(floor(time() - max(max_over_time({ts}[365d:1m]))) or vector(0))"
+    assert v["launch_span"] == (f"query_result(ceil(max(max_over_time({ts}[365d:1m])) - min(min_over_time({ts}"
+                                "[365d:1m])) + 62) or vector(86400))")
+    regex = next(x["regex"] for x in history()["templating"]["list"] if x["name"] == "launch_ago")
+    assert re.match(regex.strip("/").replace("(?<", "(?P<"), "{} 1845 1794585525738").group("value") == "1845"
+    # QA counterexample of attempt 1: a link made at time 1000 and a reload at 1600 must give the same window
+    samples = [400 + 60 * k for k in range(5)]  # the minutes of the launch end at 400 .. 640
+    for now in (1000.3, 1600.7, 1000 + 86400 * 30):
+        start, end = _launch_window(now, samples)
+        assert 400 - 60 - 2 <= start <= 400 - 60 and 640 <= end < 641, now
 
 
 def test_history_steps_of_the_launch_only():
@@ -659,6 +694,23 @@ def test_history_steps_of_the_launch_only():
         for x in p["targets"]:
             assert role.search(x["expr"]) and launch in x["expr"], (title, x["refId"])
         assert "qa-codex" in p["description"] and "#322" in p["description"], title
+        # each event stays one bar, point or row: log queries, no metric aggregation over an interval
+        # (QA counterexample of attempt 1: two calls of 20 and 30 ms in one interval became one 30 ms sample)
+        for x in p["targets"]:
+            assert x["expr"].startswith('{agk_project="$project"} |= "claude_code.'), (title, x["refId"])
+            for agg in ("_over_time", "unwrap", "$__interval", "sum by", "max by", "max("):
+                assert agg not in x["expr"], (title, x["refId"], agg)
+            assert x["queryType"] == "range" and x["maxLines"] == 5000
+    # panel 6: one series per tool and target (the hover names them), split only for the tool calls
+    steps = t["Steps of the launch"]
+    parts = [x for x in steps["transformations"] if x["id"] == "partitionByValues"]
+    assert [x["filter"] for x in parts] == [{"id": "byRefId", "options": r} for r in ("A", "C")]
+    for x in parts:
+        assert x["options"]["fields"] == ["tool_name", "agk_target"] and x["options"]["naming"] == {"asLabels": True}
+    keep = {x["filter"]["options"]: x["options"]["include"]["names"] for x in steps["transformations"]
+            if x["id"] == "filterFieldsByName"}
+    assert keep == {"A": ["Time", "tool_name", "agk_target", "duration_ms"], "B": ["Time", "agk_context"],
+                    "C": ["Time", "tool_name", "agk_target", "duration_ms"]}
     # the agent names map to the roles of the recording rules
     rules = RULES.read_text(encoding="utf-8")
     for name in ("software-engineer", "frontend-engineer", "qa-engineer", "planner"):
