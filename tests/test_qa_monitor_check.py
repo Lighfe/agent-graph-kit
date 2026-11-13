@@ -334,6 +334,78 @@ def test_password_at_the_cut_boundary_is_redacted_before_the_cut(env, stack, mon
     assert "[redacted]" in text and steps["board.py up"]["log"]
 
 
+def _write_password(self):
+    d = self.state / "agent-graph-kit"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "grafana-admin").write_text(PASSWORD + "\n")
+
+
+def _folder_text(folder):
+    return "".join(p.read_text() for p in folder.iterdir())
+
+
+@pytest.mark.parametrize("offset", [290, 296, 299, 470, 485, 490, 493])
+def test_password_at_the_cut_of_a_log_line_or_the_reason(env, stack, monkeypatch, offset):
+    """The password starts `offset` characters into the output: the log lines are cut to 300, the
+    reason to 500. Cutting before the redaction leaves a prefix of the password."""
+    commit_monitor(env)
+    stack()
+
+    def failing(self, cmd):
+        _write_password(self)
+        return 1, "Error: " + "x" * (offset - 7) + PASSWORD + " tail"
+    monkeypatch.setattr(qa.MonitorCheck, "run_cmd", failing)
+    steps, _, folder = run_check(env)
+    assert PASSWORD[:4] not in _folder_text(folder)
+    assert steps["board.py up"]["result"] == "fail"
+
+
+@pytest.mark.parametrize("offset", [440, 450, 455])
+def test_password_at_the_cut_of_the_port_reason(env, stack, monkeypatch, offset):
+    commit_monitor(env)
+    stack()
+    seen = {}
+
+    def failing(self, cmd):
+        _write_password(self)
+        port = next(iter(self.ports.values()))
+        seen["port"] = port
+        prefix = f"Bind for port {port} failed: "
+        return 1, prefix + "x" * (offset - len(prefix)) + PASSWORD
+    monkeypatch.setattr(qa.MonitorCheck, "run_cmd", failing)
+    steps, _, folder = run_check(env)
+    assert str(seen["port"]) in steps["board.py up"]["reason"]
+    assert PASSWORD[:4] not in _folder_text(folder)
+
+
+@pytest.mark.parametrize("offset", [480, 490, 495])
+def test_password_at_the_cut_of_a_launcher_error_reason(env, stack, monkeypatch, offset):
+    commit_monitor(env)
+    stack()
+
+    def failing(self, cmd):
+        _write_password(self)
+        raise RuntimeError("x" * (offset - len("RuntimeError: ")) + PASSWORD)
+    monkeypatch.setattr(qa.MonitorCheck, "run_cmd", failing)
+    steps, _, folder = run_check(env)
+    assert steps["board.py up"]["reason"].startswith("launcher error")
+    assert PASSWORD[:4] not in _folder_text(folder)
+
+
+@pytest.mark.parametrize("offset", [480, 490, 495])
+def test_password_at_the_cut_of_a_reason_and_log_of_a_later_step(env, stack, monkeypatch, offset):
+    """A step after `board.py up` fails with a long reason and a long log that hold the password."""
+    commit_monitor(env)
+    stack()
+
+    def failing(self):
+        raise qa._StepFail("x" * offset + PASSWORD, None, "y" * 290 + PASSWORD)
+    monkeypatch.setattr(qa.MonitorCheck, "no_login", failing)
+    steps, _, folder = run_check(env)
+    assert [s for s in steps.values() if s["result"] == "fail" and "log" in s]
+    assert PASSWORD[:4] not in _folder_text(folder)
+
+
 def test_log_is_cut_to_the_last_20_lines(env, stack, monkeypatch):
     commit_monitor(env)
     stack()

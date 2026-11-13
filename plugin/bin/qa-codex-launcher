@@ -1058,28 +1058,36 @@ class MonitorCheck:
         self.read_password()  # the file may have appeared during a step (board.py up writes it)
         return text.replace(self.password, codex_exec.REDACTED) if self.password else text
 
+    def one_line(self, text: str, limit: int = codex_exec.REASON_MAX) -> str:
+        """The one write-time path for text from a command, a log, an exception or a reason: redact the
+        whole text first (the password of the temp state dir, tokens), then make one line, then cut."""
+        line = " ".join(self.clean(text).split())
+        return line if len(line) <= limit else line[:limit - 3] + "..."
+
+    def log_lines(self, text: str) -> list[str]:
+        """Redacted first, then the lines are cut to 300 characters, then the last MONITOR_LOG_LINES."""
+        return [line[:300] for line in self.clean(text).splitlines() if line.strip()][-MONITOR_LOG_LINES:]
+
     # -- steps
     def step(self, name: str, fn) -> bool:
         entry = self.results[name]
         try:
             reason, code = fn()
-            entry.update(result="pass", reason=reason)
+            entry.update(result="pass", reason=self.one_line(reason))
             if code is not None:
                 entry["exit_code"] = code
             return True
         except _StepFail as e:
-            entry.update(result="fail", reason=e.reason)
+            entry.update(result="fail", reason=self.one_line(e.reason))
             if e.code is not None:
                 entry["exit_code"] = e.code
             if e.log:
-                # redact the whole text first, then cut: cutting first leaves a secret prefix
-                entry["log"] = [line[:300] for line in self.clean(e.log).splitlines()
-                                if line.strip()][-MONITOR_LOG_LINES:]
+                entry["log"] = self.log_lines(e.log)
         except _MonitorTimeout:
             self.timed_out = True
             entry.update(result="fail", reason="timeout")
         except Exception as e:  # an error of the launcher: a result, not a crash
-            entry.update(result="fail", reason=f"launcher error: {type(e).__name__}: {e}")
+            entry.update(result="fail", reason=self.one_line(f"launcher error: {type(e).__name__}: {e}"))
         return False
 
     def board(self, arg: str) -> tuple[str, int]:
@@ -1097,9 +1105,9 @@ class MonitorCheck:
             if re.search(r"(?i)port|address|bind", line):
                 for var, port in self.ports.items():
                     if re.search(rf"(?<!\d){port}(?!\d)", line):
-                        return f"port {port} ({var}) is in use: {codex_exec._one_line(line)}"[:codex_exec.REASON_MAX]
+                        return self.one_line(f"port {port} ({var}) is in use: {line}")
         line = next((x for x in lines if _ERROR_LINE.search(x)), lines[-1] if lines else f"exit code {code}")
-        return codex_exec._one_line(line)
+        return self.one_line(line)
 
     def send(self, marker: str, project: str | None) -> tuple[str, None]:
         attrs = [{"key": "service.name", "value": {"stringValue": MONITOR_SERVICE}}]
@@ -1207,12 +1215,16 @@ class MonitorCheck:
         self.leftovers["containers"] = docker(["docker", "ps", "-a", "--filter", label, "--format", "{{.Names}}"]).split()
         self.leftovers["volumes"] = docker(["docker", "volume", "ls", "--filter", label, "--format", "{{.Name}}"]).split()
         if error:
-            self.leftovers["error"] = "; ".join(error)
+            self.leftovers["error"] = self.one_line("; ".join(error))
 
     def write(self) -> None:
         for entry in self.results.values():
             if self.timed_out and entry["result"] == "skipped":
                 entry["reason"] = "timeout of an earlier step"
+            if "reason" in entry:
+                entry["reason"] = self.one_line(entry["reason"])  # redact whole, then cut
+            if "log" in entry:
+                entry["log"] = [line[:300] for line in self.log_lines("\n".join(entry["log"]))]
         for name, value in (("summary.json", list(self.results.values())), ("cleanup.json", self.leftovers)):
             text = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
             (self.folder / name).write_text(self.clean(text), encoding="utf-8")
@@ -1250,7 +1262,7 @@ def run_monitor_check(worktree: Path, folder: Path, state: Path, timeout_s: floa
     except Exception as e:  # an error of the launcher before or between the steps
         entry = check.results[S_UP]
         if entry["result"] == "skipped":
-            entry.update(result="fail", reason=f"launcher error: {type(e).__name__}: {e}")
+            entry.update(result="fail", reason=check.one_line(f"launcher error: {type(e).__name__}: {e}"))
     finally:
         with codex_exec.deferred():  # the cleanup runs after a failed step, a timeout, an error and an interrupt
             codex_exec.kill_children()
