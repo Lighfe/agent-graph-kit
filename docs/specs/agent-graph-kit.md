@@ -349,6 +349,18 @@ The pre-step runs outside the sandbox, with fixed commands and no LLM decision. 
 
 The pre-step runs repository code outside the sandbox. This accepted risk is described in "Frontend lane (optional)" of the README ([#50](https://github.com/Lighfe/agent-graph-kit/issues/50)).
 
+### Monitor smoke check
+
+The Codex sandbox has no access to the Docker socket (it is root-level access to the host, so it stays closed). So the launcher runs a live smoke check of the monitor stack ([#319](https://github.com/Lighfe/agent-graph-kit/issues/319)) outside the sandbox and gives QA the result as files.
+
+- **When it runs**: after the pre-step and before Codex starts, from the worktree of the commit, when the commit has `plugin/skills/monitor/compose.yaml` and `docker info` works. The `board.py` of the reviewed commit runs outside the sandbox with the rights of the user who runs the launcher, like the pre-step commands.
+- **Steps, in order**: `board.py up`; one OTLP log record with `agk.project` set to a test project that is in the test `monitor-projects.json`; one OTLP log record with no `agk.project`; the check that only the tagged record is stored (queried from Loki); a Grafana login with user `admin` and the password file (works) and with no login (refused); `board.py down`.
+- **Isolation**: a temporary `XDG_STATE_HOME`, the environment variable `COMPOSE_PROJECT_NAME` set to `agk-qa-` and a random part (the variable beats `name: agk-monitor` in the compose file), and five free ports that are not the defaults. Every command of the check carries that environment. The `AGK_*` and `COMPOSE_*` settings of the user are not passed on, so the check shares no project name, port or state folder with the owner's stack.
+- **Result files**, in `<run temp folder>/monitor/`: `summary.json` (one entry for each step: `name`, `result` `pass`, `fail` or `skipped`, `exit_code` when the step ran a command, one `reason` line, and for a failed command step its last 20 log lines) and `cleanup.json` (`containers` and `volumes` of the check project left after the cleanup; the expected content is two empty lists). The files hold no Grafana password, no token and no full container log: they are redacted, and the password value is replaced by `[redacted]`. The prompt names the folder and says what each file shows.
+- **Time limit and cleanup**: the whole check has a limit of 600 s. A step that runs out of time is stopped and marked `fail` with the reason `timeout`; later steps are `skipped`. The cleanup, `docker compose -p <name> down -v` for the own project name, runs in every case: after a failed step, a timeout, an error of the launcher and an interrupt. The temporary state folder with the password is removed.
+- **A failed step is a result**, not a launcher failure: `qa-codex` goes on, starts Codex and does not post `## QA: UNAVAILABLE` for it. An occupied port gives `board.py up` as `fail` with a reason that names the port.
+- **Skip rule**: a commit with no compose file, or a host where `docker` is missing or `docker info` fails, runs no check. `summary.json` then has every step `skipped` with the reason `no compose file` or `no docker`, and the prompt says that QA must not mark a criterion `invalid` only because the live result is missing.
+
 ### Codex run
 
 **Memory cap** ([#304](https://github.com/Lighfe/agent-graph-kit/issues/304)). Inside the sandbox `systemd-run` cannot reach the user bus, so the launcher sets the cap from outside. Once per launch, before the first Codex run, it checks `systemd-run --user --scope --quiet -p MemoryMax=8G -p MemorySwapMax=0 true` (timeout 30 s). The cap value `8G` is the constant `MEMORY_CAP` in `scripts/qa-codex`.
