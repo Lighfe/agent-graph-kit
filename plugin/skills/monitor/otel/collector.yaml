@@ -1,0 +1,72 @@
+# The OTel Collector of the monitor stack. Claude Code and Codex send OTLP to 127.0.0.1:4317 (gRPC)
+# or :4318 (HTTP). Metrics go to Prometheus, logs go to Loki.
+# Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, M4 and M6
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+  # M6: keep only data of the kit projects. A condition that is true drops the data.
+  # AGK_PROJECT_PATTERN is made by board.py up from monitor-projects.json.
+  filter/agk_projects:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'resource.attributes["agk.project"] == nil or not IsMatch(resource.attributes["agk.project"], "${env:AGK_PROJECT_PATTERN}")'
+    logs:
+      log_record:
+        - 'resource.attributes["agk.project"] == nil or not IsMatch(resource.attributes["agk.project"], "${env:AGK_PROJECT_PATTERN}")'
+  # M4: a second guard behind the export settings. Prompt text and agent answers never reach Loki.
+  transform/no_prompts:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "user_prompt")
+          - delete_key(attributes, "response")
+          - delete_key(attributes, "response_text")
+          - delete_key(attributes, "output_text")
+          - delete_key(attributes, "assistant_message")
+          - delete_key(attributes, "last_assistant_message")
+  # Claude Code sends delta counters; Prometheus stores cumulative ones.
+  delta_to_cumulative:
+  batch:
+
+exporters:
+  prometheus_remote_write:
+    endpoint: ${env:AGK_PROMETHEUS_WRITE_URL}
+    resource_to_telemetry_conversion:
+      enabled: true
+  otlp_http/loki:
+    endpoint: ${env:AGK_LOKI_OTLP_URL}
+
+service:
+  pipelines:
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - filter/agk_projects
+        - delta_to_cumulative
+        - batch
+      exporters:
+        - prometheus_remote_write
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - filter/agk_projects
+        - transform/no_prompts
+        - batch
+      exporters:
+        - otlp_http/loki

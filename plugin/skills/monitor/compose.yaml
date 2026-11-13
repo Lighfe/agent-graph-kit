@@ -1,24 +1,92 @@
-# The optional Grafana stack of the monitor skill (issue #283). Start and stop it with
-# `board.py up` and `board.py down`; board.py sets the AGK_* variables below.
-# Grafana reads monitor.sqlite read-only; the loader (store.py) runs on the host.
-# Spec: docs/specs/2026-11-06-visual-monitoring.md, Part C
+# The optional monitoring stack of the monitor skill: OTel Collector, Prometheus, Loki, Grafana.
+# Start and stop it with `board.py up` and `board.py down`; board.py sets the AGK_* variables below.
+# Every port is published on 127.0.0.1 only, and nothing restarts on boot or after a crash.
+# No container gets a GitHub, Claude or Codex credential.
+# Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, Part B
 name: agk-monitor
 
 services:
-  grafana:
-    image: grafana/grafana:13.2.4
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0  # pushed 2026-09-16
     restart: "no"
-    # The db is mode 0600 for the host user, so Grafana runs with the host uid/gid.
+    command:
+      - --config=/etc/otelcol/collector.yaml
+    ports:
+      - "127.0.0.1:${AGK_OTLP_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${AGK_OTLP_HTTP_PORT:-4318}:4318"
+    environment:
+      # A regular expression of the projects in monitor-projects.json (made by board.py up).
+      # The Collector drops data of any other project, and data with no agk.project.
+      AGK_PROJECT_PATTERN: "${AGK_PROJECT_PATTERN:?run board.py up}"
+      AGK_PROMETHEUS_WRITE_URL: "${AGK_PROMETHEUS_WRITE_URL:-http://prometheus:9090/api/v1/write}"
+      AGK_LOKI_OTLP_URL: "${AGK_LOKI_OTLP_URL:-http://loki:3100/otlp}"
+    volumes:
+      - type: bind
+        source: ./otel/collector.yaml
+        target: /etc/otelcol/collector.yaml
+        read_only: true
+    depends_on:
+      - prometheus
+      - loki
+
+  prometheus:
+    image: prom/prometheus:v3.15.0  # pushed 2026-09-25
+    restart: "no"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=365d
+      - --web.enable-remote-write-receiver
+    ports:
+      - "127.0.0.1:${AGK_PROMETHEUS_PORT:-9090}:9090"
+    # The host process facts.py (issue #310) is scraped on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    configs:
+      - source: facts_targets
+        target: /etc/prometheus/targets/facts.json
+    volumes:
+      - type: bind
+        source: ./otel/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+      - type: bind
+        source: ./otel/rules
+        target: /etc/prometheus/rules
+        read_only: true
+      - type: volume
+        source: prometheus-data
+        target: /prometheus
+
+  loki:
+    image: grafana/loki:3.7.8  # pushed 2026-09-17
+    restart: "no"
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    ports:
+      - "127.0.0.1:${AGK_LOKI_PORT:-3100}:3100"
+    volumes:
+      - type: bind
+        source: ./otel/loki.yaml
+        target: /etc/loki/loki.yaml
+        read_only: true
+      - type: volume
+        source: loki-data
+        target: /loki
+
+  grafana:
+    image: grafana/grafana:13.2.4  # pushed 2026-10-13
+    restart: "no"
+    # The password file is mode 0600 for the host user, so Grafana runs with the host uid/gid.
     user: "${AGK_UID:?run board.py up}:${AGK_GID:?run board.py up}"
     ports:
       - "127.0.0.1:${AGK_GRAFANA_PORT:-3000}:3000"
     environment:
-      GF_PLUGINS_PREINSTALL_SYNC: "frser-sqlite-datasource@4.0.6"
       GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
       # Grafana 13 downloads the app plugins below on each new plugin folder, and it starts a
-      # backend process (about 25 MB each) for each bundled data source. The board needs only
-      # the SQLite data source, so all others are off (measured: about 115 MiB instead of 250).
-      GF_PLUGINS_DISABLE_PLUGINS: "grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-pyroscope-app,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,prometheus,stackdriver,tempo,zipkin,grafana-azure-monitor-datasource,cloudwatch,grafana-testdata-datasource,parca"
+      # backend process (about 25 MB each) for each bundled data source. The boards need only
+      # Prometheus and Loki, so all others are off. No community plugin is installed.
+      GF_PLUGINS_DISABLE_PLUGINS: "grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-pyroscope-app,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,mssql,mysql,opentsdb,stackdriver,tempo,zipkin,grafana-azure-monitor-datasource,cloudwatch,grafana-testdata-datasource,parca"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -28,21 +96,19 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
-      # RAM budget: a lower GC target for Grafana's Go runtime (measured with the plugins above
-      # off: about 115 MiB instead of 170, CPU unchanged at about 2 %). No GOMEMLIMIT and no
-      # container memory cap: a heap limit of 100 MiB made Grafana run its GC all the time
-      # (300 % CPU), and a cap would kill it.
+      # A lower GC target for Grafana's Go runtime keeps its RAM small. No GOMEMLIMIT and no
+      # container memory cap: a heap limit made Grafana run its GC all the time, and a cap would kill it.
       GOGC: "10"
-      AGK_MONITOR_DB: "/var/lib/agk-monitor/${AGK_MONITOR_DB_NAME:?run board.py up}"
+      # Grafana's own db and logs live in the container, as the host uid cannot write the image folders.
+      GF_PATHS_DATA: "/tmp/grafana-data"
+      GF_PATHS_LOGS: "/tmp/grafana-log"
+      GF_PATHS_PLUGINS: "/tmp/grafana-plugins"
+      # The addresses of the data sources are settings, so the stack can run elsewhere later.
+      AGK_PROMETHEUS_URL: "${AGK_PROMETHEUS_URL:-http://prometheus:9090}"
+      AGK_LOKI_URL: "${AGK_LOKI_URL:-http://loki:3100}"
     secrets:
       - grafana_admin
     volumes:
-      # The folder of the db, not the file: `store.py rebuild` replaces the file (a new inode),
-      # and the rollback journal is created next to it.
-      - type: bind
-        source: "${AGK_MONITOR_DB_DIR:?run board.py up}"
-        target: /var/lib/agk-monitor
-        read_only: true
       - type: bind
         source: ./grafana/provisioning
         target: /etc/grafana/provisioning
@@ -51,15 +117,19 @@ services:
         source: ./grafana/boards
         target: /var/lib/agk-boards
         read_only: true
-      # Only the plugin folder is kept, so the plugin downloads once. Grafana's own db starts
-      # fresh on each `up`, so the admin password always is the one of the password file.
-      - type: volume
-        source: grafana-plugins
-        target: /var/lib/grafana/plugins
+    depends_on:
+      - prometheus
+      - loki
+
+configs:
+  # The target list of the scrape job `facts`; the port is a setting.
+  facts_targets:
+    content: '[{"targets": ["host.docker.internal:${AGK_FACTS_PORT:-9464}"]}]'
 
 secrets:
   grafana_admin:
     file: "${AGK_GRAFANA_ADMIN_FILE:?run board.py up}"
 
 volumes:
-  grafana-plugins:
+  prometheus-data:
+  loki-data:

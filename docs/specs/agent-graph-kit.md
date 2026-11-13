@@ -439,14 +439,13 @@ At the end of a stage the orchestrator runs `plugin/skills/run-record/run_record
 
 ## Monitoring stack (optional)
 
-The skill `monitor` has an optional Grafana stack that shows the run data as boards. The details (tables, boards, failures) are in "Store" and "Grafana board (optional)" of [plugin/skills/monitor/SKILL.md](../../plugin/skills/monitor/SKILL.md); the stack spec is [docs/specs/2026-11-06-visual-monitoring.md](2026-11-06-visual-monitoring.md). In short:
+The skill `monitor` has an optional stack of four containers: the OTel Collector, Prometheus, Loki and Grafana. The details (ports, failures) are in "Monitoring stack (optional)" of [plugin/skills/monitor/SKILL.md](../../plugin/skills/monitor/SKILL.md); the stack spec is [docs/specs/2026-11-13-otel-monitoring-boards.md](2026-11-13-otel-monitoring-boards.md). The boards and the host process `facts.py` are still to come (stage 21). In short:
 
-- **Loader.** `plugin/skills/monitor/store.py` runs on the host and loads every 30 s. It reads the run record, the step rows, the hand-entered limits file, the two live usage-limit files (`usage-limits-claude.jsonl`, `usage-limits-codex.jsonl` in the state dir), the retry cases and tags, and the modification times of the Codex stream files. It runs `steps.py collect` and, at most every 5 minutes, `cases.py collect`, which use `gh` for reads only.
-- **Writes.** The loader writes only `monitor.sqlite` (mode 0600, in the state dir), its log `monitor-load.log`, and once the projects file `monitor-projects.json`. It writes nothing to GitHub.
-- **Start and stop.** `plugin/skills/monitor/board.py up` starts Grafana and runs the loader in the foreground; Ctrl-C stops both. `board.py down` stops the stack. Docker is needed only for this part; `/agk:setup` does not install it.
-- **Access.** Grafana binds to `127.0.0.1` (port 3000 by default). Login user `admin`, with the password in a local 0600 file in the state dir, not in the repo. Anonymous access is off.
-- **Credentials.** No GitHub token and no Claude or Codex credential goes into the container (see `plugin/skills/monitor/compose.yaml`).
-- **RAM.** Budget 400 MB for the stack with both boards open; measured peak about 370 MB (352 MiB).
+- **Data.** Claude Code and Codex send OTLP to the Collector on `127.0.0.1`. The Collector drops data whose resource attribute `agk.project` is missing or not in `monitor-projects.json`, deletes prompt and answer attributes from logs, and writes metrics to Prometheus and logs to Loki. Both keep 365 days. The SQLite store, its loader and the Stage 20 boards are gone.
+- **Start and stop.** `plugin/skills/monitor/board.py up` starts the stack in the background; `board.py down` stops it. Nothing starts on boot. Docker is needed only for this part; `/agk:setup` does not install it.
+- **Access.** Every port binds to `127.0.0.1` (Grafana 3000 by default). Login user `admin`, with the password in a local 0600 file in the state dir, not in the repo. Anonymous access is off.
+- **Credentials.** No GitHub token and no Claude or Codex credential goes into a container (see `plugin/skills/monitor/compose.yaml`).
+- **RAM.** Budget 1 GB for the whole stack; measured about 240 to 420 MiB with no load.
 - **O1.** No hook, script or role reads monitoring data to decide anything.
 - **O2.** A failing monitoring write, a loader error or a stopped stack never changes a QA result, a retry count, a comment or a hook decision.
 

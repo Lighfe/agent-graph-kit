@@ -1,4 +1,4 @@
-# The board provider: every JSON file in grafana/boards/ is a board (issue #283).
+# The board provider: every JSON file in grafana/boards/ is a board.
 apiVersion: 1
 providers:
   - name: agk-monitor
