@@ -60,36 +60,35 @@ AUTO_STEPS = [
 ]
 
 
-PLACEHOLDER = "<owner/name>"
-PLACEHOLDER_NOTE = "The project's owner/name could not be read (gh repo view failed); replace <owner/name> below by hand."
 OTEL_ENDPOINT = "http://127.0.0.1:4317"
+# Claude Code sends OTLP over HTTP: only its HTTP exporters send the otelHeadersHelper headers (issue #324).
+CLAUDE_OTEL_ENDPOINT = "http://127.0.0.1:4318"
+# The fixed place of the otelHeadersHelper (monitor skill, `board.py up` writes it; issue #324).
+HELPER_DEFAULT = "~/.local/state/agent-graph-kit/otel-headers.py"
+CLAUDE_RULE = ("Claude Code ignores telemetry variables in a project's .claude/settings.json "
+               "(project settings can only turn telemetry off); set them in your user settings.")
 
 
-def project_slug(root: Path) -> str | None:
-    """`owner/name` of the project from `gh repo view`, or None."""
-    try:
-        p = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-                           cwd=root, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    out = p.stdout.strip()
-    ok = p.returncode == 0 and len(out.split("/")) == 2 and all(out.split("/")) and " " not in out
-    return out if ok else None
+def headers_helper_path() -> str:
+    """The `otelHeadersHelper` value: `<state dir>/otel-headers.py` as `board.py up` writes it.
+    `~` form when XDG_STATE_HOME is not set, so the line names no user folder."""
+    state = os.environ.get("XDG_STATE_HOME")
+    return str(Path(state) / "agent-graph-kit" / "otel-headers.py") if state else HELPER_DEFAULT
 
 
-def claude_otel_block(slug: str) -> str:
-    """The `env` block for the project's settings file (monitor SKILL.md, "Export settings")."""
+def claude_otel_block(helper: str = HELPER_DEFAULT) -> str:
+    """The block for the user settings `~/.claude/settings.json` (monitor SKILL.md, "Export settings").
+    It names no project: the helper finds the project of each session from its folder."""
     env = {
         "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
         "OTEL_METRICS_EXPORTER": "otlp",
         "OTEL_LOGS_EXPORTER": "otlp",
-        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-        "OTEL_EXPORTER_OTLP_ENDPOINT": OTEL_ENDPOINT,
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": CLAUDE_OTEL_ENDPOINT,
         "OTEL_LOG_TOOL_DETAILS": "1",
-        "OTEL_RESOURCE_ATTRIBUTES": f"agk.project={slug}",
         "OTEL_METRIC_EXPORT_INTERVAL": "60000",
     }
-    return json.dumps({"env": env}, indent=2)
+    return json.dumps({"env": env, "otelHeadersHelper": helper}, indent=2)
 
 
 def codex_otel_block() -> str:
@@ -100,16 +99,17 @@ def codex_otel_block() -> str:
 
 def otel_step(root: Path) -> None:
     """Print the two export blocks for the owner to paste. Writes no file: they are the owner's settings."""
-    slug = project_slug(root)
     print()
-    print("Export settings (OTel to the local Collector, optional; you set them by hand):")
-    if slug is None:
-        print(PLACEHOLDER_NOTE)
+    print("Export settings (OTel to the local Collector, optional; you set them by hand, once for all projects):")
     print()
-    print("Claude Code: merge into the `env` of the settings file of this project (.claude/settings.json):")
+    print(CLAUDE_RULE)
+    print("Claude Code: merge into your user settings (~/.claude/settings.json), once; not into the project's "
+          ".claude/settings.json. The block names no project: the helper finds the project of each session "
+          "from its folder and the project list of the monitor stack. `board.py up` of the monitor skill writes "
+          "the helper; run it once before.")
     print()
     print("```json")
-    print(claude_otel_block(slug or PLACEHOLDER))
+    print(claude_otel_block(headers_helper_path()))
     print("```")
     print()
     print("Codex: add to ~/.codex/config.toml:")

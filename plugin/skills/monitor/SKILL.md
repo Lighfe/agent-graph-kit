@@ -68,9 +68,9 @@ marimo and polars are not part of the setup (`/agk:setup` does not install them)
 
 ## Export settings
 
-Claude Code and Codex send their OTel data to the Collector of the monitoring stack (below) when you set these two blocks. They are your own settings files, so you paste them by hand; no agent edits them. `/agk:setup` prints the same two blocks with the project's `owner/name` filled in. When it cannot read `owner/name` (`gh repo view` fails), it prints the placeholder `<owner/name>` and one line that says to replace it. Spec: `docs/specs/2026-11-13-otel-monitoring-boards.md`, Part A. Replace `<owner/name>` by the `owner/name` of your project.
+Claude Code and Codex send their OTel data to the Collector of the monitoring stack (below) when you set these two blocks. They are your own user settings files, so you paste them by hand, once for all projects; no agent edits them. `/agk:setup` prints the same two blocks. Spec: `docs/specs/2026-11-13-otel-monitoring-boards.md`, Part A.
 
-Claude Code: merge into the `env` of the project's `.claude/settings.json`. `OTEL_LOG_USER_PROMPTS` is not set, so prompt text is not exported.
+Claude Code: merge this block into your user settings `~/.claude/settings.json`, once. This is the one user step for all projects; there is no step per project. Do not put it into a project's `.claude/settings.json`: Claude Code ignores telemetry variables in a project's .claude/settings.json (project settings can only turn telemetry off); set them in your user settings. (Claude Code 2.1.303 says it so: "Claude Code ignores these telemetry variables in project settings. A project's settings files can only turn telemetry off.") `OTEL_LOG_USER_PROMPTS` is not set, so prompt text is not exported.
 
 ```json
 {
@@ -78,14 +78,21 @@ Claude Code: merge into the `env` of the project's `.claude/settings.json`. `OTE
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
     "OTEL_LOG_TOOL_DETAILS": "1",
-    "OTEL_RESOURCE_ATTRIBUTES": "agk.project=<owner/name>",
     "OTEL_METRIC_EXPORT_INTERVAL": "60000"
-  }
+  },
+  "otelHeadersHelper": "~/.local/state/agent-graph-kit/otel-headers.py"
 }
 ```
+
+- The block names no project. Claude Code runs the `otelHeadersHelper` in the folder of each session and sends the JSON object it prints as OTLP headers. The helper (`otel_headers.py` of this skill) looks up the session folder in the project list `monitor-projects.json` (see "Monitoring stack"): when the folder is the `repo` of an entry, or a folder below it, it prints `{"x-agk-project": "<owner/name>"}` of that entry (the deepest `repo` wins); else `{}`. The Collector moves the header into the resource attribute `agk.project` and drops data without a listed project, so a session outside every kit project (no git repo, or a repo not in the list) sends nothing that is kept, and data of one project never carries the tag of another.
+- `board.py up` writes the helper to `<state dir>/otel-headers.py`, next to the project list, mode 0700, on every `up`. The path does not hold the plugin version, so a plugin update does not break the user step; the next `up` writes the new helper. Run `board.py up` once before the user step: without the file, Claude Code shows "otelHeadersHelper failed; telemetry is not being exported". With `XDG_STATE_HOME` set, the path is `$XDG_STATE_HOME/agent-graph-kit/otel-headers.py`; `/agk:setup` prints the path that fits.
+- Claude Code sends OTLP over HTTP (port 4318), not gRPC: checked with Claude Code 2.1.303, only its HTTP exporters send the helper's headers; with `grpc` the header did not arrive and the Collector dropped the data. Codex stays on gRPC (4317).
+- When a project's `.claude/settings.json` still holds an older export block (with `OTEL_RESOURCE_ATTRIBUTES` or `grpc`), remove it: the user block is the only place.
+- The helper always exits 0 and prints a JSON object (Claude Code takes empty output as a failure). It reads one file, starts no process and makes no network call, so a session starts as before when the stack is down.
+- Add a project by adding its entry to `monitor-projects.json` and running `board.py up` again (see "Monitoring stack"); the user settings do not change.
 
 Codex: add to `~/.codex/config.toml` (Codex ignores `otel` in a project-level config). Logs and metrics only: the Collector has no traces pipeline.
 
@@ -121,7 +128,7 @@ uv run --script "${CLAUDE_SKILL_DIR}/board.py" down   # stop the stack; exit 0 a
 
   Prometheus also scrapes the host process `facts.py` at the gateway address of the compose network (for example `172.25.0.1:9464`, port `AGK_FACTS_PORT`, see "Facts" below). `AGK_FACTS_PORT` is a port variable of `up` like the others.
 - Nothing starts on boot and nothing restarts by itself (`restart: "no"` on every service). `down` stops the stack; the data stays in the Docker volumes `agk-monitor_prometheus-data` and `agk-monitor_loki-data`.
-- What the stack holds: metrics in Prometheus and logs in Loki, each kept for 365 days. Claude Code and Codex send OTLP to the Collector. The Collector keeps only data of the kit projects: it drops all data whose resource attribute `agk.project` is missing or is not in the project list. The list is `$XDG_STATE_HOME/agent-graph-kit/monitor-projects.json` (else under `~/.local/state`), mode 0600, a list of `{"project": "owner/name", "repo": "<path of the project repo>"}`. When the file is missing, `up` writes it once with the current project (`owner/name` from `gh repo view`, the current folder as repo); add other projects by hand and run `up` again. As a second guard behind the export settings, the logs pipeline deletes the attributes `prompt`, `user_prompt`, `response`, `response_text`, `output_text`, `assistant_message` and `last_assistant_message`.
+- What the stack holds: metrics in Prometheus and logs in Loki, each kept for 365 days. Claude Code and Codex send OTLP to the Collector. The Collector keeps only data of the kit projects: it drops all data whose resource attribute `agk.project` is missing or is not in the project list. Before that filter, it sets `agk.project` from the request header `x-agk-project` when the header is there (Claude Code sends it through the `otelHeadersHelper`, see "Export settings"); data without the header (Codex sets `agk.project` itself) stays as it is. The list is `$XDG_STATE_HOME/agent-graph-kit/monitor-projects.json` (else under `~/.local/state`), mode 0600, a list of `{"project": "owner/name", "repo": "<path of the project repo>"}`. When the file is missing, `up` writes it once with the current project (`owner/name` from `gh repo view`, the current folder as repo); add other projects by hand and run `up` again. Each `up` also writes the `otelHeadersHelper` to `<state dir>/otel-headers.py`. As a second guard behind the export settings, the logs pipeline deletes the attributes `prompt`, `user_prompt`, `response`, `response_text`, `output_text`, `assistant_message` and `last_assistant_message`.
 - Grafana: `http://127.0.0.1:3000`, user `admin`, password in `<state dir>/grafana-admin` (`$XDG_STATE_HOME/agent-graph-kit/grafana-admin`, else under `~/.local/state`), mode 0600. `up` writes a random value on the first start and reuses it after. `board.py` prints the path of the file, never the value. Anonymous access, sign-up, update checks, usage reports and the news feed are off. Two data sources are provisioned: `prometheus` (uid `agk-prometheus`) and `loki` (uid `agk-loki`). No community plugin is installed. The boards come from `grafana/boards/`: the live board "Now" (`live.json`, see "The live board" below) and the history board "Stages" (`history.json`, see "The history board" below).
 - First start: Docker downloads the four images, each pinned to an exact version (tags and push dates are in `compose.yaml`).
 - What the containers see: their own config files (read only) and the password file. No token or credential: no `gh`, Claude or Codex folder or variable.

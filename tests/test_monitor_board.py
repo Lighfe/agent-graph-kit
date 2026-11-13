@@ -421,3 +421,34 @@ def test_up_without_an_address_starts_no_facts_and_goes_on(tmp_path, text):
     lines = [l for l in output(res).splitlines() if "facts.py was not started" in l]
     assert len(lines) == 1 and "gateway" in lines[0]
     assert "Grafana:" in res.stdout
+
+
+# --- the otelHeadersHelper (issue #324) ----------------------------------------------------------
+
+def test_up_installs_the_headers_helper_next_to_the_project_list(tmp_path):
+    rig = Rig(tmp_path)
+    res = rig.run("up")
+    assert res.returncode == 0, output(res)
+    helper = rig.state / "otel-headers.py"
+    assert helper.read_bytes() == (SKILL / "otel_headers.py").read_bytes()
+    assert stat.S_IMODE(helper.stat().st_mode) == 0o700
+    assert helper.parent == rig.projects_file.parent
+    assert str(helper) in res.stdout
+    # a later `up` writes the current version again (a plugin update reaches the fixed path)
+    helper.write_text("old")
+    assert rig.run("up").returncode == 0
+    assert helper.read_bytes() == (SKILL / "otel_headers.py").read_bytes()
+    assert not list(rig.state.glob("*.tmp"))
+    # the installed helper finds the project that `up` wrote, from the repo folder and below
+    sub = rig.cwd / "sub"
+    sub.mkdir()
+    for cwd in (rig.cwd, sub):
+        out = subprocess.run([str(helper)], cwd=cwd, capture_output=True, text=True, timeout=10)
+        assert out.returncode == 0 and out.stderr == ""
+        assert json.loads(out.stdout) == {"x-agk-project": "own/demo-project"}
+
+
+def test_up_without_docker_installs_no_helper(tmp_path):
+    rig = Rig(tmp_path, docker=False)
+    rig.run("up")
+    assert not (rig.state / "otel-headers.py").exists()

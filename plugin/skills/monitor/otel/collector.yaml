@@ -4,15 +4,26 @@
 receivers:
   otlp:
     protocols:
+      # include_metadata: the request headers reach the processors (the header x-agk-project, issue #324).
       grpc:
         endpoint: 0.0.0.0:4317
+        include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
+        include_metadata: true
 
 processors:
   memory_limiter:
     check_interval: 5s
     limit_mib: 256
+  # Claude Code gets its project from the otelHeadersHelper of the user settings (otel_headers.py,
+  # issue #324): the header x-agk-project becomes the resource attribute agk.project. Without the
+  # header (Codex sets agk.project itself), the data stays as it is.
+  resource/agk_project_header:
+    attributes:
+      - key: agk.project
+        from_context: metadata.x-agk-project
+        action: upsert
   # M6: keep only data of the kit projects. A condition that is true drops the data.
   # AGK_PROJECT_PATTERN is made by board.py up from monitor-projects.json.
   filter/agk_projects:
@@ -55,6 +66,7 @@ service:
         - otlp
       processors:
         - memory_limiter
+        - resource/agk_project_header
         - filter/agk_projects
         - delta_to_cumulative
         - batch
@@ -65,6 +77,7 @@ service:
         - otlp
       processors:
         - memory_limiter
+        - resource/agk_project_header
         - filter/agk_projects
         - transform/no_prompts
         - batch

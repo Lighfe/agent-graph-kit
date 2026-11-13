@@ -278,6 +278,19 @@ def test_collector_drops_untagged():
     assert service("collector")["environment"]["AGK_PROJECT_PATTERN"].startswith("${AGK_PROJECT_PATTERN:?")
 
 
+def test_collector_moves_the_project_header_into_agk_project():
+    # issue #324: Claude Code sends the header x-agk-project (otelHeadersHelper of the user settings).
+    cfg = collector()
+    for proto in ("grpc", "http"):
+        assert cfg["receivers"]["otlp"]["protocols"][proto]["include_metadata"] is True
+    (action,) = cfg["processors"]["resource/agk_project_header"]["attributes"]
+    assert action == {"key": "agk.project", "from_context": "metadata.x-agk-project", "action": "upsert"}
+    for signal in ("metrics", "logs"):
+        procs = cfg["service"]["pipelines"][signal]["processors"]
+        # before the filter (which reads agk.project) and before batch (which drops the request context)
+        assert procs.index("resource/agk_project_header") < procs.index("filter/agk_projects") < procs.index("batch")
+
+
 def test_project_pattern_matches_only_listed_projects():
     board = board_module()
     entries = [{"project": "own/agent-graph-kit", "repo": "/x"}, {"project": "o.w/n-2", "repo": "/y"},

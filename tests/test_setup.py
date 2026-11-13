@@ -39,11 +39,11 @@ def fake_bin(tmp_path, gh=True, uv=True, codex=True, git=True):
     return b
 
 
-def run(root, tmp_path, bin_dir=None, home=None, name="example-app", cmd="make test", root_arg=None):
+def run(root, tmp_path, bin_dir=None, home=None, name="example-app", cmd="make test", root_arg=None, env=None):
     bin_dir = bin_dir or fake_bin(tmp_path)
     home = home or (tmp_path / "home")
     home.mkdir(exist_ok=True)
-    env = {"PATH": str(bin_dir), "HOME": str(home)}
+    env = {"PATH": str(bin_dir), "HOME": str(home), **(env or {})}
     return subprocess.run(
         [sys.executable, str(SETUP), "--root", str(root_arg or root), "--name", name, "--test-command", cmd,
          "--home", str(home)], capture_output=True, text=True, env=env, timeout=120)
@@ -508,8 +508,8 @@ CLAUDE_KEYS = {
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
     "OTEL_LOG_TOOL_DETAILS": "1",
     "OTEL_METRIC_EXPORT_INTERVAL": "60000",
 }
@@ -527,24 +527,49 @@ def gh_printing(tmp_path, text):
 
 
 def test_setup_prints_otel_blocks(project, tmp_path):
+    # issue #324: one user-level block for all projects; it names no project and no plugin path
     import tomllib
     r = run(project, tmp_path, bin_dir=gh_printing(tmp_path, "Synthetic/demo"))
     assert r.returncode == 0, r.stderr
-    env = json.loads(fence(r.stdout, "json"))["env"]
-    assert env == {**CLAUDE_KEYS, "OTEL_RESOURCE_ATTRIBUTES": "agk.project=Synthetic/demo"}
+    block = json.loads(fence(r.stdout, "json"))
+    assert block["env"] == CLAUDE_KEYS
+    assert block["otelHeadersHelper"] == "~/.local/state/agent-graph-kit/otel-headers.py"
+    assert set(block) == {"env", "otelHeadersHelper"}
     otel = tomllib.loads(fence(r.stdout, "toml"))["otel"]
     grpc = {"otlp-grpc": {"endpoint": "http://127.0.0.1:4317"}}
     assert otel == {"log_user_prompt": False, "exporter": grpc, "metrics_exporter": grpc}
-    assert "OTEL_LOG_USER_PROMPTS" not in r.stdout and "<owner/name>" not in r.stdout
+    assert "OTEL_LOG_USER_PROMPTS" not in r.stdout and "OTEL_RESOURCE_ATTRIBUTES" not in r.stdout
+    assert "Synthetic/demo" not in fence(r.stdout, "json") and "agk.project" not in r.stdout
+    assert "plugins/cache" not in r.stdout
     assert "OTEL" not in "".join(p.read_text() for p in project.rglob("*.json"))  # nothing is written for it
 
 
-def test_setup_prints_placeholder_without_owner_name(project, tmp_path):
+def test_setup_names_the_user_settings_and_the_claude_code_rule(project, tmp_path):
+    r = run(project, tmp_path, bin_dir=gh_printing(tmp_path, "Synthetic/demo"))
+    text = r.stdout[r.stdout.index("Export settings"):]
+    claude_part = text[:text.index("```json")]
+    assert "merge into your user settings (~/.claude/settings.json), once" in claude_part
+    assert "not into the project's .claude/settings.json" in claude_part
+    assert "Claude Code ignores telemetry variables in a project's .claude/settings.json" in claude_part
+    assert "can only turn telemetry off" in claude_part
+    assert "board.py up" in claude_part
+    # the old instruction is gone
+    assert "settings file of this project" not in r.stdout
+    assert "merge into the `env` of the" not in r.stdout
+
+
+def test_setup_same_output_without_owner_name(project, tmp_path):
     r = run(project, tmp_path, bin_dir=fake_bin(tmp_path, gh=False))
     assert r.returncode == 0, r.stderr
-    assert json.loads(fence(r.stdout, "json"))["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "agk.project=<owner/name>"
-    assert sum("replace <owner/name>" in l for l in r.stdout.splitlines()) == 1
-    assert "OTEL_LOG_USER_PROMPTS" not in r.stdout
+    assert json.loads(fence(r.stdout, "json"))["env"] == CLAUDE_KEYS
+    assert "<owner/name>" not in r.stdout and "OTEL_LOG_USER_PROMPTS" not in r.stdout
+
+
+def test_setup_helper_path_follows_xdg_state_home(project, tmp_path):
+    state = tmp_path / "xdg-state"
+    r = run(project, tmp_path, env={"XDG_STATE_HOME": str(state)})
+    helper = json.loads(fence(r.stdout, "json"))["otelHeadersHelper"]
+    assert helper == str(state / "agent-graph-kit" / "otel-headers.py")
 
 
 def test_monitor_skill_blocks_match_the_setup_output():
@@ -553,5 +578,6 @@ def test_monitor_skill_blocks_match_the_setup_output():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     skill = (ROOT / "plugin/skills/monitor/SKILL.md").read_text()
-    assert mod.claude_otel_block("<owner/name>") in skill
+    assert mod.claude_otel_block() in skill
+    assert mod.CLAUDE_RULE in skill
     assert mod.codex_otel_block() in skill

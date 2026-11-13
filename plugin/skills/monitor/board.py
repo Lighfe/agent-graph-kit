@@ -35,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 COMPOSE = HERE / "compose.yaml"
 DATA = HERE / "data.py"
 FACTS = HERE / "facts.py"
+HEADERS_HELPER = HERE / "otel_headers.py"  # copied by `up` to <state dir>/otel-headers.py (issue #324)
 NETWORK = "agk-monitor_default"  # the compose network of the project `agk-monitor` (compose.yaml `name`)
 
 # The ports of the stack: environment variable and default. `compose.yaml` has the same defaults.
@@ -81,6 +82,11 @@ def projects_path():
     return data.state_dir() / "monitor-projects.json"
 
 
+def headers_helper_path():
+    """The fixed place of the `otelHeadersHelper` of the user settings: it does not change with a plugin update."""
+    return data.state_dir() / "otel-headers.py"
+
+
 def port(name):
     return os.environ.get(name) or PORTS[name]
 
@@ -125,6 +131,23 @@ def projects():
         raise ValueError(f"{path}: not a list")
     return [e for e in entries
             if isinstance(e, dict) and isinstance(e.get("project"), str) and isinstance(e.get("repo"), str)]
+
+
+def install_headers_helper():
+    """Copy `otel_headers.py` to `headers_helper_path()` (mode 0700), next to the project list it reads.
+    Each `up` writes it again, so a plugin update reaches it. The file is replaced in one step
+    (rename), so a session that starts meanwhile never runs half a file."""
+    path = headers_helper_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
+    try:
+        os.fchmod(fd, 0o700)
+        os.write(fd, HEADERS_HELPER.read_bytes())
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    return path
 
 
 def project_pattern(entries):
@@ -347,6 +370,10 @@ def up():
     except (RuntimeError, ValueError, OSError) as e:
         say(f"no project list for the Collector: {e}. Nothing was started.", err=True)
         return 2
+    try:
+        say(f"otelHeadersHelper for the user settings: {install_headers_helper()}")
+    except OSError as e:
+        say(f"could not write the otelHeadersHelper ({e}); Claude Code data has no project tag.", err=True)
     stop_facts()  # a facts.py of an earlier `up` is replaced, so its port is free
     if port_in_use(port("AGK_FACTS_PORT")):
         say(f"the port {port('AGK_FACTS_PORT')} of facts.py is in use. Set AGK_FACTS_PORT to a free port "
