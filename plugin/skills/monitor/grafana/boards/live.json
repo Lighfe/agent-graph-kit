@@ -1,0 +1,2301 @@
+{
+  "uid": "agk-live",
+  "title": "Now",
+  "tags": [
+    "agk"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "project",
+        "label": "project",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "agk-prometheus"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "query": {
+          "query": "label_values(agk_issue_info, agk_project)",
+          "refId": "project"
+        },
+        "definition": "label_values(agk_issue_info, agk_project)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "stage",
+        "label": "stage",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "agk-prometheus"
+        },
+        "refresh": 2,
+        "sort": 4,
+        "query": {
+          "query": "label_values(agk_issue_info{agk_project=\"$project\"}, stage)",
+          "refId": "stage"
+        },
+        "definition": "label_values(agk_issue_info{agk_project=\"$project\"}, stage)",
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Now",
+      "description": "The subagent in work now: role, issue, return number, active time, tokens, time since its last step, last tool and target. Only the orchestrator: \"orchestrator\" and its last tool. A tile \"facts age\" shows only when the facts are more than 2 minutes old.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "agk_marker{agk_project=\"$project\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "B",
+          "expr": "(count by (agk_project, stage, issue, role) (count by (agk_project, stage, issue, role, launch) (last_over_time(agk:tokens:1m{agk_project=\"$project\"}[$__range]))) - 1) * on (agk_project, stage, issue, role) agk_marker{agk_project=\"$project\"}",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "return",
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "C",
+          "expr": "sum(sum_over_time(agk:active_seconds:1m{agk_project=\"$project\"}[$__range]) * on (agk_project, stage, issue, launch) group_left () agk_marker{agk_project=\"$project\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "active time",
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "D",
+          "expr": "sum(sum_over_time(agk:tokens:1m{agk_project=\"$project\"}[$__range]) * on (agk_project, stage, issue, launch) group_left () agk_marker{agk_project=\"$project\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "tokens",
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "agk-loki"
+          },
+          "refId": "E",
+          "expr": "{agk_project=\"$project\"} |= \"claude_code.tool_result\"",
+          "editorMode": "code",
+          "queryType": "range",
+          "maxLines": 1
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "F",
+          "expr": "(time() - agk_facts_last_success_seconds) > 120",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "facts age",
+          "format": "time_series"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "labels",
+            "format": "json"
+          }
+        },
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "tool_parameters",
+            "format": "json"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^(role|issue|return|active time|tokens|Time|tool_name|file_path|full_command|facts age)$/",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "orchestrator",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#DDDDDD"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokens"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              },
+              {
+                "id": "displayName",
+                "value": "since last step"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "facts age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC6677"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "role"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "orchestrator": {
+                        "text": "orchestrator",
+                        "color": "#332288"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "pm": {
+                        "text": "pm",
+                        "color": "#DDCC77"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "engineer": {
+                        "text": "engineer",
+                        "color": "#117733"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "qa-codex": {
+                        "text": "qa-codex",
+                        "color": "#88CCEE"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "qa-claude": {
+                        "text": "qa-claude",
+                        "color": "#882255"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "planner": {
+                        "text": "planner",
+                        "color": "#999933"
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "other": {
+                        "text": "other",
+                        "color": "#DDDDDD"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Tokens per issue, by role",
+      "description": "Tokens in millions per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "(sum by (issue, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) / 1e6 * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "B",
+          "expr": "(quantile(0.5, sum by (stage, issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) / 1e6",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "typical issue (median)",
+          "format": "time_series",
+          "hide": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "slot"
+              }
+            ]
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "role",
+            "rowField": "slot",
+            "valueField": "Value",
+            "emptyValue": "null"
+          }
+        }
+      ],
+      "options": {
+        "stacking": "normal",
+        "showValue": "never",
+        "orientation": "auto",
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: M",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "orchestrator"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#332288"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pm"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#DDCC77"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engineer"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#117733"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qa-codex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#88CCEE"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qa-claude"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#882255"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "planner"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#999933"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "other"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#DDDDDD"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pending"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "barchart",
+      "title": "Active time per issue, by role",
+      "description": "Active time per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "(sum by (issue, role) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "B",
+          "expr": "(quantile(0.5, sum by (stage, issue) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "typical issue (median)",
+          "format": "time_series",
+          "hide": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "slot"
+              }
+            ]
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "role",
+            "rowField": "slot",
+            "valueField": "Value",
+            "emptyValue": "null"
+          }
+        }
+      ],
+      "options": {
+        "stacking": "normal",
+        "showValue": "never",
+        "orientation": "auto",
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0,
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "orchestrator"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#332288"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pm"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#DDCC77"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engineer"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#117733"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qa-codex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#88CCEE"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "qa-claude"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#882255"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "planner"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#999933"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "other"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#DDDDDD"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pending"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "type": "state-timeline",
+      "title": "Timeline",
+      "description": "One row for the orchestrator on top, then one row per issue in execution order. A block per launch in the role colour; a return keeps the role colour and shows the text \"↺\". The hover shows the row and the role; issue, role, return, active time and tokens are in the row name and the table below (the built-in state timeline has no custom hover).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "((sum(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",role=\"orchestrator\"}) > 0) * 0 + 1)",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "legendFormat": "orchestrator"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "B",
+          "expr": "max by (slot) (max by (issue) ((agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch!~\".*-1\"} * 1 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch=~\".*-1\"} * 1) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch!~\".*-1\"} * 2 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch=~\".*-1\"} * 2) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch!~\".*-1\"} * 3 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch=~\".*-1\"} * 3) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch!~\".*-1\"} * 4 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch=~\".*-1\"} * 4) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch!~\".*-1\"} * 5 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch=~\".*-1\"} * 5) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch!~\".*-1\"} * 6 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch=~\".*-1\"} * 6) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch!~\".*-1\"} * 7 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch=~\".*-1\"} * 7)) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\"))",
+          "instant": false,
+          "range": true,
+          "editorMode": "code",
+          "legendFormat": "{{slot}}"
+        }
+      ],
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "center",
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 90,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "orchestrator",
+                  "color": "#332288",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "11": {
+                  "text": "↺",
+                  "color": "#332288",
+                  "index": 11
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "2": {
+                  "text": "pm",
+                  "color": "#DDCC77",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "12": {
+                  "text": "↺",
+                  "color": "#DDCC77",
+                  "index": 12
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "3": {
+                  "text": "engineer",
+                  "color": "#117733",
+                  "index": 3
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "13": {
+                  "text": "↺",
+                  "color": "#117733",
+                  "index": 13
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "4": {
+                  "text": "qa-codex",
+                  "color": "#88CCEE",
+                  "index": 4
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "14": {
+                  "text": "↺",
+                  "color": "#88CCEE",
+                  "index": 14
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "5": {
+                  "text": "qa-claude",
+                  "color": "#882255",
+                  "index": 5
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "15": {
+                  "text": "↺",
+                  "color": "#882255",
+                  "index": 15
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "6": {
+                  "text": "planner",
+                  "color": "#999933",
+                  "index": 6
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "16": {
+                  "text": "↺",
+                  "color": "#999933",
+                  "index": 16
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "7": {
+                  "text": "other",
+                  "color": "#DDDDDD",
+                  "index": 7
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "17": {
+                  "text": "↺",
+                  "color": "#DDDDDD",
+                  "index": 17
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#DDDDDD",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "Plan usage limit",
+      "description": "Used share of each plan usage limit window, one gauge per provider and window.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "agk_usage_limit_percent",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "{{provider}} {{window}}",
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "valueMode": "color"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "no source",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#44AA99",
+                "value": null
+              },
+              {
+                "color": "#DDCC77",
+                "value": 70
+              },
+              {
+                "color": "#CC6677",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Launches of this stage",
+      "description": "One row per launch, newest first. A teal dot before the role marks a running launch. The marker columns show \"▲\" when the launch is above the 75th percentile of the same role in the other stages of the project (needs three earlier stages; the built-in table cannot colour a cell by a per-row threshold). Return is the attempt number minus one.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "agk-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "A",
+          "expr": "label_replace((label_replace(sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) and on (launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"}, \"role\", \"● $1\", \"role\", \"(.*)\") or (sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) unless on (launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"})), \"attempt\", \"$1\", \"launch\", \".*-(\\\\d+)$\")",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "B",
+          "expr": "((sum by (role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "C",
+          "expr": "sum by (launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "D",
+          "expr": "((sum by (role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "E",
+          "expr": "topk by (launch) (1, sum by (launch, model) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "F",
+          "expr": "min by (launch) (min_over_time(timestamp(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"})[$__range:1m])) * 1000",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "launch",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "attempt",
+                "destinationType": "number"
+              }
+            ]
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "binary",
+            "alias": "return",
+            "binary": {
+              "left": "attempt",
+              "operator": "-",
+              "right": "1"
+            },
+            "replaceFields": false
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value #F",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Time 6": true,
+              "launch": true,
+              "attempt": true,
+              "model 1": true,
+              "role 1": true,
+              "role 2": true,
+              "role 3": true
+            },
+            "indexByName": {
+              "issue": 0,
+              "role": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "return": 6,
+              "model": 7,
+              "Value #F": 8
+            },
+            "renameByName": {
+              "Value #A": "tokens",
+              "Value #B": "tokens above typical",
+              "Value #C": "active time",
+              "Value #D": "active time above typical",
+              "Value #F": "start"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "wrapText": false,
+            "inspect": false
+          },
+          "noValue": ""
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "role"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^● .*",
+                      "result": {
+                        "color": "#44AA99",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "orchestrator": {
+                        "text": "orchestrator",
+                        "color": "#332288",
+                        "index": 1
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "pm": {
+                        "text": "pm",
+                        "color": "#DDCC77",
+                        "index": 2
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "engineer": {
+                        "text": "engineer",
+                        "color": "#117733",
+                        "index": 3
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "qa-codex": {
+                        "text": "qa-codex",
+                        "color": "#88CCEE",
+                        "index": 4
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "qa-claude": {
+                        "text": "qa-claude",
+                        "color": "#882255",
+                        "index": 5
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "planner": {
+                        "text": "planner",
+                        "color": "#999933",
+                        "index": 6
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "other": {
+                        "text": "other",
+                        "color": "#DDDDDD",
+                        "index": 7
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #B"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "▲",
+                        "color": "#CC6677",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #D"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "▲",
+                        "color": "#CC6677",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #F"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:HH:mm:ss"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokens above typical"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "▲",
+                        "color": "#CC6677",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active time above typical"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "▲",
+                        "color": "#CC6677",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "start"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:HH:mm:ss"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokens"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Telemetry",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "Token rate by kind",
+          "description": "Tokens per minute by kind, stacked.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (kind) (agk:tokens:1m{agk_project=\"$project\"})",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "{{kind}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 30,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cache_read"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#44AA99"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cache_creation"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#999933"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "output"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#AA4499"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "input"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#DDDDDD"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "Active time per hour, Claude and Codex",
+          "description": "Active time per hour, Claude and Codex",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(increase(claude_code_active_time_seconds_total{agk_project=\"$project\",type=\"cli\"}[1h]))",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "Claude"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "B",
+              "expr": "(sum(increase(codex_api_request_duration_ms_milliseconds_sum{agk_project=\"$project\"}[1h]) or increase(codex_api_request_duration_ms_sum{agk_project=\"$project\"}[1h])) or vector(0)) / 1000 + (sum(increase(codex_tool_call_duration_ms_milliseconds_sum{agk_project=\"$project\"}[1h]) or increase(codex_tool_call_duration_ms_sum{agk_project=\"$project\"}[1h])) or vector(0)) / 1000",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "Codex"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Claude"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#332288"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Codex"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#88CCEE"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 22,
+          "type": "timeseries",
+          "title": "API requests per minute, Claude and Codex",
+          "description": "API requests per minute, Claude and Codex",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "A",
+              "expr": "sum(count_over_time({agk_project=\"$project\"} |= \"claude_code.api_request\" [1m]))",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Claude"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "B",
+              "expr": "sum(count_over_time({agk_project=\"$project\"} |= \"codex.api_request\" [1m]))",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Codex"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Claude"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#332288"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Codex"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#88CCEE"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 23,
+          "type": "timeseries",
+          "title": "API latency p50 and p95",
+          "description": "API latency p50 and p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "A",
+              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m])",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Claude p50"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "B",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m])",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Claude p95"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "C",
+              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m])",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Codex p50"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "D",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m])",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Codex p95"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Claude p50"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#332288"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Claude p95"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#332288"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Codex p50"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#88CCEE"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Codex p95"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#88CCEE"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 24,
+          "type": "timeseries",
+          "title": "API errors",
+          "description": "API errors per minute, in the error colour.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "A",
+              "expr": "sum(count_over_time({agk_project=\"$project\"} |= \"claude_code.api_error\" [1m]))",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Claude"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "B",
+              "expr": "sum(count_over_time({agk_project=\"$project\"} |= \"codex.api_request\" |= \"error\" [1m]))",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "Codex"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Claude"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#CC6677"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Codex"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#CC6677"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 25,
+          "type": "timeseries",
+          "title": "Tool calls by tool and p95 tool duration",
+          "description": "Tool calls per minute by tool, and the p95 tool duration (right axis; a call above two minutes is a long tool call).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "A",
+              "expr": "sum by (tool_name) (count_over_time({agk_project=\"$project\"} |= \"claude_code.tool_result\" [1m]))",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "{{tool_name}}"
+            },
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "agk-loki"
+              },
+              "refId": "B",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.tool_result\" | unwrap duration_ms [5m])",
+              "editorMode": "code",
+              "queryType": "range",
+              "legendFormat": "p95 duration (ms)"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "p95 duration (ms)"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#CC6677"
+                    }
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "ms"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 26,
+          "type": "timeseries",
+          "title": "Lines of code added and removed",
+          "description": "Lines of code added and removed per hour (Claude Code).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (type) (increase(claude_code_lines_of_code_count_total{agk_project=\"$project\"}[1h]))",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "{{type}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 27,
+          "type": "timeseries",
+          "title": "Commits and pull requests",
+          "description": "Commits and pull requests per hour (Claude Code).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(increase(claude_code_commit_count_total{agk_project=\"$project\"}[1h]))",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "commits"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "agk-prometheus"
+              },
+              "refId": "B",
+              "expr": "sum(increase(claude_code_pull_request_count_total{agk_project=\"$project\"}[1h]))",
+              "instant": false,
+              "range": true,
+              "editorMode": "code",
+              "legendFormat": "pull requests"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    }
+  ]
+}
