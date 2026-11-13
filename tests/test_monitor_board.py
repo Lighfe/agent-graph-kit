@@ -17,6 +17,23 @@ SKILL = ROOT / "plugin" / "skills" / "monitor"
 BOARD = SKILL / "board.py"
 
 
+RIGS = []
+
+
+def free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(autouse=True)
+def _stop_facts_after_test():
+    yield
+    while RIGS:
+        RIGS.pop().kill_facts()
+
+
 FAKE_GH = """#!{python}
 import sys
 if "--fail" in open(__import__("os").environ["FAKE_GH_MODE"]).read():
@@ -118,11 +135,24 @@ class Rig:
             self.write_fake("docker", FAKE_DOCKER)
         env = dict(os.environ)
         for name in ("AGK_OTLP_GRPC_PORT", "AGK_OTLP_HTTP_PORT", "AGK_PROMETHEUS_PORT", "AGK_LOKI_PORT",
-                     "AGK_GRAFANA_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT"):
+                     "AGK_GRAFANA_PORT", "AGK_FACTS_PORT", "FAKE_DOCKER_INFO_EXIT", "FAKE_DOCKER_UP_EXIT"):
             env.pop(name, None)
         env.update(PATH=str(self.bin), HOME=str(self.home), XDG_STATE_HOME=str(tmp / "state"),
-                   FAKE_DOCKER_LOG=str(self.log), FAKE_GH_MODE=str(self.gh_mode))
+                   FAKE_DOCKER_LOG=str(self.log), FAKE_GH_MODE=str(self.gh_mode),
+                   AGK_FACTS_PORT=str(free_port()))
         self.env = env
+        RIGS.append(self)
+
+    @property
+    def facts_pid_file(self):
+        return self.state / "facts.pid"
+
+    def kill_facts(self):
+        """Test cleanup: stop a facts.py that `up` started."""
+        try:
+            os.kill(int(self.facts_pid_file.read_text().strip()), 9)
+        except (OSError, ValueError):
+            pass
 
     def write_fake(self, name, body):
         path = self.bin / name
@@ -274,3 +304,46 @@ def test_down_exits_0_without_docker(tmp_path, docker):
     res = rig.run("down", FAKE_DOCKER_INFO_EXIT="1")
     assert res.returncode == 0, output(res)
     assert not rig.compose_calls()
+
+
+def test_up_starts_facts_after_the_containers_and_down_stops_it(tmp_path):
+    rig = Rig(tmp_path)
+    res = rig.run("up")
+    assert res.returncode == 0, output(res)
+    pid = int(rig.facts_pid_file.read_text())
+    assert (rig.state / "facts.log").exists()
+    assert os.path.exists(f"/proc/{pid}")
+    assert "/metrics" in res.stdout
+    res = rig.run("down")
+    assert res.returncode == 0, output(res)
+    assert not rig.facts_pid_file.exists()
+    for _ in range(50):
+        if not os.path.exists(f"/proc/{pid}") or "facts.py" not in Path(f"/proc/{pid}/cmdline").read_text():
+            break
+        import time
+        time.sleep(0.1)
+    else:
+        raise AssertionError("facts.py still runs after down")
+
+
+def test_up_with_a_used_facts_port_starts_nothing(tmp_path):
+    import socket
+    rig = Rig(tmp_path)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        used = str(s.getsockname()[1])
+        res = rig.run("up", AGK_FACTS_PORT=used)
+    assert res.returncode != 0
+    assert "AGK_FACTS_PORT" in output(res)
+    assert not rig.compose_calls()
+    assert not rig.facts_pid_file.exists()
+
+
+def test_down_exits_0_when_facts_is_not_running(tmp_path):
+    rig = Rig(tmp_path)
+    assert rig.run("down").returncode == 0
+    rig.state.mkdir(parents=True, exist_ok=True)
+    rig.facts_pid_file.write_text("999999999\n")
+    assert rig.run("down").returncode == 0
+    assert not rig.facts_pid_file.exists()

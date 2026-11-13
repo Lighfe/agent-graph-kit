@@ -1,0 +1,11 @@
+{
+  "stages": [{"number": 5, "title": "Stage five"}],
+  "subs": {
+    "5": [
+      {"number": 10, "title": "First task", "state": "open"},
+      {"number": 11, "title": "Second task", "state": "open"},
+      {"number": 12, "title": "Third task", "state": "closed"}
+    ]
+  },
+  "comments": {}
+}

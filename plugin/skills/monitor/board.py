@@ -4,14 +4,15 @@
 # ///
 """Start and stop the optional monitoring stack of the monitor skill (issue #309).
 
-  uv run --script board.py up      check Docker, start the stack in the background, print the URLs
-  uv run --script board.py down    stop the stack; exit 0 also when it is not running
+  uv run --script board.py up      check Docker, start the stack in the background, start facts.py, print the URLs
+  uv run --script board.py down    stop facts.py and the stack; exit 0 also when it is not running
 
 The stack (`compose.yaml` next to this file) is the OTel Collector, Prometheus, Loki and Grafana in Docker.
 Every port is on 127.0.0.1 only. Docker is needed for this part only.
 The Collector keeps only data of the projects in `<state dir>/monitor-projects.json`; `up` writes that
 file once with the current project when it is missing. The admin password of Grafana is in
 `<state dir>/grafana-admin` (mode 0600, made on the first `up`); this script prints the path, never the value.
+`facts.py` (issue #310) runs on the host: its process id is in `<state dir>/facts.pid`, its log in `<state dir>/facts.log`.
 Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, Part B
 """
 
@@ -22,13 +23,16 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 COMPOSE = HERE / "compose.yaml"
 DATA = HERE / "data.py"
+FACTS = HERE / "facts.py"
 
 # The ports of the stack: environment variable and default. `compose.yaml` has the same defaults.
 PORTS = {
@@ -37,6 +41,7 @@ PORTS = {
     "AGK_PROMETHEUS_PORT": "9090",
     "AGK_LOKI_PORT": "3100",
     "AGK_GRAFANA_PORT": "3000",
+    "AGK_FACTS_PORT": "9464",
 }
 SLUG = re.compile(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+")
 
@@ -56,6 +61,14 @@ def say(text, err=False):
 
 
 # --- paths and settings -----------------------------------------------------------------------
+
+def facts_pid_path():
+    return data.state_dir() / "facts.pid"
+
+
+def facts_log_path():
+    return data.state_dir() / "facts.log"
+
 
 def password_path():
     return data.state_dir() / "grafana-admin"
@@ -151,6 +164,74 @@ def stack_env(password_file, pattern):
     return env
 
 
+# --- facts.py ---------------------------------------------------------------------------------
+
+def port_in_use(number):
+    """True when 127.0.0.1:<number> cannot be bound."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", int(number)))
+        except (OSError, ValueError):
+            return True
+    return False
+
+
+def facts_pid():
+    """The process id of the running facts.py from the pid file, else None. A dead process, a pid that
+    is not facts.py (pid reuse) and an unreadable file give None."""
+    try:
+        pid = int(facts_pid_path().read_text().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return None
+    cmdline = Path(f"/proc/{pid}/cmdline")
+    if cmdline.exists():
+        try:
+            if "facts.py" not in cmdline.read_bytes().decode("utf-8", "replace"):
+                return None
+        except OSError:
+            return None
+    return pid
+
+
+def stop_facts():
+    """Stop facts.py when it runs and remove the pid file. Never raises."""
+    try:
+        pid = facts_pid()
+        if pid is not None:
+            os.kill(pid, 15)
+            for _ in range(50):
+                time.sleep(0.1)
+                if facts_pid() is None:
+                    break
+            else:
+                os.kill(pid, 9)
+            say(f"stopped facts.py (pid {pid})")
+        facts_pid_path().unlink(missing_ok=True)
+    except OSError as e:
+        say(f"could not stop facts.py: {e}", err=True)
+
+
+def start_facts(env):
+    """Start facts.py in the background; its log goes to facts.log. A failure here is only a message:
+    it never stops `up`."""
+    try:
+        log_path = facts_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "ab") as log:
+            proc = subprocess.Popen([sys.executable, str(FACTS)], env=env, stdin=subprocess.DEVNULL,
+                                    stdout=log, stderr=log, start_new_session=True)
+        write_private(facts_pid_path(), f"{proc.pid}\n")
+    except OSError as e:
+        say(f"facts.py did not start: {e}", err=True)
+        return False
+    say(f"facts.py: http://127.0.0.1:{port('AGK_FACTS_PORT')}/metrics  (pid file {facts_pid_path()}, log {facts_log_path()})")
+    return True
+
+
 def compose(env, *args):
     return subprocess.run(["docker", "compose", "-f", str(COMPOSE), *args], env=env).returncode
 
@@ -187,6 +268,11 @@ def up():
     except (RuntimeError, ValueError, OSError) as e:
         say(f"no project list for the Collector: {e}. Nothing was started.", err=True)
         return 2
+    stop_facts()  # a facts.py of an earlier `up` is replaced, so its port is free
+    if port_in_use(port("AGK_FACTS_PORT")):
+        say(f"the port {port('AGK_FACTS_PORT')} of facts.py is in use. Set AGK_FACTS_PORT to a free port "
+            "and run `up` again. Nothing was started.", err=True)
+        return 2
     password_file = ensure_password()
     env = stack_env(password_file, pattern)
     try:
@@ -200,6 +286,7 @@ def up():
             f"(ports: {', '.join(f'{n}={port(n)}' for n in PORTS)}).", err=True)
         compose(env, "down")
         return 1
+    start_facts(env)
     say(f"Grafana: http://127.0.0.1:{port('AGK_GRAFANA_PORT')}  (user admin, password in {password_file})")
     say(f"OTLP: gRPC 127.0.0.1:{port('AGK_OTLP_GRPC_PORT')}, HTTP http://127.0.0.1:{port('AGK_OTLP_HTTP_PORT')}")
     say(f"Prometheus: http://127.0.0.1:{port('AGK_PROMETHEUS_PORT')}  Loki: http://127.0.0.1:{port('AGK_LOKI_PORT')}")
@@ -208,6 +295,7 @@ def up():
 
 
 def down():
+    stop_facts()
     problem = docker_problem()
     if problem:
         say(f"{problem} Nothing to stop.")
