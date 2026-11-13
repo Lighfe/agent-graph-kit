@@ -126,11 +126,15 @@ def test_role_colours():
     # the timeline: every role as a block colour, and the return mark keeps it
     maps = {}
     for m in t["Timeline"]["fieldConfig"]["defaults"]["mappings"]:
-        for key, res in m["options"].items():
-            maps.setdefault(res["text"], set()).add(res["color"])
+        results = [m["options"]["result"]] if m["type"] == "regex" else list(m["options"].values())
+        for res in results:
+            role = res["text"].removeprefix("↺ ").split(" · ")[0]
+            maps.setdefault(role, set()).add(res["color"])
+            if res["text"].startswith("↺"):
+                maps.setdefault("↺", set()).add(res["color"])
     for role, colour in ROLE_COLOURS.items():
         assert maps[role] == {colour}
-    assert "↺" in maps
+    assert maps["↺"] == set(ROLE_COLOURS.values())
     # the table and the Now tile colour the role text
     for title in ("Launches of this stage", "Now"):
         got = mapping_colours(t[title])
@@ -230,6 +234,62 @@ def test_not_started_issues_keep_their_slot():
     assert zero == [{"text": " ", "color": "transparent", "index": 0}]
     # the colour mode "thresholds" makes the state timeline show the threshold range, not the mapped role
     assert tl["fieldConfig"]["defaults"]["color"]["mode"] == "fixed"
+
+
+def _timeline_text(maps, value):
+    """The text and colour Grafana gives a state: the first mapping in index order that matches the text value
+    (a regex mapping matches only text, see the convertFieldType step)."""
+    s = str(value)
+    for m in sorted(maps, key=lambda m: min(r["index"] for r in (
+            [m["options"]["result"]] if m["type"] == "regex" else m["options"].values()))):
+        if m["type"] == "value" and s in m["options"]:
+            return m["options"][s]["text"], m["options"][s]["color"]
+        if m["type"] == "regex":
+            rx = re.compile(m["options"]["pattern"])
+            if rx.fullmatch(s):
+                res = m["options"]["result"]
+                return rx.sub(re.sub(r"\$(\d)", r"\\\1", res["text"]), s), res["color"]
+    return None
+
+
+def test_hover_shows_total_and_launch_details():
+    t = top(board())
+    # panels 2 and 3: a series "total" per issue, in the hover only: its own scale (a max of its own), so it is
+    # not stacked on the segments, and no fill
+    for title, scale in (("Tokens per issue, by role", " / 1e6"), ("Active time per issue, by role", "")):
+        p = t[title]
+        expr = p["targets"][0]["expr"]
+        assert re.search(r'or label_replace\(sum by \(issue\) \(sum_over_time\(agk:[a-z_]+:1m\{[^}]*\}\[\$__range\]\)\)'
+                         + re.escape(scale) + r' \* on \(issue\) group_left \(slot\) .*, "role", "total", "", ""\)$',
+                         expr), title
+        ov = next(o for o in p["fieldConfig"]["overrides"] if o["matcher"]["options"] == "total")
+        props = {x["id"]: x["value"] for x in ov["properties"]}
+        assert props["custom.hideFrom"] == {"legend": True, "tooltip": False, "viz": False}
+        assert props["custom.fillOpacity"] == 0
+        assert props["max"] >= 1e12
+        assert props["custom.axisPlacement"] == "hidden"
+        assert "unit" not in props  # the same unit as the segments
+        order = next(x for x in p["transformations"] if x["id"] == "organize")["options"]["indexByName"]
+        assert max(order, key=order.get) == "total"  # the last line of the hover
+    assert t["Tokens per issue, by role"]["fieldConfig"]["defaults"]["unit"] == "suffix: M"
+    assert t["Active time per issue, by role"]["fieldConfig"]["defaults"]["unit"] == "s"
+    # panel 4: the state is a number R N AAAA TTTTT (role, return, active minutes, tokens / 1e4), made text, and a
+    # regex mapping per role gives the hover text
+    tl = t["Timeline"]
+    conv = next(x for x in tl["transformations"] if x["id"] == "convertFieldType")["options"]["conversions"]
+    assert conv == [{"targetField": "Value", "destinationType": "string"}]
+    expr = tl["targets"][1]["expr"]
+    assert "* 1e10" in expr and "* 1e9" in expr and "* 1e5" in expr and "/ 1e4" in expr
+    assert "agk:active_seconds:1m" in expr and "agk:tokens:1m" in expr
+    maps = tl["fieldConfig"]["defaults"]["mappings"]
+    for n, (role, colour) in enumerate(ROLE_COLOURS.items(), start=1):
+        assert _timeline_text(maps, n * 10**10 + 9 * 10**5 + 99) == (
+            f"{role} · return 0 · 9 min active · 0.99 M tokens", colour)
+        assert _timeline_text(maps, n * 10**10 + 2 * 10**9 + 1234 * 10**5 + 12345) == (
+            f"↺ {role} · return 2 · 1234 min active · 123.45 M tokens", colour)
+        assert _timeline_text(maps, n * 10**10) == (f"{role} · return 0 · 0 min active · 0.00 M tokens", colour)
+    assert _timeline_text(maps, 0) == (" ", "transparent")
+    assert _timeline_text(maps, 1) == ("orchestrator", ROLE_COLOURS["orchestrator"])
 
 
 def test_now_panel_fields():
