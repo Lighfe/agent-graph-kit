@@ -1,0 +1,102 @@
+# Tests of agk.yml for `promtool test rules` (issue #312). The extension is .yaml on purpose: the
+# rule glob of prometheus.yml is *.yml, so Prometheus does not load this file as a rule file.
+# All data is synthetic. Each series has two samples one minute apart (0 at 0m, the value of the
+# minute at 1m), so the delta of the minute is exact. The rules are evaluated at 1m.
+#   docker run --rm -v "$PWD":/r --entrypoint promtool prom/prometheus:v3.15.0 test rules /r/agk_test.yaml
+rule_files:
+  - agk.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: tokens_go_to_marker_issue
+    interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{agk_project="p", model="m", query_source="subagent", agent_name="software-engineer", type="cacheRead"}'
+        values: '0 1000'
+      - series: 'agk_marker{agk_project="p", stage="s1", issue="10", role="engineer", launch="l1"}'
+        values: '1 1'
+    promql_expr_test:
+      - expr: 'agk:tokens:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:tokens:1m{agk_project="p", stage="s1", issue="10", role="engineer", launch="l1", kind="cache_read", model="m"}'
+            value: 1000
+
+  - name: orchestrator_time_not_twice
+    interval: 1m
+    input_series:
+      - series: 'claude_code_active_time_seconds_total{agk_project="p", type="cli", query_source="main"}'
+        values: '0 60'
+      - series: 'claude_code_active_time_seconds_total{agk_project="p", type="cli", query_source="subagent", agent_name="software-engineer"}'
+        values: '0 50'
+      - series: 'agk_marker{agk_project="p", stage="s1", issue="10", role="engineer", launch="l1"}'
+        values: '1 1'
+    promql_expr_test:
+      - expr: 'agk:active_seconds:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:active_seconds:1m{agk_project="p", stage="s1", issue="10", role="engineer", launch="l1"}'
+            value: 50
+          - labels: 'agk:active_seconds:1m{agk_project="p", stage="s1", issue="10", role="orchestrator", launch="l1"}'
+            value: 10
+
+  - name: codex_cached_input_split
+    interval: 1m
+    input_series:
+      - series: 'codex_turn_token_usage_sum{agk_project="p", token_type="input"}'
+        values: '0 100'
+      - series: 'codex_turn_token_usage_sum{agk_project="p", token_type="cached_input"}'
+        values: '0 80'
+      - series: 'agk_marker{agk_project="p", stage="s1", issue="10", role="qa-codex", launch="l2"}'
+        values: '1 1'
+    promql_expr_test:
+      - expr: 'agk:tokens:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:tokens:1m{agk_project="p", stage="s1", issue="10", role="qa-codex", launch="l2", kind="input"}'
+            value: 20
+          - labels: 'agk:tokens:1m{agk_project="p", stage="s1", issue="10", role="qa-codex", launch="l2", kind="cache_read"}'
+            value: 80
+
+  - name: stage_level_without_issue
+    interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{agk_project="p", model="m", query_source="main", type="output"}'
+        values: '0 300'
+      - series: 'agk_marker{agk_project="p", stage="s1", issue="", role="orchestrator", launch=""}'
+        values: '1 1'
+    promql_expr_test:
+      - expr: 'agk:tokens:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:tokens:1m{agk_project="p", stage="s1", role="orchestrator", kind="output", model="m"}'
+            value: 300
+
+  - name: no_marker_keeps_data
+    interval: 1m
+    input_series:
+      - series: 'claude_code_token_usage_tokens_total{agk_project="p", model="m", query_source="subagent", agent_name="pm", type="input"}'
+        values: '0 70'
+    promql_expr_test:
+      - expr: 'agk:tokens:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:tokens:1m{agk_project="p", role="pm", kind="input", model="m"}'
+            value: 70
+
+  - name: orchestrator_alone_and_cap
+    interval: 1m
+    input_series:
+      - series: 'claude_code_active_time_seconds_total{agk_project="p", type="cli", query_source="main"}'
+        values: '0 40'
+      - series: 'claude_code_active_time_seconds_total{agk_project="q", type="cli", query_source="subagent", agent_name="qa-engineer"}'
+        values: '0 90'
+    promql_expr_test:
+      - expr: 'agk:active_seconds:1m'
+        eval_time: 1m
+        exp_samples:
+          - labels: 'agk:active_seconds:1m{agk_project="p", role="orchestrator"}'
+            value: 40
+          - labels: 'agk:active_seconds:1m{agk_project="q", role="qa-claude"}'
+            value: 60
