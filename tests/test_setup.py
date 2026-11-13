@@ -502,3 +502,56 @@ def test_generated_agents_md_makes_no_false_claim_about_agents_or_skills_link(pr
     assert ".claude/agents" not in agents
     assert "symlink" not in agents and ".claude/skills" not in agents
     assert "come from the agk plugin" in agents and "`docs/team/`" in agents
+
+
+CLAUDE_KEYS = {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "OTEL_LOG_TOOL_DETAILS": "1",
+    "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+}
+
+
+def fence(stdout, lang):
+    start = stdout.index(f"```{lang}\n") + len(lang) + 4
+    return stdout[start:stdout.index("\n```", start)]
+
+
+def gh_printing(tmp_path, text):
+    b = fake_bin(tmp_path)
+    (b / "gh").write_text(f"#!/bin/sh\n[ \"$1\" = repo ] && echo '{text}'\nexit 0\n")
+    return b
+
+
+def test_setup_prints_otel_blocks(project, tmp_path):
+    import tomllib
+    r = run(project, tmp_path, bin_dir=gh_printing(tmp_path, "Synthetic/demo"))
+    assert r.returncode == 0, r.stderr
+    env = json.loads(fence(r.stdout, "json"))["env"]
+    assert env == {**CLAUDE_KEYS, "OTEL_RESOURCE_ATTRIBUTES": "agk.project=Synthetic/demo"}
+    otel = tomllib.loads(fence(r.stdout, "toml"))["otel"]
+    grpc = {"otlp-grpc": {"endpoint": "http://127.0.0.1:4317"}}
+    assert otel == {"log_user_prompt": False, "exporter": grpc, "metrics_exporter": grpc}
+    assert "OTEL_LOG_USER_PROMPTS" not in r.stdout and "<owner/name>" not in r.stdout
+    assert "OTEL" not in "".join(p.read_text() for p in project.rglob("*.json"))  # nothing is written for it
+
+
+def test_setup_prints_placeholder_without_owner_name(project, tmp_path):
+    r = run(project, tmp_path, bin_dir=fake_bin(tmp_path, gh=False))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(fence(r.stdout, "json"))["env"]["OTEL_RESOURCE_ATTRIBUTES"] == "agk.project=<owner/name>"
+    assert sum("replace <owner/name>" in l for l in r.stdout.splitlines()) == 1
+    assert "OTEL_LOG_USER_PROMPTS" not in r.stdout
+
+
+def test_monitor_skill_blocks_match_the_setup_output():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("agk_setup", SETUP)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    skill = (ROOT / "plugin/skills/monitor/SKILL.md").read_text()
+    assert mod.claude_otel_block("<owner/name>") in skill
+    assert mod.codex_otel_block() in skill

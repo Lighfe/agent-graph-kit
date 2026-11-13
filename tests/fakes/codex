@@ -57,6 +57,7 @@ def tree():
 if env("FAKE_TOOL_LOG"):
     with open(env("FAKE_TOOL_LOG"), "a", encoding="utf-8") as f:
         f.write(json.dumps({"tool": "codex", "argv": args, "cwd": os.getcwd(), "stdin": prompt,
+                            "otel_resource_attributes": env("OTEL_RESOURCE_ATTRIBUTES"),
                             "tree": tree()}) + "\n")
 
 mode = "ok"

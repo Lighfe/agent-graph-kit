@@ -60,6 +60,65 @@ AUTO_STEPS = [
 ]
 
 
+PLACEHOLDER = "<owner/name>"
+PLACEHOLDER_NOTE = "The project's owner/name could not be read (gh repo view failed); replace <owner/name> below by hand."
+OTEL_ENDPOINT = "http://127.0.0.1:4317"
+
+
+def project_slug(root: Path) -> str | None:
+    """`owner/name` of the project from `gh repo view`, or None."""
+    try:
+        p = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+                           cwd=root, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = p.stdout.strip()
+    ok = p.returncode == 0 and len(out.split("/")) == 2 and all(out.split("/")) and " " not in out
+    return out if ok else None
+
+
+def claude_otel_block(slug: str) -> str:
+    """The `env` block for the project's settings file (monitor SKILL.md, "Export settings")."""
+    env = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": OTEL_ENDPOINT,
+        "OTEL_LOG_TOOL_DETAILS": "1",
+        "OTEL_RESOURCE_ATTRIBUTES": f"agk.project={slug}",
+        "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+    }
+    return json.dumps({"env": env}, indent=2)
+
+
+def codex_otel_block() -> str:
+    """The `[otel]` table for `~/.codex/config.toml`: logs and metrics over OTLP gRPC, no trace exporter."""
+    grpc = f'{{ otlp-grpc = {{ endpoint = "{OTEL_ENDPOINT}" }} }}'
+    return f"[otel]\nlog_user_prompt = false\nexporter = {grpc}\nmetrics_exporter = {grpc}"
+
+
+def otel_step(root: Path) -> None:
+    """Print the two export blocks for the owner to paste. Writes no file: they are the owner's settings."""
+    slug = project_slug(root)
+    print()
+    print("Export settings (OTel to the local Collector, optional; you set them by hand):")
+    if slug is None:
+        print(PLACEHOLDER_NOTE)
+    print()
+    print("Claude Code: merge into the `env` of the settings file of this project (.claude/settings.json):")
+    print()
+    print("```json")
+    print(claude_otel_block(slug or PLACEHOLDER))
+    print("```")
+    print()
+    print("Codex: add to ~/.codex/config.toml:")
+    print()
+    print("```toml")
+    print(codex_otel_block())
+    print("```")
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -316,6 +375,7 @@ def main(argv: list[str]) -> int:
     gitignore_step(root)
     settings_step(root)
     manual_checks(root, Path(a.home))
+    otel_step(root)
     return 0
 
 

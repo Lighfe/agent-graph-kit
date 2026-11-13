@@ -569,6 +569,35 @@ def codex_env_args(uv_cache: Path | None) -> list[str]:
     return ["-c", "shell_environment_policy.set={" + ",".join(pairs) + "}"]
 
 
+OTEL_ENDPOINT = "http://127.0.0.1:4317"
+PROJECT_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+
+
+def otel_args(project: str) -> list[str]:
+    """The OTel exporter overrides of one Codex run (#311). The run uses `--ignore-user-config`, so the
+    owner's `[otel]` block in `~/.codex/config.toml` is not read; only `-c` overrides count. Logs and
+    metrics to the local Collector over OTLP gRPC, no trace exporter (the Collector has no traces
+    pipeline), the prompt text off. No project (`unknown`): no export, the Collector would drop it.
+    Checked with Codex 0.153.4 (monitor SKILL.md, "Export settings"). Never read back: an exporter
+    that cannot reach the Collector changes no QA result."""
+    if not PROJECT_SLUG.fullmatch(project):
+        return []
+    grpc = "{otlp-grpc={endpoint=" + json.dumps(OTEL_ENDPOINT) + "}}"
+    return ["-c", "otel.exporter=" + grpc, "-c", "otel.metrics_exporter=" + grpc,
+            "-c", "otel.log_user_prompt=false"]
+
+
+def otel_env(project: str, environ) -> dict:
+    """The environment of the Codex run with the resource attribute `agk.project=<owner/name>` (#311):
+    Codex puts `OTEL_RESOURCE_ATTRIBUTES` on its OTel resource. An `agk.project` entry that is already
+    there is replaced; other entries stay. No project: the environment as it is."""
+    if not PROJECT_SLUG.fullmatch(project):
+        return dict(environ)
+    kept = [e for e in environ.get("OTEL_RESOURCE_ATTRIBUTES", "").split(",")
+            if e.strip() and not e.strip().startswith("agk.project=")]
+    return {**environ, "OTEL_RESOURCE_ATTRIBUTES": ",".join([*kept, f"agk.project={project}"])}
+
+
 def _remove_worktree(repo: Path, worktree: Path) -> None:
     if _git("worktree", "remove", "--force", "--force", str(worktree), cwd=repo).returncode != 0:
         shutil.rmtree(worktree, ignore_errors=True)
@@ -1394,7 +1423,8 @@ def _main(argv: list[str], sleep) -> int:
         # the monitor smoke check (#319): outside the sandbox; a failed step is a result, not a failure
         monitor_dir = tmp / MONITOR_DIR
         run_monitor_check(worktree, monitor_dir, tmp / "monitor-state")
-        sandbox = QA_SANDBOX + codex_env_args(uv_cache)
+        sandbox = QA_SANDBOX + codex_env_args(uv_cache) + otel_args(project)
+        os.environ.update(otel_env(project, os.environ))  # the tag of the Codex runs (#311)
         prefix, no_cap = memory_cap()  # once per launch, before the first Codex run (#304)
         if not prefix:
             print(f"qa-codex: {no_cap}; Codex runs without the outer memory cap", file=sys.stderr)

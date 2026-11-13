@@ -66,6 +66,40 @@ marimo and polars are not part of the setup (`/agk:setup` does not install them)
 - Tags: pick a case, write a free-text tag and a note, and save. There are no preset tags or causes; the tag filter offers the tags in use and "no tag". Each save appends one line `{case_id, tag, note, time}` (UTC) to the tag file `retry-tags.jsonl` in the same state folder, with mode 0600; the last line per case wins, so an empty tag and note clears the tag. A collect rewrites only the case file: tags stay, and a tag of a case that is no longer in the case file stays in the tag file but is not shown.
 - Refresh: the button runs `steps.py collect --project <chosen project>` in the current folder; with a chosen stage it then runs `cases.py collect --project <project> --repo-slug <project> --stage <stage>`, and the notebook reads the step rows, cases and tags again. With no stage chosen, no case collect runs. The stage list is read when the notebook opens or the project changes, so a refresh keeps the chosen stage. Opening or exporting the notebook runs no collect and writes no tag line.
 
+## Export settings
+
+Claude Code and Codex send their OTel data to the Collector of the monitoring stack (below) when you set these two blocks. They are your own settings files, so you paste them by hand; no agent edits them. `/agk:setup` prints the same two blocks with the project's `owner/name` filled in. When it cannot read `owner/name` (`gh repo view` fails), it prints the placeholder `<owner/name>` and one line that says to replace it. Spec: `docs/specs/2026-11-13-otel-monitoring-boards.md`, Part A. Replace `<owner/name>` by the `owner/name` of your project.
+
+Claude Code: merge into the `env` of the project's `.claude/settings.json`. `OTEL_LOG_USER_PROMPTS` is not set, so prompt text is not exported.
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "OTEL_LOG_TOOL_DETAILS": "1",
+    "OTEL_RESOURCE_ATTRIBUTES": "agk.project=<owner/name>",
+    "OTEL_METRIC_EXPORT_INTERVAL": "60000"
+  }
+}
+```
+
+Codex: add to `~/.codex/config.toml` (Codex ignores `otel` in a project-level config). Logs and metrics only: the Collector has no traces pipeline.
+
+```toml
+[otel]
+log_user_prompt = false
+exporter = { otlp-grpc = { endpoint = "http://127.0.0.1:4317" } }
+metrics_exporter = { otlp-grpc = { endpoint = "http://127.0.0.1:4317" } }
+```
+
+- Key names, checked against Codex 0.153.4: the `[otel]` table has the keys `exporter` (logs), `trace_exporter`, `metrics_exporter`, `log_user_prompt` and `environment`, read from the installed binary. A wrong exporter variant is refused by `codex exec -c 'otel.exporter={bogus={endpoint="x"}}'` with `unknown variant ... expected one of none, statsig, otlp-http, otlp-grpc`, and `otlp-grpc` is accepted. Codex has no key for agent responses, so there is nothing to switch off for them; `log_user_prompt = false` is the prompt switch. The Collector deletes the response attributes as a second guard (see "Monitoring stack"). Codex tool output is exported in clear text and has no switch (`docs/research/observability-in-agent-graphs.md`, 3.1).
+- `scripts/qa-codex` runs `codex exec --ignore-user-config`, so your `[otel]` block is not read for QA runs. It passes the same exporters as `-c otel.exporter=...`, `-c otel.metrics_exporter=...` and `-c otel.log_user_prompt=false` on the `codex exec` command line, and sets `OTEL_RESOURCE_ATTRIBUTES=agk.project=<owner/name>` in the environment of the run (the `owner/name` of the issue URL; an `agk.project` entry already there is replaced, other entries stay). Checked with Codex 0.153.4: a run with that variable sent logs whose resource attributes held `agk.project`. When the project is unknown, it passes neither. The sandbox arguments do not change, and an exporter that cannot reach the Collector changes no QA result, retry count or comment.
+- No trace exporter is set for either tool.
+
 ## Monitoring stack (optional)
 
 `board.py` starts and stops an optional stack of four Docker containers: the OTel Collector, Prometheus, Loki and Grafana. Docker is needed for this part only; the rest of the skill runs without it. `/agk:setup` does not install Docker. Spec: `docs/specs/2026-11-13-otel-monitoring-boards.md`, Part B. Run it from the project root the first time (it reads the project from the current folder):

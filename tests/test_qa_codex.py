@@ -134,6 +134,7 @@ class QaEnv:
             "QA_CODEX_USAGE_FILE": str(tmp / "usage-state" / "codex-qa-usage.jsonl"),
             "CODEX_RUNS_DIR": str(tmp / "runs-state" / "codex-runs"),
             "TZ": "UTC",
+            "OTEL_RESOURCE_ATTRIBUTES": "",  # set in-process by the launcher (#311); teardown restores it
         }
         for key, value in env.items():
             monkeypatch.setenv(key, value)
@@ -1315,6 +1316,33 @@ UV_FILL = ["run", "--no-project", "--no-config", "--with", "pytest", "pytest", "
 def _codex_argv(env):
     (call,) = env.calls("codex")
     return call["argv"]
+
+
+def test_qa_codex_passes_project_tag(qa_env):
+    """#311: the codex command carries the OTel exporter overrides (gRPC, logs and metrics, no traces,
+    prompt off) and the run environment carries `agk.project=<owner/name>` of the issue URL."""
+    import tomllib
+    qa_env.run(["ok"])
+    (call,) = qa_env.calls("codex")
+    argv = call["argv"]
+    assert call["otel_resource_attributes"] == "agk.project=Synthetic/demo"
+    keys = {}
+    for i, a in enumerate(argv):
+        if a.startswith("otel.") and argv[i - 1] == "-c":
+            key, value = a.split("=", 1)
+            keys[key] = tomllib.loads("v = " + value)["v"]
+    grpc = {"otlp-grpc": {"endpoint": "http://127.0.0.1:4317"}}
+    assert keys == {"otel.exporter": grpc, "otel.metrics_exporter": grpc, "otel.log_user_prompt": False}
+    assert "otel.trace_exporter" not in " ".join(argv)
+    start = argv.index("--enable")
+    assert argv[start:start + len(qa.QA_SANDBOX)] == qa.QA_SANDBOX  # the sandbox arguments do not change
+
+
+def test_launcher_keeps_other_resource_attributes_and_skips_unknown_project():
+    env = qa.otel_env("a/b", {"OTEL_RESOURCE_ATTRIBUTES": "x=1,agk.project=old/one"})
+    assert env["OTEL_RESOURCE_ATTRIBUTES"] == "x=1,agk.project=a/b"
+    assert qa.otel_env("unknown", {"K": "v"}) == {"K": "v"}
+    assert qa.otel_args("unknown") == []
 
 
 def _env_flag(cache):
