@@ -58,10 +58,10 @@
       "id": 1,
       "type": "stat",
       "title": "Now",
-      "description": "The subagent in work now: role, issue, return number, active time, tokens, time since its last step, last tool and target. Only the orchestrator: \"orchestrator\" and its last tool. A tile \"facts age\" shows only when the facts are more than 2 minutes old.",
+      "description": "The subagent in work now: role, issue, return number, active time, tokens, time since its last step (the last minute with token use), last tool and target. Only the orchestrator: role \"orchestrator\" and its last tool. A tile \"facts age\" shows only when the facts are more than 2 minutes old.",
       "datasource": {
-        "type": "prometheus",
-        "uid": "agk-prometheus"
+        "type": "datasource",
+        "uid": "-- Mixed --"
       },
       "gridPos": {
         "x": 0,
@@ -144,6 +144,19 @@
           "editorMode": "code",
           "legendFormat": "facts age",
           "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "agk-prometheus"
+          },
+          "refId": "G",
+          "expr": "time() - max(max_over_time(timestamp(agk:tokens:1m{agk_project=\"$project\"} > 0)[$__range:1m]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "legendFormat": "since last step",
+          "format": "time_series"
         }
       ],
       "transformations": [
@@ -167,18 +180,18 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "/^(role|issue|return|active time|tokens|Time|tool_name|file_path|full_command|facts age)$/",
+          "fields": "/^(role|issue|return|active time|tokens|since last step|tool_name|file_path|full_command|facts age)$/",
           "values": false
         },
         "textMode": "value_and_name",
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
-        "orientation": "horizontal",
+        "orientation": "auto",
         "justifyMode": "auto"
       },
       "fieldConfig": {
         "defaults": {
-          "noValue": "orchestrator",
+          "noValue": "-",
           "color": {
             "mode": "fixed",
             "fixedColor": "#DDDDDD"
@@ -206,22 +219,6 @@
               {
                 "id": "unit",
                 "value": "short"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Time"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "dateTimeFromNow"
-              },
-              {
-                "id": "displayName",
-                "value": "since last step"
               }
             ]
           },
@@ -325,6 +322,18 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "since last step"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
           }
         ]
       }
@@ -333,7 +342,7 @@
       "id": 2,
       "type": "barchart",
       "title": "Tokens per issue, by role",
-      "description": "Tokens in millions per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median.",
+      "description": "Tokens in millions per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median. The hover shows each segment; the built-in bar chart has no total line.",
       "datasource": {
         "type": "prometheus",
         "uid": "agk-prometheus"
@@ -351,7 +360,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "A",
-          "expr": "(sum by (issue, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) / 1e6 * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "expr": "(sum by (issue, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) / 1e6 * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -397,7 +406,7 @@
         "stacking": "normal",
         "showValue": "never",
         "orientation": "auto",
-        "xTickLabelRotation": -45,
+        "xTickLabelRotation": -30,
         "xTickLabelSpacing": 0,
         "barWidth": 0.8,
         "groupWidth": 0.7,
@@ -409,7 +418,8 @@
         "tooltip": {
           "mode": "multi",
           "sort": "none"
-        }
+        },
+        "xTickLabelMaxLength": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -537,11 +547,18 @@
             },
             "properties": [
               {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "transparent"
+                }
+              },
+              {
                 "id": "custom.hideFrom",
                 "value": {
                   "legend": true,
                   "tooltip": true,
-                  "viz": true
+                  "viz": false
                 }
               }
             ]
@@ -553,7 +570,7 @@
       "id": 3,
       "type": "barchart",
       "title": "Active time per issue, by role",
-      "description": "Active time per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median.",
+      "description": "Active time per issue of the stage, in execution order, one segment per role. Issues not started yet are empty slots. The dashed grey line for the typical issue (median of the earlier stages of the project, needs three earlier stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median. The hover shows each segment; the built-in bar chart has no total line.",
       "datasource": {
         "type": "prometheus",
         "uid": "agk-prometheus"
@@ -571,7 +588,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "A",
-          "expr": "(sum by (issue, role) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "expr": "(sum by (issue, role) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -617,7 +634,7 @@
         "stacking": "normal",
         "showValue": "never",
         "orientation": "auto",
-        "xTickLabelRotation": -45,
+        "xTickLabelRotation": -30,
         "xTickLabelSpacing": 0,
         "barWidth": 0.8,
         "groupWidth": 0.7,
@@ -629,7 +646,8 @@
         "tooltip": {
           "mode": "multi",
           "sort": "none"
-        }
+        },
+        "xTickLabelMaxLength": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -757,11 +775,18 @@
             },
             "properties": [
               {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "transparent"
+                }
+              },
+              {
                 "id": "custom.hideFrom",
                 "value": {
                   "legend": true,
                   "tooltip": true,
-                  "viz": true
+                  "viz": false
                 }
               }
             ]
@@ -803,7 +828,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "B",
-          "expr": "max by (slot) (max by (issue) ((agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch!~\".*-1\"} * 1 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch=~\".*-1\"} * 1) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch!~\".*-1\"} * 2 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch=~\".*-1\"} * 2) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch!~\".*-1\"} * 3 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch=~\".*-1\"} * 3) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch!~\".*-1\"} * 4 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch=~\".*-1\"} * 4) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch!~\".*-1\"} * 5 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch=~\".*-1\"} * 5) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch!~\".*-1\"} * 6 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch=~\".*-1\"} * 6) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch!~\".*-1\"} * 7 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch=~\".*-1\"} * 7)) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,28}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\"))",
+          "expr": "max by (slot) ((max by (issue) ((agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch!~\".*-1\"} * 1 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"orchestrator\",launch=~\".*-1\"} * 1) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch!~\".*-1\"} * 2 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"pm\",launch=~\".*-1\"} * 2) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch!~\".*-1\"} * 3 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"engineer\",launch=~\".*-1\"} * 3) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch!~\".*-1\"} * 4 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-codex\",launch=~\".*-1\"} * 4) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch!~\".*-1\"} * 5 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"qa-claude\",launch=~\".*-1\"} * 5) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch!~\".*-1\"} * 6 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role=\"planner\",launch=~\".*-1\"} * 6) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch!~\".*-1\"} * 7 + 10) or (agk_marker{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!~\"orchestrator|pm|engineer|qa-codex|qa-claude|planner\",launch=~\".*-1\"} * 7)) * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_join(label_replace(label_replace(label_replace(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"},\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0))",
           "instant": false,
           "range": true,
           "editorMode": "code",
@@ -830,9 +855,20 @@
             "lineWidth": 0
           },
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#DDDDDD"
           },
           "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": " ",
+                  "color": "transparent",
+                  "index": 0
+                }
+              }
+            },
             {
               "type": "value",
               "options": {
@@ -973,16 +1009,7 @@
                 }
               }
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#DDDDDD",
-                "value": null
-              }
-            ]
-          }
+          ]
         },
         "overrides": []
       }
@@ -1063,7 +1090,7 @@
       "id": 6,
       "type": "table",
       "title": "Launches of this stage",
-      "description": "One row per launch, newest first. A teal dot before the role marks a running launch. The marker columns show \"▲\" when the launch is above the 75th percentile of the same role in the other stages of the project (needs three earlier stages; the built-in table cannot colour a cell by a per-row threshold). Return is the attempt number minus one.",
+      "description": "One row per launch of a subagent on an issue, newest first (the tokens of the orchestrator are in the bar charts, not here). A teal dot before the role marks a running launch. The marker columns show \"▲\" when the launch is above the 75th percentile of the same role in the other stages of the project (needs three earlier stages; the built-in table cannot colour a cell by a per-row threshold). Return is the attempt number minus one.",
       "datasource": {
         "type": "prometheus",
         "uid": "agk-prometheus"
@@ -1081,7 +1108,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "A",
-          "expr": "label_replace((label_replace(sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) and on (launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"}, \"role\", \"● $1\", \"role\", \"(.*)\") or (sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) unless on (launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"})), \"attempt\", \"$1\", \"launch\", \".*-(\\\\d+)$\")",
+          "expr": "label_replace((label_replace(label_join(sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])), \"key\", \"/\", \"issue\", \"role\", \"launch\") and on (issue, role, launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"}, \"role\", \"● $1\", \"role\", \"(.*)\") or (label_join(sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])), \"key\", \"/\", \"issue\", \"role\", \"launch\") unless on (issue, role, launch) agk_marker{agk_project=\"$project\",stage=\"$stage\"})), \"attempt\", \"$1\", \"launch\", \".*-(\\\\d+)$\")",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1093,7 +1120,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "B",
-          "expr": "((sum by (role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1)",
+          "expr": "sum by (key) (label_join((((sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (stage, issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\",role!=\"orchestrator\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1) or (sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])) * 0)), \"key\", \"/\", \"issue\", \"role\", \"launch\"))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1105,7 +1132,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "C",
-          "expr": "sum by (launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range]))",
+          "expr": "sum by (key) (label_join(sum by (issue, role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])), \"key\", \"/\", \"issue\", \"role\", \"launch\"))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1117,7 +1144,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "D",
-          "expr": "((sum by (role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1)",
+          "expr": "sum by (key) (label_join((((sum by (issue, role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])) > on (role) group_left () quantile by (role) (0.75, sum by (stage, issue, role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\",role!=\"orchestrator\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) * 0 + 1) or (sum by (issue, role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range])) * 0)), \"key\", \"/\", \"issue\", \"role\", \"launch\"))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1129,7 +1156,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "E",
-          "expr": "topk by (launch) (1, sum by (launch, model) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])))",
+          "expr": "topk by (key) (1, sum by (key, model) (label_join(sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"}[$__range]), \"key\", \"/\", \"issue\", \"role\", \"launch\")))",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1141,7 +1168,7 @@
             "uid": "agk-prometheus"
           },
           "refId": "F",
-          "expr": "min by (launch) (min_over_time(timestamp(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"})[$__range:1m])) * 1000",
+          "expr": "min by (key) (label_join(min_over_time(timestamp(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\",role!=\"orchestrator\"})[$__range:1m]), \"key\", \"/\", \"issue\", \"role\", \"launch\")) * 1000",
           "instant": true,
           "range": false,
           "editorMode": "code",
@@ -1152,7 +1179,7 @@
         {
           "id": "joinByField",
           "options": {
-            "byField": "launch",
+            "byField": "key",
             "mode": "outer"
           }
         },
@@ -1192,23 +1219,27 @@
           }
         },
         {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "issue",
+                "role",
+                "Value #A",
+                "Value #B",
+                "Value #C",
+                "Value #D",
+                "return",
+                "model",
+                "Value #F"
+              ]
+            }
+          }
+        },
+        {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true,
-              "Time 4": true,
-              "Time 5": true,
-              "Time 6": true,
-              "launch": true,
-              "attempt": true,
-              "model 1": true,
-              "role 1": true,
-              "role 2": true,
-              "role 3": true
-            },
+            "excludeByName": {},
             "indexByName": {
               "issue": 0,
               "role": 1,
@@ -1340,6 +1371,12 @@
                     }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
@@ -1347,6 +1384,18 @@
             "matcher": {
               "id": "byName",
               "options": "Value #A"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokens"
             },
             "properties": [
               {
@@ -1373,8 +1422,61 @@
                         "index": 0
                       }
                     }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": " ",
+                        "index": 1
+                      }
+                    }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokens above typical"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "▲",
+                        "color": "#CC6677",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": " ",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
@@ -1382,6 +1484,18 @@
             "matcher": {
               "id": "byName",
               "options": "Value #C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active time"
             },
             "properties": [
               {
@@ -1408,43 +1522,23 @@
                         "index": 0
                       }
                     }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Value #F"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "time:HH:mm:ss"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "tokens above typical"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
+                  },
                   {
                     "type": "value",
                     "options": {
-                      "1": {
-                        "text": "▲",
-                        "color": "#CC6677",
-                        "index": 0
+                      "0": {
+                        "text": " ",
+                        "index": 1
                       }
                     }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
@@ -1466,8 +1560,35 @@
                         "index": 0
                       }
                     }
+                  },
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": " ",
+                        "index": 1
+                      }
+                    }
                   }
                 ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #F"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:HH:mm:ss"
               }
             ]
           },
@@ -1480,30 +1601,6 @@
               {
                 "id": "unit",
                 "value": "time:HH:mm:ss"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "tokens"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "active time"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
               }
             ]
           }
@@ -1744,8 +1841,8 @@
           "title": "API requests per minute, Claude and Codex",
           "description": "API requests per minute, Claude and Codex",
           "datasource": {
-            "type": "prometheus",
-            "uid": "agk-prometheus"
+            "type": "loki",
+            "uid": "agk-loki"
           },
           "gridPos": {
             "x": 0,
@@ -1841,8 +1938,8 @@
           "title": "API latency p50 and p95",
           "description": "API latency p50 and p95",
           "datasource": {
-            "type": "prometheus",
-            "uid": "agk-prometheus"
+            "type": "loki",
+            "uid": "agk-loki"
           },
           "gridPos": {
             "x": 12,
@@ -1857,7 +1954,7 @@
                 "uid": "agk-loki"
               },
               "refId": "A",
-              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m])",
+              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m]) by (agk_project)",
               "editorMode": "code",
               "queryType": "range",
               "legendFormat": "Claude p50"
@@ -1868,7 +1965,7 @@
                 "uid": "agk-loki"
               },
               "refId": "B",
-              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m])",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.api_request\" | unwrap duration_ms [5m]) by (agk_project)",
               "editorMode": "code",
               "queryType": "range",
               "legendFormat": "Claude p95"
@@ -1879,7 +1976,7 @@
                 "uid": "agk-loki"
               },
               "refId": "C",
-              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m])",
+              "expr": "quantile_over_time(0.5, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m]) by (agk_project)",
               "editorMode": "code",
               "queryType": "range",
               "legendFormat": "Codex p50"
@@ -1890,7 +1987,7 @@
                 "uid": "agk-loki"
               },
               "refId": "D",
-              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m])",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"codex.api_request\" | unwrap duration_ms [5m]) by (agk_project)",
               "editorMode": "code",
               "queryType": "range",
               "legendFormat": "Codex p95"
@@ -1990,8 +2087,8 @@
           "title": "API errors",
           "description": "API errors per minute, in the error colour.",
           "datasource": {
-            "type": "prometheus",
-            "uid": "agk-prometheus"
+            "type": "loki",
+            "uid": "agk-loki"
           },
           "gridPos": {
             "x": 0,
@@ -2087,8 +2184,8 @@
           "title": "Tool calls by tool and p95 tool duration",
           "description": "Tool calls per minute by tool, and the p95 tool duration (right axis; a call above two minutes is a long tool call).",
           "datasource": {
-            "type": "prometheus",
-            "uid": "agk-prometheus"
+            "type": "loki",
+            "uid": "agk-loki"
           },
           "gridPos": {
             "x": 12,
@@ -2114,7 +2211,7 @@
                 "uid": "agk-loki"
               },
               "refId": "B",
-              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.tool_result\" | unwrap duration_ms [5m])",
+              "expr": "quantile_over_time(0.95, {agk_project=\"$project\"} |= \"claude_code.tool_result\" | unwrap duration_ms [5m]) by (agk_project)",
               "editorMode": "code",
               "queryType": "range",
               "legendFormat": "p95 duration (ms)"

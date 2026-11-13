@@ -156,6 +156,16 @@ def test_launch_table_columns():
     assert [rename.get(n, n) for n in order] == TABLE_COLUMNS
     sort = next(t for t in p["transformations"] if t["id"] == "sortBy")["options"]["sort"]
     assert sort == [{"field": "Value #F", "desc": True}]
+    # one row per launch of an issue: the queries join on a key of issue, role and launch (the launch name alone,
+    # for example engineer-1, repeats on every issue), and only query A carries the label columns
+    join = next(t for t in p["transformations"] if t["id"] == "joinByField")["options"]
+    assert join == {"byField": "key", "mode": "outer"}
+    for t in p["targets"]:
+        assert '"key", "/", "issue", "role", "launch"' in t["expr"], t["refId"]
+        if t["refId"] != "A":
+            assert re.match(r"(sum|min|topk) by \(key\) \(", t["expr"]), t["refId"]
+    keep = next(t for t in p["transformations"] if t["id"] == "filterFieldsByName")["options"]["include"]["names"]
+    assert keep == order
     # no fixed width, no wrap
     assert p["fieldConfig"]["defaults"]["custom"]["wrapText"] is False
     for o in p["fieldConfig"]["overrides"]:
@@ -170,10 +180,69 @@ def test_launch_table_columns():
         ov = next(o for o in p["fieldConfig"]["overrides"] if o["matcher"]["options"] == name)
         maps = next(pr["value"] for pr in ov["properties"] if pr["id"] == "mappings")
         assert maps[0]["options"]["1"] == {"text": "▲", "color": ROSE, "index": 0}
+        # a table cell shows a mapping colour only as coloured text
+        assert {"id": "custom.cellOptions", "value": {"type": "color-text"}} in ov["properties"]
+        # the marker column is always there: the query gives 0 for a launch that is not above the p75
+        assert maps[1]["options"]["0"]["text"].strip() == ""
+    for ref in ("B", "D"):
+        assert re.search(r"\* 0 \+ 1\) or \(sum by \(issue, role, launch\) .* \* 0\)", by_ref[ref]), ref
+        # the p75 is over the launches of the other stages, one value per launch of an issue
+        assert "sum by (stage, issue, role, launch)" in by_ref[ref], ref
     # the running launch: a teal dot before the role, by value mapping
     assert mapping_colours(p)["^● .*"] == TEAL
     assert "● $1" in by_ref["A"]
     assert "agk_marker" in by_ref["A"]
+
+
+def test_panel_data_source_fits_its_queries():
+    """Grafana sends every query of a panel to the data source of the panel, unless that is "-- Mixed --".
+    A Loki query in a Prometheus panel is a query error (the warning icon of the Now panel)."""
+    for p in panels(board()):
+        kinds = {t["datasource"]["type"] for t in p.get("targets", [])}
+        if not kinds:
+            continue
+        if len(kinds) > 1:
+            assert p["datasource"] == {"type": "datasource", "uid": "-- Mixed --"}, p["title"]
+        else:
+            assert p["datasource"]["type"] in kinds, p["title"]
+            assert p["datasource"]["uid"] in ("agk-prometheus", "agk-loki"), p["title"]
+    assert top(board())["Now"]["datasource"]["uid"] == "-- Mixed --"
+
+
+def test_not_started_issues_keep_their_slot():
+    """An issue with no data has the series "pending" with value 0. The bar chart must draw that series (with no
+    colour): a field that is hidden from the chart leaves "No numeric fields found" when no issue has data."""
+    t = top(board())
+    for title in ("Tokens per issue, by role", "Active time per issue, by role"):
+        p = t[title]
+        expr = p["targets"][0]["expr"]
+        assert re.search(r'label_replace\(.*agk_issue_info.* \* 0, "role", "pending", "", ""\) unless on \(issue\)', expr)
+        ov = next(o for o in p["fieldConfig"]["overrides"] if o["matcher"]["options"] == "pending")
+        props = {x["id"]: x["value"] for x in ov["properties"]}
+        assert props["custom.hideFrom"] == {"legend": True, "tooltip": True, "viz": False}
+        assert props["color"] == {"mode": "fixed", "fixedColor": "transparent"}
+        matrix = next(x for x in p["transformations"] if x["id"] == "groupingToMatrix")["options"]
+        assert (matrix["rowField"], matrix["columnField"], matrix["valueField"]) == ("slot", "role", "Value")
+    # the timeline has a row for each issue of the stage, also with no launch: value 0, no colour
+    tl = t["Timeline"]
+    assert re.search(r"or \(label_join\(.*agk_issue_info.*\) \* 0\)\)$", tl["targets"][1]["expr"])
+    zero = [m["options"]["0"] for m in tl["fieldConfig"]["defaults"]["mappings"] if "0" in m["options"]]
+    assert zero == [{"text": " ", "color": "transparent", "index": 0}]
+    # the colour mode "thresholds" makes the state timeline show the threshold range, not the mapped role
+    assert tl["fieldConfig"]["defaults"]["color"]["mode"] == "fixed"
+
+
+def test_now_panel_fields():
+    p = top(board())["Now"]
+    assert p["options"]["orientation"] == "auto"
+    assert p["options"]["colorMode"] == "value"  # with "none" the role tile has no role colour
+    shown = p["options"]["reduceOptions"]["fields"]
+    for name in ("role", "issue", "return", "active time", "tokens", "since last step", "tool_name", "facts age"):
+        assert name in shown
+    legends = {t.get("legendFormat") for t in p["targets"]}
+    assert {"return", "active time", "tokens", "since last step", "facts age"} <= legends
+    age = next(t for t in p["targets"] if t.get("legendFormat") == "facts age")
+    assert age["expr"] == "(time() - agk_facts_last_success_seconds) > 120"
 
 
 def test_builtin_panels_only():
@@ -181,6 +250,9 @@ def test_builtin_panels_only():
     for p in panels(b):
         assert p["type"] in ALLOWED_TYPES, p["title"]
         assert "pluginVersion" not in p
+    for p in panels(b):
+        if p["type"] != "row":
+            assert p["datasource"]["uid"] in ("agk-prometheus", "agk-loki", "-- Mixed --"), p["title"]
     uids = {t["datasource"]["uid"] for _, t in queries(b)}
     assert uids <= {"agk-prometheus", "agk-loki"}
     assert {t["datasource"]["type"] for _, t in queries(b)} <= {"prometheus", "loki"}
@@ -213,7 +285,7 @@ RECORDED = {"agk:tokens:1m", "agk:active_seconds:1m"}
 FACTS = {"agk_issue_info", "agk_marker", "agk_usage_limit_percent", "agk_facts_last_success_seconds"}
 LABELS = {"agk_project", "stage", "issue", "title", "order", "role", "launch", "kind", "model", "provider", "window"}
 # labels that a query makes itself (label_replace, label_join) or that the Claude counters carry
-DERIVED = {"ord", "short", "slot", "attempt", "type"}
+DERIVED = {"ord", "short", "slot", "attempt", "type", "key"}
 # attributes of the Loki events (structured metadata)
 LOKI_FIELDS = {"tool_name", "duration_ms"}
 EVENTS = {"claude_code.tool_result", "claude_code.api_request", "claude_code.api_error", "codex.api_request"}
