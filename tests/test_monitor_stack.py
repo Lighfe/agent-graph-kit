@@ -222,8 +222,10 @@ def test_grafana_login_rules_and_provisioned_data_sources():
 
 
 def test_removed_files_are_gone():
-    for rel in ("store.py", "grafana/boards/history.json", "grafana/boards/monitor-stub.json"):
+    for rel in ("store.py", "grafana/boards/monitor-stub.json"):
         assert not (SKILL / rel).exists(), rel
+    # history.json is the OTel history board of issue #314 now, not the SQLite board of Stage 20
+    assert "sqlite" not in (SKILL / "grafana/boards/history.json").read_text(encoding="utf-8").lower()
     for rel in ("tests/test_monitor_store.py", "tests/test_monitor_boards.py"):
         assert not (ROOT / rel).exists(), rel
 

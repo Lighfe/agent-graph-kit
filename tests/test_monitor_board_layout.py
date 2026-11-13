@@ -1,7 +1,7 @@
-"""Tests for the live board of the monitor skill (issue #313): `grafana/boards/live.json`.
+"""Tests for the boards of the monitor skill: the live board (issue #313, `grafana/boards/live.json`) and the
+history board (issue #314, `grafana/boards/history.json`).
 
-No test needs Grafana or Docker. The checks read the board JSON only. The helper `panels(board)` also
-serves the history board test of issue #314."""
+No test needs Grafana or Docker. The checks read the board JSON only."""
 
 import json
 import re
@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "plugin" / "skills" / "monitor"
 LIVE = SKILL / "grafana" / "boards" / "live.json"
+HISTORY = SKILL / "grafana" / "boards" / "history.json"
 RULES = SKILL / "otel" / "rules" / "agk.yml"
 
 ROLE_COLOURS = {"orchestrator": "#332288", "pm": "#DDCC77", "engineer": "#117733", "qa-codex": "#88CCEE",
@@ -46,6 +47,13 @@ TABLE_COLUMNS = ["issue", "role", "tokens", "tokens above typical", "active time
 
 def board():
     return json.loads(LIVE.read_text(encoding="utf-8"))
+
+
+def history():
+    return json.loads(HISTORY.read_text(encoding="utf-8"))
+
+
+BOARDS = pytest.mark.parametrize("load", [board, history], ids=["live", "history"])
 
 
 def panels(board):
@@ -212,10 +220,11 @@ def test_launch_table_columns():
     assert "agk_marker" in by_ref["A"]
 
 
-def test_panel_data_source_fits_its_queries():
+@BOARDS
+def test_panel_data_source_fits_its_queries(load):
     """Grafana sends every query of a panel to the data source of the panel, unless that is "-- Mixed --".
     A Loki query in a Prometheus panel is a query error (the warning icon of the Now panel)."""
-    for p in panels(board()):
+    for p in panels(load()):
         kinds = {t["datasource"]["type"] for t in p.get("targets", [])}
         if not kinds:
             continue
@@ -224,7 +233,8 @@ def test_panel_data_source_fits_its_queries():
         else:
             assert p["datasource"]["type"] in kinds, p["title"]
             assert p["datasource"]["uid"] in ("agk-prometheus", "agk-loki"), p["title"]
-    assert top(board())["Now"]["datasource"]["uid"] == "-- Mixed --"
+    if load is board:
+        assert top(board())["Now"]["datasource"]["uid"] == "-- Mixed --"
 
 
 def test_not_started_issues_keep_their_slot():
@@ -319,8 +329,9 @@ def test_now_panel_fields():
     assert age["expr"] == "(time() - agk_facts_last_success_seconds) > 120"
 
 
-def test_builtin_panels_only():
-    b = board()
+@BOARDS
+def test_builtin_panels_only(load):
+    b = load()
     for p in panels(b):
         assert p["type"] in ALLOWED_TYPES, p["title"]
         assert "pluginVersion" not in p
@@ -332,11 +343,12 @@ def test_builtin_panels_only():
     assert {t["datasource"]["type"] for _, t in queries(b)} <= {"prometheus", "loki"}
 
 
-def test_board_has_no_instance_ids():
-    text = LIVE.read_text(encoding="utf-8")
+@pytest.mark.parametrize("path, uid", [(LIVE, "agk-live"), (HISTORY, "agk-history")], ids=["live", "history"])
+def test_board_has_no_instance_ids(path, uid):
+    text = path.read_text(encoding="utf-8")
     b = json.loads(text)
     assert "id" not in b
-    assert b["uid"] == "agk-live"
+    assert b["uid"] == uid
     # data sources only by uid: no numeric datasource id anywhere
     assert not re.search(r'"datasource":\s*\{[^}]*"id"', text)
     assert not re.search(r'"datasource":\s*(\d+|"[^"]*")', text)
@@ -362,6 +374,17 @@ LABELS = {"agk_project", "stage", "issue", "title", "order", "role", "launch", "
 DERIVED = {"ord", "short", "slot", "attempt", "type", "key"}
 # attributes of the Loki events (structured metadata)
 LOKI_FIELDS = {"tool_name", "duration_ms"}
+# Attributes the history board (#314) adds, read as Loki structured metadata. No real data confirmed them yet.
+# The role of an event, as in the recording rules (agk.yml):
+LOKI_ROLE_FIELDS = {"query_source", "agent_name"}
+# The tool details (OTEL_LOG_TOOL_DETAILS=1): the JSON attribute and the keys the board reads from it:
+LOKI_TOOL_FIELDS = {"tool_parameters", "file_path", "full_command"}
+# The token counts and the model of a claude_code.api_request event:
+LOKI_API_FIELDS = {"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "model"}
+# Labels the history board makes in its LogQL pipelines (label_format), and the parser error labels it drops:
+LOKI_DERIVED = {"agk_role", "agk_in_launch", "agk_target", "agk_context", "agk_tool", "agk_tokens", "agk_doc",
+                "__error__", "__error_details__"}
+LOKI_ALL = LOKI_FIELDS | LOKI_ROLE_FIELDS | LOKI_TOOL_FIELDS | LOKI_API_FIELDS | LOKI_DERIVED
 EVENTS = {"claude_code.tool_result", "claude_code.api_request", "claude_code.api_error", "codex.api_request"}
 
 
@@ -373,11 +396,17 @@ def _strip_strings(expr):
     return re.sub(r'"(?:[^"\\]|\\.)*"', '""', expr)
 
 
-def test_queries_use_known_names():
+def _strip_templates(expr):
+    """LogQL text without its Go templates (backtick strings) and quoted strings."""
+    return _strip_strings(re.sub(r"`[^`]*`", '""', expr))
+
+
+@BOARDS
+def test_queries_use_known_names(load):
     known = _header_series() | EXTRA_SERIES | RECORDED | FACTS
     assert "codex_turn_token_usage_sum" in known  # the header was read
-    labels_ok = LABELS | DERIVED | LOKI_FIELDS
-    for title, t in queries(board()):
+    labels_ok = LABELS | DERIVED | LOKI_ALL
+    for title, t in queries(load()):
         expr = t["expr"]
         bare = _strip_strings(expr)
         if t["datasource"]["type"] == "prometheus":
@@ -391,13 +420,24 @@ def test_queries_use_known_names():
             for lab in [x.strip() for x in m.group(1).split(",") if x.strip()]:
                 assert lab in labels_ok, (title, lab)
         for lab in re.findall(r"unwrap\s+(\w+)", bare):
-            assert lab in LOKI_FIELDS, (title, lab)
+            assert lab in LOKI_ALL, (title, lab)
         if t["datasource"]["type"] == "loki":
             lines = [s for s in _strings(expr) if re.match(r"(claude_code|codex)\.", s)]
             assert lines, title
             assert set(lines) <= EVENTS, (title, lines)
+            plain = _strip_templates(expr)
+            # label filters, parsers, label_format and drop name only known fields
+            for lab in re.findall(r"\|\s*(\w+)\s*(?:=~|!~|!=|==|=|<=|>=|<|>)", plain):
+                assert lab in LOKI_ALL, (title, lab)
+            for m in re.finditer(r"\|\s*(?:json|label_format|drop)\s+([^|]*)", plain):
+                for lab in re.findall(r"(\w+)\s*(?:=|,|$)", m.group(1)):
+                    assert lab in LOKI_ALL, (title, lab)
+            # the fields a template reads
+            for tpl in re.findall(r"\{\{(.*?)\}\}", expr):
+                for lab in re.findall(r"(?<![\w\\])\.(\w+)", _strip_strings(tpl)):
+                    assert lab in LOKI_ALL, (title, lab)
     # the variables use known names too
-    for v in board()["templating"]["list"]:
+    for v in load()["templating"]["list"]:
         q = v["query"]["query"]
         for name in re.findall(r"\b(agk[A-Za-z0-9_:]*)", _strip_strings(q)):
             assert name in known or name in LABELS
@@ -426,3 +466,213 @@ def test_highlight_needs_three_stages():
         expr = [x for x in table["targets"] if x["refId"] == ref][0]["expr"]
         assert guard.search(expr), ref
         assert 'stage!="$stage"' in expr
+
+
+# --- the history board (issue #314) ---------------------------------------------------------------------
+HISTORY_PANELS = [
+    ("Tokens per stage, by role", "barchart"),
+    ("Active time per stage, by role", "barchart"),
+    ("Token kinds per stage", "barchart"),
+    ("Selected stage: tokens per issue, by role", "barchart"),
+    ("Most expensive issues of all stages", "barchart"),
+    ("Steps of the launch", "timeseries"),
+    ("Launches of the issue", "table"),
+    ("Steps of the launch (table)", "table"),
+    ("Kit document reads per role", "barchart"),
+]
+PALETTE = set(ROLE_COLOURS.values()) | set(KIND_COLOURS.values()) | {ROSE, TEAL, "transparent"}
+
+
+def htop():
+    return {p["title"]: p for p in history()["panels"]}
+
+
+def test_history_board_header():
+    b = history()
+    assert b["title"] == "Stages"
+    assert [v["name"] for v in b["templating"]["list"]] == ["project", "stage", "issue", "launch"]
+    # the lists of earlier stages do not depend on the board range: an instant query over the stored year
+    for v in b["templating"]["list"]:
+        assert v["query"]["query"].startswith("query_result(")
+        assert "[365d]" in v["query"]["query"]
+
+
+def test_history_panel_types():
+    b = history()
+    assert [(p["title"], p["type"]) for p in b["panels"]] == HISTORY_PANELS
+    assert {p["type"] for p in panels(b)} <= ALLOWED_TYPES
+    assert [p["title"] for p in panels(b) if p["type"] == "table"] == ["Launches of the issue",
+                                                                        "Steps of the launch (table)"]
+    t = htop()
+    for title in ("Tokens per stage, by role", "Active time per stage, by role", "Token kinds per stage",
+                  "Selected stage: tokens per issue, by role", "Most expensive issues of all stages"):
+        assert t[title]["options"]["stacking"] == "normal", title
+    assert t["Most expensive issues of all stages"]["options"]["orientation"] == "horizontal"
+    assert "topk(10," in t["Most expensive issues of all stages"]["targets"][0]["expr"]
+    # panel 4 is the live panel 2 for the selected stage: the same query, with the issues of a closed stage too
+    live2 = top(board())["Tokens per issue, by role"]["targets"][0]["expr"]
+    info = 'agk_issue_info{agk_project="$project",stage="$stage"}'
+    own = t["Selected stage: tokens per issue, by role"]["targets"][0]["expr"]
+    assert own == live2.replace(info, f"topk by (issue) (1, last_over_time({info}[365d]))")
+    # panel 6: bars for the tool calls (rose above 2 minutes), a line for the context size
+    steps = t["Steps of the launch"]
+    assert steps["fieldConfig"]["defaults"]["custom"]["drawStyle"] == "bars"
+    by_ref = {x["refId"]: x["expr"] for x in steps["targets"]}
+    assert "| duration_ms <= 120000" in by_ref["A"] and "| duration_ms > 120000" in by_ref["C"]
+    assert "add (int .input_tokens) (int .cache_read_tokens) (int .cache_creation_tokens)" in by_ref["B"]
+    line = next(o for o in steps["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "B"})
+    assert {"id": "custom.drawStyle", "value": "line"} in line["properties"]
+    assert steps["targets"][0]["legendFormat"] == "{{tool_name}} · {{agk_target}}"  # the hover: tool and target
+    # panel 9: one bar per role, the documents only in the hover
+    reads = t["Kit document reads per role"]
+    assert reads["options"]["xField"] == "role" and reads["options"]["colorByField"] == "role"
+    assert reads["fieldConfig"]["defaults"]["custom"]["hideFrom"] == {"legend": True, "tooltip": False, "viz": True}
+    over = next(o for o in reads["fieldConfig"]["overrides"] if o["matcher"]["options"] == "reads")
+    assert over["properties"] == [{"id": "custom.hideFrom", "value": {"legend": True, "tooltip": False, "viz": False}}]
+
+
+def _link(panel):
+    links = panel["fieldConfig"]["defaults"]["links"]
+    assert len(links) == 1
+    return links[0]["url"]
+
+
+def test_history_drilldown_links():
+    t = htop()
+    for title in ("Tokens per stage, by role", "Active time per stage, by role", "Token kinds per stage"):
+        url = _link(t[title])
+        assert "var-stage=${__data.fields.stage}" in url, title
+        assert "var-issue" not in url and "var-launch" not in url
+    for title in ("Selected stage: tokens per issue, by role", "Most expensive issues of all stages"):
+        assert "var-issue=${__data.fields.issue}" in _link(t[title]), title
+    assert "var-stage=${__data.fields.stage}" in _link(t["Most expensive issues of all stages"])
+    url = _link(t["Launches of the issue"])
+    assert "var-launch=${__data.fields.launch}" in url
+    # the time range of the launch, relative to now, so the fixed range of the other panels holds
+    assert "&from=now-${__data.fields.from}s&to=now-${__data.fields.to}s" in url
+    for p in history()["panels"]:
+        if "links" in p["fieldConfig"]["defaults"]:
+            url = _link(p)
+            assert url.startswith("/d/agk-history/stages?var-project=${project:percentencode}"), p["title"]
+            assert "${__from}" not in url and "${__to}" not in url  # an absolute range would end the fixed ranges
+    # the fields the links read: the regexp that takes stage and issue from the bar label
+    for title, sample, want in (
+            ("Selected stage: tokens per issue, by role", "03 · 314 · History board: char", {"issue": "314"}),
+            ("Most expensive issues of all stages", "308 · #313", {"stage": "308", "issue": "313"})):
+        ext = next(x for x in t[title]["transformations"] if x["id"] == "extractFields")["options"]
+        assert ext["format"] == "regexp"
+        m = re.match(ext["regExp"].strip("/").replace("(?<", "(?P<"), sample)
+        assert m and m.groupdict() == want, title
+    # the link fields of the launches table: start and end of the launch in seconds before now
+    by_ref = {x["refId"]: x["expr"] for x in t["Launches of the issue"]["targets"]}
+    assert by_ref["F"].startswith("time() - min by (key)") and by_ref["F"].endswith("+ 60")
+    assert by_ref["G"].startswith("time() - max by (key)")
+    for ref in ("F", "G"):
+        assert "timestamp(agk:active_seconds:1m{" in by_ref[ref]
+
+
+def _visible_columns(panel):
+    organize = next(x for x in panel["transformations"] if x["id"] == "organize")["options"]
+    index, rename = organize["indexByName"], organize["renameByName"]
+    hidden = {o["matcher"]["options"] for o in panel["fieldConfig"]["overrides"]
+              if {"id": "custom.hidden", "value": True} in o["properties"]}
+    names = [rename.get(n, n) for n in sorted(index, key=index.get)]
+    keep = next(x for x in panel["transformations"] if x["id"] == "filterFieldsByName")["options"]["include"]["names"]
+    assert keep == sorted(index, key=index.get)
+    return [n for n in names if n not in hidden], [n for n in names if n in hidden]
+
+
+def test_history_table_columns():
+    t = htop()
+    shown, hidden = _visible_columns(t["Launches of the issue"])
+    assert shown == ["issue", "role", "tokens", "active time", "return", "model", "start"]
+    assert hidden == ["launch", "from", "to"]
+    shown, hidden = _visible_columns(t["Steps of the launch (table)"])
+    assert shown == ["step", "tool", "target", "duration", "tokens", "time"]
+    assert hidden == []
+    for title in ("Launches of the issue", "Steps of the launch (table)"):
+        p = t[title]
+        assert p["fieldConfig"]["defaults"]["custom"]["wrapText"] is False
+        assert "width" not in p["fieldConfig"]["defaults"]["custom"]
+        assert "minWidth" not in p["fieldConfig"]["defaults"]["custom"]
+        for o in p["fieldConfig"]["overrides"]:
+            for prop in o["properties"]:
+                assert prop["id"] not in ("custom.width", "custom.minWidth"), (title, o["matcher"])
+
+
+def test_history_colours():
+    t = htop()
+    for title in ("Tokens per stage, by role", "Active time per stage, by role",
+                  "Selected stage: tokens per issue, by role", "Most expensive issues of all stages"):
+        got = colour_overrides(t[title])
+        for role, colour in ROLE_COLOURS.items():
+            assert got[role] == colour, (title, role)
+    got = colour_overrides(t["Token kinds per stage"])
+    for kind, colour in KIND_COLOURS.items():
+        assert got[kind] == colour
+    for title in ("Launches of the issue", "Kit document reads per role"):
+        got = mapping_colours(t[title])
+        for role, colour in ROLE_COLOURS.items():
+            assert got[role] == colour, (title, role)
+    # the long tool calls in rose: the bars of query C and the duration cell above 2 minutes
+    steps = t["Steps of the launch"]
+    c = next(o for o in steps["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "C"})
+    assert c["properties"] == [{"id": "color", "value": {"mode": "fixed", "fixedColor": ROSE}}]
+    dur = next(o for o in t["Steps of the launch (table)"]["fieldConfig"]["overrides"]
+               if o["matcher"]["options"] == "duration")
+    steps_of = next(p["value"]["steps"] for p in dur["properties"] if p["id"] == "thresholds")
+    assert steps_of[-1] == {"color": ROSE, "value": 120000}
+    # no colour outside the palette of the live board, anywhere in the board
+    text = HISTORY.read_text(encoding="utf-8")
+    used = set(re.findall(r'"(?:fixedColor|color)":\s*"([^"]+)"', text))
+    assert used and used <= PALETTE, used - PALETTE
+
+
+def test_history_typical_stage_needs_three_stages():
+    t = htop()
+    guard = re.compile(r"and on \(\) \(count\(count by \(stage\) \(last_over_time\([^)]*\[365d\]\)\)\) >= 3\)")
+    for title in ("Tokens per stage, by role", "Active time per stage, by role"):
+        typical = [x for x in t[title]["targets"] if x["refId"] == "B"][0]
+        assert "quantile(0.5, sum by (stage) (" in typical["expr"]
+        assert 'stage!="$stage"' in typical["expr"]
+        assert guard.search(typical["expr"]), title
+        assert typical.get("hide") is True
+        assert "not drawn" in t[title]["description"]
+
+
+def test_history_time_ranges():
+    """Panels 1-5 and 7 keep one year, panel 9 30 days (Loki refuses longer queries); the steps follow the board."""
+    t = htop()
+    for title, _ in HISTORY_PANELS:
+        want = {"Steps of the launch": None, "Steps of the launch (table)": None,
+                "Kit document reads per role": "30d"}.get(title, "365d")
+        assert t[title].get("timeFrom") == want, title
+    assert history()["time"] == {"from": "now-24h", "to": "now"}
+
+
+def test_history_steps_of_the_launch_only():
+    t = htop()
+    role = re.compile(r'label_format agk_role=`\{\{ if eq \.query_source "main" \}\}orchestrator')
+    launch = '"$launch" }}1{{ end }}` | agk_in_launch="1"'
+    for title in ("Steps of the launch", "Steps of the launch (table)"):
+        p = t[title]
+        for x in p["targets"]:
+            assert role.search(x["expr"]) and launch in x["expr"], (title, x["refId"])
+        assert "qa-codex" in p["description"] and "#322" in p["description"], title
+    # the agent names map to the roles of the recording rules
+    rules = RULES.read_text(encoding="utf-8")
+    for name in ("software-engineer", "frontend-engineer", "qa-engineer", "planner"):
+        assert name in rules and f'"{name}"' in t["Steps of the launch"]["targets"][0]["expr"]
+
+
+def test_history_kit_documents():
+    expr = htop()["Kit document reads per role"]["targets"][0]["expr"]
+    assert '| tool_name="Read"' in expr
+    rx = re.search(r'agk_doc=~"([^"]+)"', expr).group(1).replace("\\\\", "\\")
+    cut = re.search(r'regexReplaceAll "([^"]+)" \.file_path', expr).group(1).replace("\\\\", "\\")
+    for path, doc in (("/home/u/repo/docs/team/pm.md", "docs/team/pm.md"), ("/r/AGENTS.md", "AGENTS.md"),
+                      ("/r/CLAUDE.md", "CLAUDE.md"), ("/r/.agents/skills/x/SKILL.md", ".agents/skills/x/SKILL.md"),
+                      ("/r/plugin/skills/monitor/SKILL.md", "plugin/skills/monitor/SKILL.md"),
+                      ("/r/src/app.py", None), ("/r/README.md", None), ("/r/MY_AGENTS.md", None)):
+        got = re.sub(cut, r"\1", path)
+        assert (got if re.fullmatch(rx, got) else None) == doc, path

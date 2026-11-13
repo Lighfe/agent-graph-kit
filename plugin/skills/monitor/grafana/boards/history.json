@@ -1,0 +1,2512 @@
+{
+ "uid": "agk-history",
+ "title": "Stages",
+ "tags": [
+  "agk"
+ ],
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": false,
+ "refresh": "",
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "description": "History board: stages and issues compared, drill-down from a stage to an issue, a launch and its steps.",
+ "templating": {
+  "list": [
+   {
+    "name": "project",
+    "label": "project",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "agk-prometheus"
+    },
+    "refresh": 1,
+    "sort": 1,
+    "query": {
+     "query": "query_result(count by (agk_project) (last_over_time(agk:tokens:1m[365d])))",
+     "refId": "project"
+    },
+    "definition": "query_result(count by (agk_project) (last_over_time(agk:tokens:1m[365d])))",
+    "regex": "/agk_project=\"(?<value>[^\"]*)\"/",
+    "includeAll": false,
+    "multi": false
+   },
+   {
+    "name": "stage",
+    "label": "stage",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "agk-prometheus"
+    },
+    "refresh": 1,
+    "sort": 4,
+    "query": {
+     "query": "query_result(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[365d])))",
+     "refId": "stage"
+    },
+    "definition": "query_result(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[365d])))",
+    "regex": "/stage=\"(?<value>[^\"]*)\"/",
+    "includeAll": false,
+    "multi": false
+   },
+   {
+    "name": "issue",
+    "label": "issue",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "agk-prometheus"
+    },
+    "refresh": 1,
+    "sort": 4,
+    "query": {
+     "query": "query_result(count by (issue) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[365d])))",
+     "refId": "issue"
+    },
+    "definition": "query_result(count by (issue) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[365d])))",
+    "regex": "/issue=\"(?<value>[^\"]*)\"/",
+    "includeAll": false,
+    "multi": false
+   },
+   {
+    "name": "launch",
+    "label": "launch",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "agk-prometheus"
+    },
+    "refresh": 1,
+    "sort": 1,
+    "query": {
+     "query": "query_result(count by (launch) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"}[365d])))",
+     "refId": "launch"
+    },
+    "definition": "query_result(count by (launch) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"}[365d])))",
+    "regex": "/launch=\"(?<value>[^\"]*)\"/",
+    "includeAll": false,
+    "multi": false
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "barchart",
+   "title": "Tokens per stage, by role",
+   "description": "Tokens in millions per stage of the project, one segment per role. The hover shows each segment and the total (the series \"total\" on a hidden scale, no fill). The dashed grey line for the typical stage (median of the stage totals of the other stages of the project, needs three such stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median. A click on a bar selects that stage (filter stage). Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 9
+   },
+   "timeFrom": "365d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (stage, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[$__range])) / 1e6 or label_replace(sum by (stage) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[$__range])) / 1e6, \"role\", \"total\", \"\", \"\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "B",
+     "expr": "(quantile(0.5, sum by (stage) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) / 1e6",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "time_series",
+     "legendFormat": "typical stage (median)",
+     "hide": true
+    }
+   ],
+   "transformations": [
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "role",
+      "rowField": "stage",
+      "valueField": "Value",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "stage\\role": 0,
+       "orchestrator": 1,
+       "pm": 2,
+       "engineer": 3,
+       "qa-codex": 4,
+       "qa-claude": 5,
+       "planner": 6,
+       "other": 7,
+       "total": 8
+      },
+      "renameByName": {
+       "stage\\role": "stage"
+      }
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "stage"
+       }
+      ]
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "string"
+       }
+      ]
+     }
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "showValue": "never",
+    "orientation": "auto",
+    "xField": "stage",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.8,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "suffix: M",
+     "custom": {
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0
+     },
+     "links": [
+      {
+       "title": "Select this stage",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${__data.fields.stage}",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "orchestrator"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#332288"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "pm"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDCC77"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "engineer"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#117733"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-codex"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#88CCEE"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-claude"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#882255"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "planner"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#999933"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "other"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDDDDD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "max",
+        "value": 1000000000000000.0
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "stage"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "type": "barchart",
+   "title": "Active time per stage, by role",
+   "description": "Active time per stage of the project, one segment per role, with the total in the hover. The dashed grey line for the typical stage (median of the stage totals of the other stages of the project, needs three such stages) is not drawn: the built-in bar chart cannot take a threshold line from a query. The hidden query B holds the guarded median. A click on a bar selects that stage (filter stage). Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 9
+   },
+   "timeFrom": "365d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (stage, role) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"\"}[$__range])) or label_replace(sum by (stage) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"\"}[$__range])), \"role\", \"total\", \"\", \"\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "B",
+     "expr": "(quantile(0.5, sum by (stage) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:active_seconds:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3))",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "time_series",
+     "legendFormat": "typical stage (median)",
+     "hide": true
+    }
+   ],
+   "transformations": [
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "role",
+      "rowField": "stage",
+      "valueField": "Value",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "stage\\role": 0,
+       "orchestrator": 1,
+       "pm": 2,
+       "engineer": 3,
+       "qa-codex": 4,
+       "qa-claude": 5,
+       "planner": 6,
+       "other": 7,
+       "total": 8
+      },
+      "renameByName": {
+       "stage\\role": "stage"
+      }
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "stage"
+       }
+      ]
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "string"
+       }
+      ]
+     }
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "showValue": "never",
+    "orientation": "auto",
+    "xField": "stage",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.8,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "custom": {
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0
+     },
+     "links": [
+      {
+       "title": "Select this stage",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${__data.fields.stage}",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "orchestrator"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#332288"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "pm"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDCC77"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "engineer"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#117733"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-codex"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#88CCEE"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-claude"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#882255"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "planner"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#999933"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "other"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDDDDD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "max",
+        "value": 1000000000000000.0
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "stage"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "type": "barchart",
+   "title": "Token kinds per stage",
+   "description": "Tokens in millions per stage, one segment per token kind (cache read, cache creation, output, input), with the total in the hover. A click on a bar selects that stage (filter stage). Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 12,
+    "h": 9
+   },
+   "timeFrom": "365d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (stage, kind) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[$__range])) / 1e6 or label_replace(sum by (stage) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\"}[$__range])) / 1e6, \"kind\", \"total\", \"\", \"\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "kind",
+      "rowField": "stage",
+      "valueField": "Value",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "stage\\kind": 0,
+       "cache_read": 1,
+       "cache_creation": 2,
+       "output": 3,
+       "input": 4,
+       "total": 5
+      },
+      "renameByName": {
+       "stage\\kind": "stage"
+      }
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "stage"
+       }
+      ]
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "stage",
+        "destinationType": "string"
+       }
+      ]
+     }
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "showValue": "never",
+    "orientation": "auto",
+    "xField": "stage",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.8,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "suffix: M",
+     "custom": {
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0
+     },
+     "links": [
+      {
+       "title": "Select this stage",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${__data.fields.stage}",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "cache_read"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#44AA99"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "cache_creation"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#999933"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "output"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#AA4499"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "input"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDDDDD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "max",
+        "value": 1000000000000000.0
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "stage"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 4,
+   "type": "barchart",
+   "title": "Selected stage: tokens per issue, by role",
+   "description": "The chart \"Tokens per issue, by role\" of the live board for the stage in the filter: tokens in millions per issue in execution order, one segment per role, issues not started as empty slots, the total in the hover. The typical issue line is not drawn (hidden query B, as on the live board). A click on a bar selects that issue (filter issue) for the launches table. Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 9,
+    "w": 12,
+    "h": 9
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "(sum by (issue, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) / 1e6 * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(topk by (issue) (1, last_over_time(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"}[365d])),\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\")) or (label_replace(label_join(label_replace(label_replace(label_replace(topk by (issue) (1, last_over_time(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"}[365d])),\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\") * 0, \"role\", \"pending\", \"\", \"\") unless on (issue) sum by (issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range]))) or label_replace(sum by (issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage=\"$stage\",issue!=\"\"}[$__range])) / 1e6 * on (issue) group_left (slot) label_join(label_replace(label_replace(label_replace(topk by (issue) (1, last_over_time(agk_issue_info{agk_project=\"$project\",stage=\"$stage\"}[365d])),\"ord\",\"0$1\",\"order\",\"^(\\\\d)$\"),\"ord\",\"$1\",\"order\",\"^(\\\\d\\\\d+)$\"),\"short\",\"$1\",\"title\",\"^(.{0,20}).*\"),\"slot\",\" · \",\"ord\",\"issue\",\"short\"), \"role\", \"total\", \"\", \"\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "B",
+     "expr": "(quantile(0.5, sum by (stage, issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\",issue!=\"\"}[365d]))) and on () (count(count by (stage) (last_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"$stage\",stage!=\"\"}[365d]))) >= 3)) / 1e6",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "legendFormat": "typical issue (median)",
+     "format": "time_series",
+     "hide": true
+    }
+   ],
+   "transformations": [
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "slot"
+       }
+      ]
+     }
+    },
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "role",
+      "rowField": "slot",
+      "valueField": "Value",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "slot\\role": 0,
+       "orchestrator": 1,
+       "pm": 2,
+       "engineer": 3,
+       "qa-codex": 4,
+       "qa-claude": 5,
+       "planner": 6,
+       "other": 7,
+       "pending": 8,
+       "total": 9
+      },
+      "renameByName": {}
+     }
+    },
+    {
+     "id": "extractFields",
+     "options": {
+      "source": "slot\\role",
+      "format": "regexp",
+      "regExp": "/^\\d+ · (?<issue>\\d+) · /",
+      "replace": false,
+      "keepTime": false
+     }
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "showValue": "never",
+    "orientation": "auto",
+    "xTickLabelRotation": -30,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.8,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    },
+    "xTickLabelMaxLength": 22,
+    "xField": "slot\\role"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "suffix: M",
+     "custom": {
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0
+     },
+     "links": [
+      {
+       "title": "Launches of this issue",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${stage:percentencode}&var-issue=${__data.fields.issue}",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "orchestrator"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#332288"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "pm"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDCC77"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "engineer"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#117733"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-codex"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#88CCEE"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-claude"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#882255"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "planner"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#999933"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "other"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDDDDD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "pending"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": true,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "max",
+        "value": 1000000000000000.0
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "issue"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     }
+    ]
+   },
+   "timeFrom": "365d"
+  },
+  {
+   "id": 5,
+   "type": "barchart",
+   "title": "Most expensive issues of all stages",
+   "description": "The ten issues of the project with the most tokens (in millions), over all stages, largest on top, labelled \"stage · #issue\", one segment per role, the total in the hover. A click on a bar selects that stage and issue. Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 18,
+    "w": 24,
+    "h": 9
+   },
+   "timeFrom": "365d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "label_join(sum by (stage, issue, role) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\",issue!=\"\"}[$__range])) and on (stage, issue) topk(10, sum by (stage, issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\",issue!=\"\"}[$__range]))), \"slot\", \" · #\", \"stage\", \"issue\") / 1e6 or label_replace(label_join(topk(10, sum by (stage, issue) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",stage!=\"\",issue!=\"\"}[$__range]))), \"slot\", \" · #\", \"stage\", \"issue\") / 1e6, \"role\", \"total\", \"\", \"\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "role",
+      "rowField": "slot",
+      "valueField": "Value",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "slot\\role": 0,
+       "orchestrator": 1,
+       "pm": 2,
+       "engineer": 3,
+       "qa-codex": 4,
+       "qa-claude": 5,
+       "planner": 6,
+       "other": 7,
+       "total": 8
+      },
+      "renameByName": {
+       "slot\\role": "issue of stage"
+      }
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "total",
+        "desc": true
+       }
+      ]
+     }
+    },
+    {
+     "id": "extractFields",
+     "options": {
+      "source": "issue of stage",
+      "format": "regexp",
+      "regExp": "/^(?<stage>\\d+) · #(?<issue>\\d+)$/",
+      "replace": false,
+      "keepTime": false
+     }
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "showValue": "never",
+    "orientation": "horizontal",
+    "xField": "issue of stage",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.8,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "suffix: M",
+     "custom": {
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0
+     },
+     "links": [
+      {
+       "title": "Launches of this issue",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${__data.fields.stage}&var-issue=${__data.fields.issue}",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "orchestrator"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#332288"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "pm"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDCC77"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "engineer"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#117733"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-codex"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#88CCEE"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "qa-claude"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#882255"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "planner"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#999933"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "other"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#DDDDDD"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "transparent"
+        }
+       },
+       {
+        "id": "max",
+        "value": 1000000000000000.0
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "hidden"
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "stage"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "issue"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "string"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Steps of the launch",
+   "description": "One bar per tool call at its time, its height the duration; rose above 2 minutes (log scale, so short calls stay visible). The hover gives the tool and its target. The line is the context size of each API request (input + cache read + cache creation tokens, right axis). Only the events of the selected launch: open a launch with a click on its row in \"Launches of the issue\"; the link sets the launch and the time range of the board to its first to last minute (agk:active_seconds:1m), and the events of its role are shown. For a qa-codex launch this panel stays empty: Codex sends other events (Codex steps: issue #322). Tool targets need OTEL_LOG_TOOL_DETAILS=1.",
+   "datasource": {
+    "type": "loki",
+    "uid": "agk-loki"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 27,
+    "w": 24,
+    "h": 10
+   },
+   "interval": "1s",
+   "targets": [
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "agk-loki"
+     },
+     "refId": "A",
+     "expr": "max by (tool_name, agk_target) (max_over_time({agk_project=\"$project\"} |= \"claude_code.tool_result\" | label_format agk_role=`{{ if eq .query_source \"main\" }}orchestrator{{ else }}{{ with regexReplaceAll \"^.*:\" .agent_name \"\" }}{{ if eq . \"pm\" }}pm{{ else if or (eq . \"software-engineer\") (eq . \"frontend-engineer\") }}engineer{{ else if eq . \"qa-engineer\" }}qa-claude{{ else if eq . \"planner\" }}planner{{ else }}other{{ end }}{{ else }}other{{ end }}{{ end }}` | label_format agk_in_launch=`{{ if hasPrefix (printf \"%s-\" (regexReplaceAll \"^qa-claude$\" .agk_role \"qa\")) \"$launch\" }}1{{ end }}` | agk_in_launch=\"1\" | line_format \"{{.tool_parameters}}\" | json file_path=\"file_path\", full_command=\"full_command\" | drop __error__, __error_details__ | duration_ms <= 120000 | label_format agk_target=\"{{.file_path}}{{.full_command}}\" | unwrap duration_ms [$__interval]))",
+     "queryType": "range",
+     "editorMode": "code",
+     "legendFormat": "{{tool_name}} · {{agk_target}}"
+    },
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "agk-loki"
+     },
+     "refId": "B",
+     "expr": "max(max_over_time({agk_project=\"$project\"} |= \"claude_code.api_request\" | label_format agk_role=`{{ if eq .query_source \"main\" }}orchestrator{{ else }}{{ with regexReplaceAll \"^.*:\" .agent_name \"\" }}{{ if eq . \"pm\" }}pm{{ else if or (eq . \"software-engineer\") (eq . \"frontend-engineer\") }}engineer{{ else if eq . \"qa-engineer\" }}qa-claude{{ else if eq . \"planner\" }}planner{{ else }}other{{ end }}{{ else }}other{{ end }}{{ end }}` | label_format agk_in_launch=`{{ if hasPrefix (printf \"%s-\" (regexReplaceAll \"^qa-claude$\" .agk_role \"qa\")) \"$launch\" }}1{{ end }}` | agk_in_launch=\"1\" | label_format agk_context=`{{ add (int .input_tokens) (int .cache_read_tokens) (int .cache_creation_tokens) }}` | unwrap agk_context [$__interval]))",
+     "queryType": "range",
+     "editorMode": "code",
+     "legendFormat": "context size"
+    },
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "agk-loki"
+     },
+     "refId": "C",
+     "expr": "max by (tool_name, agk_target) (max_over_time({agk_project=\"$project\"} |= \"claude_code.tool_result\" | label_format agk_role=`{{ if eq .query_source \"main\" }}orchestrator{{ else }}{{ with regexReplaceAll \"^.*:\" .agent_name \"\" }}{{ if eq . \"pm\" }}pm{{ else if or (eq . \"software-engineer\") (eq . \"frontend-engineer\") }}engineer{{ else if eq . \"qa-engineer\" }}qa-claude{{ else if eq . \"planner\" }}planner{{ else }}other{{ end }}{{ else }}other{{ end }}{{ end }}` | label_format agk_in_launch=`{{ if hasPrefix (printf \"%s-\" (regexReplaceAll \"^qa-claude$\" .agk_role \"qa\")) \"$launch\" }}1{{ end }}` | agk_in_launch=\"1\" | line_format \"{{.tool_parameters}}\" | json file_path=\"file_path\", full_command=\"full_command\" | drop __error__, __error_details__ | duration_ms > 120000 | label_format agk_target=\"{{.file_path}}{{.full_command}}\" | unwrap duration_ms [$__interval]))",
+     "queryType": "range",
+     "editorMode": "code",
+     "legendFormat": "{{tool_name}} · {{agk_target}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc",
+     "hideZeros": true
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms",
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "#DDDDDD"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 100,
+      "lineWidth": 1,
+      "gradientMode": "none",
+      "barAlignment": 0,
+      "spanNulls": false,
+      "showPoints": "never",
+      "scaleDistribution": {
+       "type": "log",
+       "log": 10
+      },
+      "hideFrom": {
+       "legend": true,
+       "tooltip": false,
+       "viz": false
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byFrameRefID",
+       "options": "C"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#CC6677"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byFrameRefID",
+       "options": "B"
+      },
+      "properties": [
+       {
+        "id": "custom.drawStyle",
+        "value": "line"
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.gradientMode",
+        "value": "none"
+       },
+       {
+        "id": "custom.spanNulls",
+        "value": true
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "always"
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "short"
+       },
+       {
+        "id": "custom.scaleDistribution",
+        "value": {
+         "type": "linear"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#44AA99"
+        }
+       },
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": false,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 7,
+   "type": "table",
+   "title": "Launches of the issue",
+   "description": "One row per launch of a subagent on the issue in the filter (the orchestrator has no row), in start order. Return is the attempt number minus one. A click on a row opens the steps of that launch: it sets the launch and the time range of the board to the first to last minute of the launch, as \"now-<seconds>s\", so the range moves on when the board is reloaded much later. Time range: the last 365 days, fixed, so a drill-down to a launch does not shrink it. ",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "agk-prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 37,
+    "w": 24,
+    "h": 8
+   },
+   "timeFrom": "365d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "A",
+     "expr": "label_replace(label_join(sum by (issue, role, launch) (sum_over_time(agk:tokens:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"}[$__range])), \"key\", \"/\", \"issue\", \"role\", \"launch\"), \"attempt\", \"$1\", \"launch\", \".*-(\\\\d+)$\")",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "B",
+     "expr": "sum by (key) (label_join(sum by (issue, role, launch) (sum_over_time(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"}[$__range])), \"key\", \"/\", \"issue\", \"role\", \"launch\"))",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "C",
+     "expr": "topk by (key) (1, sum by (key, model) (label_join(sum_over_time(agk:tokens:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"}[$__range]), \"key\", \"/\", \"issue\", \"role\", \"launch\")))",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "D",
+     "expr": "min by (key) (label_join(min_over_time(timestamp(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"})[$__range:1m]), \"key\", \"/\", \"issue\", \"role\", \"launch\")) * 1000 - 60000",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "F",
+     "expr": "time() - min by (key) (label_join(min_over_time(timestamp(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"})[$__range:1m]), \"key\", \"/\", \"issue\", \"role\", \"launch\")) + 60",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "agk-prometheus"
+     },
+     "refId": "G",
+     "expr": "time() - max by (key) (label_join(max_over_time(timestamp(agk:active_seconds:1m{agk_project=\"$project\",issue=\"$issue\",role!=\"orchestrator\"})[$__range:1m]), \"key\", \"/\", \"issue\", \"role\", \"launch\"))",
+     "instant": true,
+     "range": false,
+     "editorMode": "code",
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "joinByField",
+     "options": {
+      "byField": "key",
+      "mode": "outer"
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "attempt",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "binary",
+      "alias": "return",
+      "replaceFields": false,
+      "binary": {
+       "left": "attempt",
+       "operator": "-",
+       "right": "1"
+      }
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "Value #D",
+        "desc": false
+       }
+      ]
+     }
+    },
+    {
+     "id": "filterFieldsByName",
+     "options": {
+      "include": {
+       "names": [
+        "issue",
+        "role",
+        "Value #A",
+        "Value #B",
+        "return",
+        "model",
+        "Value #D",
+        "launch",
+        "Value #F",
+        "Value #G"
+       ]
+      }
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "issue": 0,
+       "role": 1,
+       "Value #A": 2,
+       "Value #B": 3,
+       "return": 4,
+       "model": 5,
+       "Value #D": 6,
+       "launch": 7,
+       "Value #F": 8,
+       "Value #G": 9
+      },
+      "renameByName": {
+       "Value #A": "tokens",
+       "Value #B": "active time",
+       "Value #D": "start",
+       "Value #F": "from",
+       "Value #G": "to"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "cellHeight": "sm",
+    "footer": {
+     "show": false
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "wrapText": false,
+      "inspect": false
+     },
+     "noValue": "",
+     "links": [
+      {
+       "title": "Steps of this launch",
+       "url": "/d/agk-history/stages?var-project=${project:percentencode}&var-stage=${stage:percentencode}&var-issue=${issue:percentencode}&var-launch=${__data.fields.launch}&from=now-${__data.fields.from}s&to=now-${__data.fields.to}s",
+       "targetBlank": false
+      }
+     ]
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "role"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "orchestrator": {
+            "text": "orchestrator",
+            "color": "#332288",
+            "index": 0
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "pm": {
+            "text": "pm",
+            "color": "#DDCC77",
+            "index": 1
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "engineer": {
+            "text": "engineer",
+            "color": "#117733",
+            "index": 2
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "qa-codex": {
+            "text": "qa-codex",
+            "color": "#88CCEE",
+            "index": 3
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "qa-claude": {
+            "text": "qa-claude",
+            "color": "#882255",
+            "index": 4
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "planner": {
+            "text": "planner",
+            "color": "#999933",
+            "index": 5
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "other": {
+            "text": "other",
+            "color": "#DDDDDD",
+            "index": 6
+           }
+          }
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "tokens"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "short"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "active time"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "start"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "time:MM-DD HH:mm"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "launch"
+      },
+      "properties": [
+       {
+        "id": "custom.hidden",
+        "value": true
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "from"
+      },
+      "properties": [
+       {
+        "id": "custom.hidden",
+        "value": true
+       },
+       {
+        "id": "unit",
+        "value": "none"
+       },
+       {
+        "id": "decimals",
+        "value": 0
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "to"
+      },
+      "properties": [
+       {
+        "id": "custom.hidden",
+        "value": true
+       },
+       {
+        "id": "unit",
+        "value": "none"
+       },
+       {
+        "id": "decimals",
+        "value": 0
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 8,
+   "type": "table",
+   "title": "Steps of the launch (table)",
+   "description": "The tool calls and API requests of the selected launch in time order: step number, tool (an API request shows \"API request\" and the model as target), target, duration, tokens of the API request (input + output + cache read + cache creation), time. Only the events of the selected launch: open a launch with a click on its row in \"Launches of the issue\"; the link sets the launch and the time range of the board to its first to last minute (agk:active_seconds:1m), and the events of its role are shown. For a qa-codex launch this panel stays empty: Codex sends other events (Codex steps: issue #322). Tool targets need OTEL_LOG_TOOL_DETAILS=1.",
+   "datasource": {
+    "type": "loki",
+    "uid": "agk-loki"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 45,
+    "w": 24,
+    "h": 10
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "agk-loki"
+     },
+     "refId": "A",
+     "expr": "{agk_project=\"$project\"} |= \"claude_code.tool_result\" or \"claude_code.api_request\" | label_format agk_role=`{{ if eq .query_source \"main\" }}orchestrator{{ else }}{{ with regexReplaceAll \"^.*:\" .agent_name \"\" }}{{ if eq . \"pm\" }}pm{{ else if or (eq . \"software-engineer\") (eq . \"frontend-engineer\") }}engineer{{ else if eq . \"qa-engineer\" }}qa-claude{{ else if eq . \"planner\" }}planner{{ else }}other{{ end }}{{ else }}other{{ end }}{{ end }}` | label_format agk_in_launch=`{{ if hasPrefix (printf \"%s-\" (regexReplaceAll \"^qa-claude$\" .agk_role \"qa\")) \"$launch\" }}1{{ end }}` | agk_in_launch=\"1\" | line_format \"{{.tool_parameters}}\" | json file_path=\"file_path\", full_command=\"full_command\" | drop __error__, __error_details__ | label_format agk_tool=`{{ or .tool_name \"API request\" }}`, agk_target=`{{ .file_path }}{{ .full_command }}{{ if .input_tokens }}{{ .model }}{{ end }}`, agk_tokens=`{{ if .input_tokens }}{{ add (int .input_tokens) (int .output_tokens) (int .cache_read_tokens) (int .cache_creation_tokens) }}{{ end }}`",
+     "queryType": "range",
+     "editorMode": "code",
+     "maxLines": 5000
+    }
+   ],
+   "transformations": [
+    {
+     "id": "extractFields",
+     "options": {
+      "source": "labels",
+      "format": "auto",
+      "replace": false,
+      "keepTime": false
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "duration_ms",
+        "destinationType": "number"
+       },
+       {
+        "targetField": "agk_tokens",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "sortBy",
+     "options": {
+      "sort": [
+       {
+        "field": "Time",
+        "desc": false
+       }
+      ]
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "index",
+      "alias": "row",
+      "index": {
+       "asPercentile": false
+      },
+      "replaceFields": false
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "binary",
+      "alias": "step",
+      "replaceFields": false,
+      "binary": {
+       "left": "row",
+       "operator": "+",
+       "right": "1"
+      }
+     }
+    },
+    {
+     "id": "filterFieldsByName",
+     "options": {
+      "include": {
+       "names": [
+        "step",
+        "agk_tool",
+        "agk_target",
+        "duration_ms",
+        "agk_tokens",
+        "Time"
+       ]
+      }
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "step": 0,
+       "agk_tool": 1,
+       "agk_target": 2,
+       "duration_ms": 3,
+       "agk_tokens": 4,
+       "Time": 5
+      },
+      "renameByName": {
+       "agk_tool": "tool",
+       "agk_target": "target",
+       "duration_ms": "duration",
+       "agk_tokens": "tokens",
+       "Time": "time"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "cellHeight": "sm",
+    "footer": {
+     "show": false
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "wrapText": false,
+      "inspect": false
+     },
+     "noValue": ""
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "duration"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "ms"
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#DDDDDD",
+           "value": null
+          },
+          {
+           "color": "#CC6677",
+           "value": 120000
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "tokens"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "short"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "time"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "time:HH:mm:ss"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 9,
+   "type": "barchart",
+   "title": "Kit document reads per role",
+   "description": "One bar per role: how often its agents read a kit document (a Read of a file under docs/, .agents/skills/ or plugin/skills/, or of AGENTS.md or CLAUDE.md). The hover gives each document and its read count. Time range: the last 30 days, fixed (Loki refuses a longer query). Needs OTEL_LOG_TOOL_DETAILS=1 for the file path.",
+   "datasource": {
+    "type": "loki",
+    "uid": "agk-loki"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 55,
+    "w": 24,
+    "h": 9
+   },
+   "timeFrom": "30d",
+   "targets": [
+    {
+     "datasource": {
+      "type": "loki",
+      "uid": "agk-loki"
+     },
+     "refId": "A",
+     "expr": "sum by (agk_role, agk_doc) (count_over_time({agk_project=\"$project\"} |= \"claude_code.tool_result\" | tool_name=\"Read\" | label_format agk_role=`{{ if eq .query_source \"main\" }}orchestrator{{ else }}{{ with regexReplaceAll \"^.*:\" .agent_name \"\" }}{{ if eq . \"pm\" }}pm{{ else if or (eq . \"software-engineer\") (eq . \"frontend-engineer\") }}engineer{{ else if eq . \"qa-engineer\" }}qa-claude{{ else if eq . \"planner\" }}planner{{ else }}other{{ end }}{{ else }}other{{ end }}{{ end }}` | line_format \"{{.tool_parameters}}\" | json file_path=\"file_path\" | drop __error__, __error_details__ | label_format agk_doc=`{{ regexReplaceAll \"^.*/((?:docs|\\\\.agents/skills|plugin/skills)/.+|AGENTS\\\\.md|CLAUDE\\\\.md)$\" .file_path \"${1}\" }}` | agk_doc=~\"(docs|\\\\.agents/skills|plugin/skills)/.+|AGENTS\\\\.md|CLAUDE\\\\.md\" [$__range]))",
+     "queryType": "instant",
+     "editorMode": "code"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "groupingToMatrix",
+     "options": {
+      "columnField": "agk_doc",
+      "rowField": "agk_role",
+      "valueField": "Value #A",
+      "emptyValue": "null"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {},
+      "indexByName": {
+       "agk_role\\agk_doc": 0
+      },
+      "renameByName": {
+       "agk_role\\agk_doc": "role"
+      }
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "reduceRow",
+      "alias": "reads",
+      "replaceFields": false,
+      "reduce": {
+       "reducer": "sum"
+      }
+     }
+    }
+   ],
+   "options": {
+    "stacking": "none",
+    "showValue": "auto",
+    "orientation": "auto",
+    "xField": "role",
+    "colorByField": "role",
+    "xTickLabelRotation": 0,
+    "xTickLabelSpacing": 0,
+    "barWidth": 0.6,
+    "groupWidth": 0.7,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc",
+     "hideZeros": true
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "decimals": 0,
+     "custom": {
+      "fillOpacity": 100,
+      "lineWidth": 0,
+      "axisSoftMin": 0,
+      "hideFrom": {
+       "legend": true,
+       "tooltip": false,
+       "viz": true
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "role"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "orchestrator": {
+            "text": "orchestrator",
+            "color": "#332288",
+            "index": 0
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "pm": {
+            "text": "pm",
+            "color": "#DDCC77",
+            "index": 1
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "engineer": {
+            "text": "engineer",
+            "color": "#117733",
+            "index": 2
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "qa-codex": {
+            "text": "qa-codex",
+            "color": "#88CCEE",
+            "index": 3
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "qa-claude": {
+            "text": "qa-claude",
+            "color": "#882255",
+            "index": 4
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "planner": {
+            "text": "planner",
+            "color": "#999933",
+            "index": 5
+           }
+          }
+         },
+         {
+          "type": "value",
+          "options": {
+           "other": {
+            "text": "other",
+            "color": "#DDDDDD",
+            "index": 6
+           }
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "reads"
+      },
+      "properties": [
+       {
+        "id": "custom.hideFrom",
+        "value": {
+         "legend": true,
+         "tooltip": false,
+         "viz": false
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}
