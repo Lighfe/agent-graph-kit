@@ -581,3 +581,13 @@ def test_monitor_skill_blocks_match_the_setup_output():
     assert mod.claude_otel_block() in skill
     assert mod.CLAUDE_RULE in skill
     assert mod.codex_otel_block() in skill
+
+
+def test_monitor_skill_export_settings_name_no_per_project_step():
+    # issue #324, QA round 1: an older project export block must not become a step per project
+    skill = (ROOT / "plugin/skills/monitor/SKILL.md").read_text()
+    part = skill[skill.index("## Export settings"):skill.index("## ", skill.index("## Export settings") + 3)]
+    assert "), remove it" not in part
+    assert "the user block is the only place" not in part
+    assert "is not a step" in part
+    assert "no step per project" in part
