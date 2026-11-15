@@ -434,7 +434,7 @@ def test_gitignore_line_with_leading_space_is_not_the_required_line(project, tmp
 
 
 def route_section():
-    return README.split("## Start a new project")[1].split("## Lovable frontend lane")[0]
+    return README.split("## Start a new project")[1].split("## How the hooks work")[0]
 
 
 def test_route_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
@@ -443,7 +443,7 @@ def test_route_readme_names_labels_and_closing_steps_and_skill_lists_the_files()
         assert f"gh label create {label} " in route
     # order: trust dialog, plugin, setup, labels, push, hook check, Lovable, stage-start
     order = ["trust dialog", "claude plugin install", "/agk:setup", "gh label create ready",
-             "git push", "/agk:hook-activation-check", "Lovable frontend lane", "/stage-start"]
+             "git push", "/agk:hook-activation-check", "Optional: set up the Lovable frontend lane", "/stage-start"]
     positions = [route.index(x) for x in order]
     assert positions == sorted(positions)
     assert "ignored" in route and "permissions.allow" in route

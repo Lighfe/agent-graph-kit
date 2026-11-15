@@ -95,7 +95,7 @@ def test_frontend_engineer_agent_has_respond_to_approval():
 
 
 def test_readme_pause_paragraph_matches_rule_and_allow_entry_note():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme = (ROOT / "docs/lovable-frontend-lane.md").read_text(encoding="utf-8")
     para = [p for p in readme.split("\n\n") if p.startswith("Lovable can pause a message")]
     assert len(para) == 1
     p = para[0]

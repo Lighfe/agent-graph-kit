@@ -43,7 +43,7 @@ The guard maps each guarded agent to a role (`AGENT_ROLE` in `guard.py`): `pm` t
 | `default` | `software-engineer` |
 | `frontend` | `frontend-engineer` |
 
-G3 checks the pair. The lane `frontend` needs a repo with a Lovable submodule `frontend/` (see "Lane `frontend`" in `docs/team/software-engineer.md` and "Frontend lane (optional)" in the README).
+G3 checks the pair. The lane `frontend` needs a repo with a Lovable submodule `frontend/` (see "Lane `frontend`" in `docs/team/software-engineer.md` and "QA pre-step" in `docs/lovable-frontend-lane.md`).
 
 ## Launch contract
 
@@ -347,7 +347,7 @@ The pre-step runs outside the sandbox, with fixed commands and no LLM decision. 
   4. The install command, then the browser with the frontend's own Playwright CLI: `npx --no playwright install chromium` (npm) or `bun x --no-install playwright install chromium` (bun). Nothing is fetched from the registry for the CLI.
 - **uv cache** (only when `uv` is on `PATH`): `uv run --no-project --no-config --with pytest pytest --version` with `UV_CACHE_DIR=<run temp folder>/uv-cache`, run in the run temp folder, not the worktree, so it does not read or build the reviewed project. When the worktree has a `uv.lock`, `uv sync --frozen` then runs in the worktree with the same `UV_CACHE_DIR`, so the cache holds the locked dependencies; this step reads the project's `pyproject.toml` and uv config and may run its build backend outside the sandbox. A line `QA groups: train, dev` at the start of a line in the `AGENTS.md` of the checkout (the first such line) adds `--group train --group dev` to that sync; names are comma separated and must match `[A-Za-z0-9][A-Za-z0-9._-]*`, else no sync runs and the result is `## QA: UNAVAILABLE` naming the bad name. A failing `uv sync` gives `## QA: UNAVAILABLE`.
 
-The pre-step runs repository code outside the sandbox. This accepted risk is described in "Frontend lane (optional)" of the README ([#50](https://github.com/Lighfe/agent-graph-kit/issues/50)).
+The pre-step runs repository code outside the sandbox. This accepted risk is described in "Accepted risk" of `docs/lovable-frontend-lane.md` ([#50](https://github.com/Lighfe/agent-graph-kit/issues/50)).
 
 ### Monitor smoke check
 

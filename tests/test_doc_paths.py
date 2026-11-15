@@ -8,8 +8,8 @@ never meaning.
 Files read (INSTRUCTION_FILES below): AGENTS.md, CLAUDE.md, docs/process.md,
 docs/task-template.md, every .md file in docs/team/ and .claude/agents/, every
 .md file under .agents/skills/, the living spec docs/specs/agent-graph-kit.md,
-and of README.md only three sections (README_SECTIONS below: the new-project
-section, the Lovable section and the v1 section), each from its heading to the
+and of README.md only two sections (README_SECTIONS below: the new-project
+section and the set-up reference), each from its heading to the
 next "## " heading.
 
 Candidates: the inline code spans with single backticks and the markdown link
@@ -59,11 +59,11 @@ INSTRUCTION_FILES = [
     ".claude/agents/*.md",
     ".agents/skills/**/*.md",
     "docs/specs/agent-graph-kit.md",
+    "docs/lovable-frontend-lane.md",
 ]
 README = "README.md"
 README_SECTIONS = [
     "## Start a new project",
-    "## Lovable frontend lane (optional, v2)",
     "## Project set-up reference",
 ]
 
