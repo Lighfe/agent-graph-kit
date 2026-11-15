@@ -758,6 +758,61 @@ def test_checklist_steps_name_the_commands_of_the_issue():
     assert s[7].count("release-stable") >= 2 and "`v0.2.0`" in s[7]
 
 
+def _checklist_actions():
+    """(step, letter, text) for each action **a.**, **b.**, ... of the checklist."""
+    found = []
+    for number, body in _checklist_steps().items():
+        parts = re.split(r"^\*\*([a-z])\.\*\* ", body, flags=re.M)
+        found += [(number, parts[i], parts[i + 1]) for i in range(1, len(parts), 2)]
+    return found
+
+
+def test_each_checklist_action_has_one_should_see_and_one_if_not():
+    for number, letter, text in _checklist_actions():
+        assert text.count("You should see:") == 1 and text.count("If not:") == 1, f"{number}{letter}"
+
+
+def test_each_click_action_is_one_named_click():
+    clicks = [(n, l, t) for n, l, t in _checklist_actions() if t.startswith("Click")]
+    assert clicks, "the checklist has click actions (step 3)"
+    for number, letter, text in clicks:
+        action = text.split("You should see:")[0]
+        assert len(re.findall(r"\*\*[^*]+\*\*", action)) == 1, f"{number}{letter}: {action!r}"
+
+
+def test_each_command_action_is_one_command_block():
+    for number, letter, text in _checklist_actions():
+        if text.startswith("Copy this command"):
+            action = text.split("You should see:")[0]
+            assert action.count("```") == 2, f"{number}{letter}"
+
+
+def test_claude_actions_name_the_exact_output():
+    s = _checklist_steps()
+    for line in (
+        "✔ Successfully removed marketplace: agent-graph-kit",
+        "(ref: stable)",
+        "✔ Successfully added marketplace: agent-graph-kit (declared in user settings)",
+        'Installing plugin "agk@agent-graph-kit"...✔ Successfully installed plugin: agk@agent-graph-kit (scope: project)',
+        "    Version: 0.2.0",
+    ):
+        assert line in s[4], line
+    for line in (
+        "(ref: dev)",
+        "✔ Successfully added marketplace: agent-graph-kit-dev (declared in user settings)",
+        'Installing plugin "agk@agent-graph-kit-dev"...✔ Successfully installed plugin: agk@agent-graph-kit-dev (scope: project)',
+    ):
+        assert line in s[6], line
+    assert '✔ Plugin "agk" updated from 0.2.0 to ' in s[7]
+    assert "✓ Created workflow_dispatch event for release-stable.yml at main" in s[7]
+
+
+def test_checklist_names_no_output_in_vague_words():
+    text = CHECKLIST.read_text(encoding="utf-8")
+    for vague in ("a line that says", "a last line that says", "one line that says"):
+        assert vague not in text, vague
+
+
 def test_checklist_tags_before_it_pushes_main():
     text = CHECKLIST.read_text(encoding="utf-8")
     assert text.index("git push origin v0.2.0") < text.index("git push origin main")

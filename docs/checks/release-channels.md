@@ -4,7 +4,7 @@ The plugin has two channels. `stable` is for users. `dev` gets every new plugin 
 
 How to use this list:
 
-- Do the steps in order. A step can have more than one action (a, b, c). Each action is one command to copy, or one click.
+- Do the steps in order. A step can have more than one action (a, b, c). Each action is one command to copy, one page to open, one click, or one value to type.
 - Run the commands in a terminal in the repo folder of `agent-graph-kit`, unless the action names another folder.
 - After each action, compare what you see with "You should see". When it is different, stop and do what "If not" says. "Send back" means: paste the text into a Claude Code session in this repo, or into a new issue.
 - You need `git`, `gh` (logged in) and `claude` on this machine.
@@ -55,13 +55,37 @@ If not: when `conclusion` is `""`, the run is not finished; wait one minute and 
 
 ## Step 3: Run "release-stable" with v0.2.0
 
-**a.** Click: open `https://github.com/Lighfe/agent-graph-kit/actions` in the browser. In the list on the left, click **release-stable**. Click the button **Run workflow**. Leave "Use workflow from" on `main`. Type `v0.2.0` into the field for the tag. Click the green button **Run workflow**.
+Actions a to d are in the browser, in the GitHub Actions tab of the repo.
 
-You should see: after a few seconds, a new line "release-stable" at the top of the list of runs, with a yellow circle.
+**a.** Open this page in the browser:
 
-If not: when "release-stable" is not in the list on the left, send back the output of `gh workflow list`. When there is no button **Run workflow**, send back a screenshot of the page.
+```
+https://github.com/Lighfe/agent-graph-kit/actions/workflows/release-stable.yml
+```
 
-**b.** Wait two minutes. Then copy this command:
+You should see: the heading `release-stable`, and above the list of runs the line `This workflow has a workflow_dispatch event trigger.` with the button `Run workflow` at its right end.
+
+If not: when the page says that it is not found, send back the output of `gh workflow list`. When the button `Run workflow` is missing, send back a screenshot of the page.
+
+**b.** Click **Run workflow** (the button at the right end of the line `This workflow has a workflow_dispatch event trigger.`).
+
+You should see: a small panel opens. It has `Use workflow from` with the button `Branch: main`, a text field with the label `The version tag that the branch stable moves to, for example v0.2.0`, and a green button `Run workflow`.
+
+If not: when the button shows another branch than `main`, send back a screenshot of the panel and stop. When no panel opens, send back a screenshot of the page.
+
+**c.** Type `v0.2.0` into the text field `The version tag that the branch stable moves to, for example v0.2.0`.
+
+You should see: the field shows exactly `v0.2.0`, with no space before or after it.
+
+If not: clear the field and type it again. When the field cannot be changed, send back a screenshot of the panel.
+
+**d.** Click the green button **Run workflow** at the bottom of the panel.
+
+You should see: the panel closes, and at the top of the page the message `Workflow run was successfully requested.`
+
+If not: send back a screenshot of the page.
+
+**e.** Wait two minutes. Then copy this command:
 
 ```
 gh run list --workflow release-stable.yml --limit 1 --json conclusion --jq '.[0].conclusion'
@@ -75,7 +99,7 @@ success
 
 If not: when the command prints an empty line, the run is not finished; wait one minute and run the command again. When it prints `failure`, send back the output of `gh run view --log-failed $(gh run list --workflow release-stable.yml --limit 1 --json databaseId --jq '.[0].databaseId')`.
 
-**c.** Copy this command:
+**f.** Copy this command:
 
 ```
 git ls-remote origin refs/heads/stable refs/tags/v0.2.0
@@ -90,7 +114,7 @@ e2295d77170c5b6398126f62c4e539a285402b12	refs/tags/v0.2.0
 
 If not: send back the output of the command.
 
-**d.** Copy this command:
+**g.** Copy this command:
 
 ```
 gh release view v0.2.0 --json tagName,isPrerelease,isDraft --jq '.' && gh release list --limit 10
@@ -102,7 +126,7 @@ If not: send back the output of the command.
 
 ## Step 4: Install from stable in an empty test project
 
-Your machine already has the marketplace `agent-graph-kit` without a channel. Action a removes it, and action b adds it again on the channel `stable`.
+Your machine already has the marketplace `agent-graph-kit` without a channel. Action a removes it, and action b adds it again on the channel `stable`. The removal also uninstalls the old copy of `agk` (version 0.1.10) that came from this marketplace.
 
 **a.** Copy this command:
 
@@ -110,9 +134,19 @@ Your machine already has the marketplace `agent-graph-kit` without a channel. Ac
 claude plugin marketplace remove agent-graph-kit
 ```
 
-You should see: one line that says the marketplace `agent-graph-kit` was removed, and no line with `Error` or `Failed`.
+You should see: exactly this:
 
-If not: when the output says that no marketplace has this name, go on with action b. For any other output, send it back and stop.
+```
+✔ Successfully removed marketplace: agent-graph-kit
+Also uninstalled 1 plugin from this marketplace:
+  agk@agent-graph-kit
+The removal also deletes their saved options, secrets and data where it can.
+To use a plugin again, add the marketplace back and reinstall the plugin.
+```
+
+The first line is the one that counts. When no plugin from the marketplace was installed, only the first line is there; when more copies were installed, the second line has another number and the copies are listed below it. Both are fine.
+
+If not: when the output is `✘ Failed to remove marketplace: Marketplace 'agent-graph-kit' not found`, go on with action b. For any other output, send it back and stop.
 
 **b.** Copy this command. It makes a new empty folder and adds the channel `stable`:
 
@@ -120,9 +154,20 @@ If not: when the output says that no marketplace has this name, go on with actio
 mkdir -p ~/agk-stable-test && cd ~/agk-stable-test && git init -q && claude plugin marketplace add Lighfe/agent-graph-kit#stable
 ```
 
-You should see: a last line that says the marketplace `agent-graph-kit` was added, and no line with `Error` or `Failed`.
+You should see: exactly this:
 
-If not: send back the full output of the command.
+```
+Adding marketplace…Cloning via SSH: git@github.com:Lighfe/agent-graph-kit.git
+Refreshing marketplace cache (timeout: 120s)…
+Cloning repository (timeout: 120s): git@github.com:Lighfe/agent-graph-kit.git (ref: stable)
+Clone complete, validating marketplace…
+Cleaning up old marketplace cache…
+✔ Successfully added marketplace: agent-graph-kit (declared in user settings)
+```
+
+The last line is the one that counts.
+
+If not: send back the full output of the command. An output with `Remote branch stable not found` means that step 3 did not move the branch `stable`.
 
 **c.** Copy this command in the same terminal (the folder is `~/agk-stable-test`):
 
@@ -130,7 +175,11 @@ If not: send back the full output of the command.
 claude plugin install agk@agent-graph-kit --scope project
 ```
 
-You should see: a last line that says `agk@agent-graph-kit` was installed, and no line with `Error` or `Failed`.
+You should see: exactly this one line:
+
+```
+Installing plugin "agk@agent-graph-kit"...✔ Successfully installed plugin: agk@agent-graph-kit (scope: project)
+```
 
 If not: send back the full output of the command.
 
@@ -146,6 +195,7 @@ You should see: this block in the list, with exactly this version:
   ❯ agk@agent-graph-kit
     Version: 0.2.0
     Scope: project
+    Status: ✔ enabled
 ```
 
 If not: send back the full output of the command. Name the version that it shows.
@@ -216,7 +266,18 @@ If not: send back the output of the command.
 mkdir -p ~/agk-dev-test && cd ~/agk-dev-test && git init -q && claude plugin marketplace add Lighfe/agent-graph-kit#dev
 ```
 
-You should see: a last line that says the marketplace `agent-graph-kit-dev` was added, and no line with `Error` or `Failed`.
+You should see: exactly this:
+
+```
+Adding marketplace…Cloning via SSH: git@github.com:Lighfe/agent-graph-kit.git
+Refreshing marketplace cache (timeout: 120s)…
+Cloning repository (timeout: 120s): git@github.com:Lighfe/agent-graph-kit.git (ref: dev)
+Clone complete, validating marketplace…
+Cleaning up old marketplace cache…
+✔ Successfully added marketplace: agent-graph-kit-dev (declared in user settings)
+```
+
+The last line is the one that counts.
 
 If not: send back the full output of the command.
 
@@ -226,7 +287,11 @@ If not: send back the full output of the command.
 claude plugin install agk@agent-graph-kit-dev --scope project
 ```
 
-You should see: a last line that says `agk@agent-graph-kit-dev` was installed, and no line with `Error` or `Failed`.
+You should see: exactly this one line:
+
+```
+Installing plugin "agk@agent-graph-kit-dev"...✔ Successfully installed plugin: agk@agent-graph-kit-dev (scope: project)
+```
 
 If not: send back the full output of the command.
 
@@ -236,7 +301,14 @@ If not: send back the full output of the command.
 claude plugin list
 ```
 
-You should see: a block `❯ agk@agent-graph-kit-dev` with the line `Version:` and the new version from step 5a.
+You should see: this block in the list, where the line `Version:` shows the new version from step 5a (here the example `0.2.1`):
+
+```
+  ❯ agk@agent-graph-kit-dev
+    Version: 0.2.1
+    Scope: project
+    Status: ✔ enabled
+```
 
 If not: send back the full output of the command. Name the version that it shows.
 
@@ -244,11 +316,21 @@ If not: send back the full output of the command. Name the version that it shows
 
 This step moves `stable` forward to the new tag, and then back to `v0.2.0`. It shows what a user of `stable` gets after a rollback. Both answers in action f are valid results. Write down which one you got.
 
-**a.** Click: open `https://github.com/Lighfe/agent-graph-kit/actions`, click **release-stable** on the left, click **Run workflow**, type the new tag from step 5a (for example `v0.2.1`) into the field for the tag, click the green button **Run workflow**.
+The commands below use the example `v0.2.1` (and `0.2.1`) for the new tag. When your new tag from step 5a is another one, change it in the command before you press Enter, and read it in the same way in "You should see".
 
-You should see: a new line "release-stable" at the top of the list of runs, with a yellow circle.
+**a.** Copy this command in the repo folder of `agent-graph-kit`. It runs "release-stable" with the new tag:
 
-If not: send back a screenshot of the page.
+```
+gh workflow run release-stable.yml -f tag=v0.2.1
+```
+
+You should see: the first line is exactly
+
+```
+✓ Created workflow_dispatch event for release-stable.yml at main
+```
+
+If not: send back the full output of the command.
 
 **b.** Wait two minutes. Then copy this command:
 
@@ -270,20 +352,44 @@ If not: when the command prints an empty line, wait one minute and run it again.
 cd ~/agk-stable-test && claude plugin marketplace update agent-graph-kit && claude plugin update agk@agent-graph-kit --scope project && claude plugin list
 ```
 
-You should see: in the list at the end, the block `❯ agk@agent-graph-kit` has the line `Version:` with the new version from step 5a.
+You should see: first these four lines:
+
+```
+Updating marketplace: agent-graph-kit...Refreshing marketplace cache (timeout: 120s)…
+✔ Successfully updated marketplace: agent-graph-kit
+Checking for updates for plugin "agk@agent-graph-kit" at project scope…
+✔ Plugin "agk" updated from 0.2.0 to 0.2.1 for scope project. Restart to apply changes.
+```
+
+and then, in the list at the end, this block:
+
+```
+  ❯ agk@agent-graph-kit
+    Version: 0.2.1
+    Scope: project
+    Status: ✔ enabled
+```
 
 If not: send back the full output of the command. Name the version that it shows.
 
-**d.** Click: open `https://github.com/Lighfe/agent-graph-kit/actions`, click **release-stable** on the left, click **Run workflow**, type `v0.2.0` into the field for the tag, click the green button **Run workflow**.
+**d.** Copy this command. It runs "release-stable" with `v0.2.0` (the rollback). It works in any folder:
 
-You should see: a new line "release-stable" at the top of the list of runs, with a yellow circle.
+```
+gh workflow run release-stable.yml --repo Lighfe/agent-graph-kit -f tag=v0.2.0
+```
 
-If not: send back a screenshot of the page.
+You should see: the first line is exactly
+
+```
+✓ Created workflow_dispatch event for release-stable.yml at main
+```
+
+If not: send back the full output of the command.
 
 **e.** Wait two minutes. Then copy this command:
 
 ```
-gh run list --workflow release-stable.yml --limit 1 --json conclusion --jq '.[0].conclusion' && git ls-remote origin refs/heads/stable
+gh run list --repo Lighfe/agent-graph-kit --workflow release-stable.yml --limit 1 --json conclusion --jq '.[0].conclusion' && git ls-remote https://github.com/Lighfe/agent-graph-kit.git refs/heads/stable
 ```
 
 You should see: the line `success`, and then the line
@@ -292,7 +398,7 @@ You should see: the line `success`, and then the line
 e2295d77170c5b6398126f62c4e539a285402b12	refs/heads/stable
 ```
 
-If not: when the first line is empty, wait one minute and run the command again. When it is `failure`, send back the output of `gh run view --log-failed $(gh run list --workflow release-stable.yml --limit 1 --json databaseId --jq '.[0].databaseId')`. When the second line shows another text before `refs/heads/stable`, send back the output of the command.
+If not: when the first line is empty, wait one minute and run the command again. When it is `failure`, send back the output of `gh run view --repo Lighfe/agent-graph-kit --log-failed $(gh run list --repo Lighfe/agent-graph-kit --workflow release-stable.yml --limit 1 --json databaseId --jq '.[0].databaseId')`. When the second line shows another text before `refs/heads/stable`, send back the output of the command.
 
 **f.** Copy this command. It updates the first test project again:
 
@@ -300,10 +406,10 @@ If not: when the first line is empty, wait one minute and run the command again.
 cd ~/agk-stable-test && claude plugin marketplace update agent-graph-kit && claude plugin update agk@agent-graph-kit --scope project && claude plugin list
 ```
 
-You should see: in the list at the end, the block `❯ agk@agent-graph-kit` with a line `Version:`. Write down the version in this line. It is one of these two:
+You should see: first the same three lines as in action c, then one of these two results. Write down which one you got:
 
-- `0.2.0`: the rollback reaches a user who already had the newer version.
-- the new version from step 5a: the rollback does not reach this user. Claude Code has no downgrade command, so this can happen. The README then has to name the way back.
+- The rollback reaches a user who already had the newer version. The fourth line is `✔ Plugin "agk" updated from 0.2.1 to 0.2.0 for scope project. Restart to apply changes.`, and in the list the block `❯ agk@agent-graph-kit` has the line `    Version: 0.2.0`.
+- The rollback does not reach this user. The fourth line is `✔ agk is already at the latest version (0.2.1).`, and in the list the block `❯ agk@agent-graph-kit` has the line `    Version: 0.2.1`. Claude Code has no downgrade command, so this can happen. The README then has to name the way back.
 
 If not: when the block is missing, or the version is neither of the two, send back the full output of the command.
 
