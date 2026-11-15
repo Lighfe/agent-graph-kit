@@ -46,7 +46,7 @@ def test_readme_links_the_lane_file():
     step9 = [l for l in README.splitlines() if l.startswith("9. ")][0]
     assert "Lovable frontend lane" in step9 and "docs/lovable-frontend-lane.md" in step9
     assert "## Lovable frontend lane" not in README
-    assert "Frontend lane (optional)" not in README
+    assert "Frontend lane " + "(optional)" not in README
 
 
 def test_lane_file_headings_and_no_version_words():
