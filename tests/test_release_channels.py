@@ -772,6 +772,27 @@ def test_each_checklist_action_has_one_should_see_and_one_if_not():
         assert text.count("You should see:") == 1 and text.count("If not:") == 1, f"{number}{letter}"
 
 
+ACTION_FORMS = (
+    "Copy this command",
+    "Wait two minutes. Then copy this command",
+    "Open this page in the browser:",
+    "Click ",
+    "Type ",
+)
+
+
+def test_each_checklist_action_is_a_command_a_page_a_click_or_a_value():
+    for number, letter, text in _checklist_actions():
+        assert text.startswith(ACTION_FORMS), f"{number}{letter}: {text.splitlines()[0]!r}"
+
+
+def test_rollback_ends_with_the_written_down_version():
+    rollback = _checklist_steps()[7]
+    letters = [l for n, l, _ in _checklist_actions() if n == 7]
+    assert letters == list("abcdef")
+    assert "Write down which one you got." in rollback
+
+
 def test_each_click_action_is_one_named_click():
     clicks = [(n, l, t) for n, l, t in _checklist_actions() if t.startswith("Click")]
     assert clicks, "the checklist has click actions (step 3)"

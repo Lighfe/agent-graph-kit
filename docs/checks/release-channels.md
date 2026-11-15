@@ -413,13 +413,8 @@ You should see: first the same three lines as in action c, then one of these two
 
 If not: when the block is missing, or the version is neither of the two, send back the full output of the command.
 
-**g.** Send back the version that you wrote down in action f, with the words "rollback check". The README text on the rollback depends on it.
-
-You should see: an answer that names the version and says what it means for the README.
-
-If not: put the version into a new issue with the title "Rollback check: result".
-
 ## After the checklist
 
+- The version that you wrote down in step 7, action f, decides the README text on the rollback (issue #330). Give it to the planner when that issue is planned.
 - The two test folders `~/agk-stable-test` and `~/agk-dev-test` can be deleted.
 - `stable` is now on `v0.2.0` again. To give users the new version, run "release-stable" with the new tag once more (step 7, actions a and b).
