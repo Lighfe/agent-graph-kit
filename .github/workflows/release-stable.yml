@@ -1,0 +1,65 @@
+# Channel stable (issue #326). A manual run moves the branch stable to a tag whose commit passed
+# the workflow ci, and makes the release of that tag the latest release. A run with an older tag
+# is the rollback. The owner's checklist is docs/checks/release-channels.md.
+name: release-stable
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The version tag that the branch stable moves to, for example v0.2.0
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: release-stable
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # setup-uv publishes no major tags since v8; v10.2.0 is the current major.
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Check the tag and its ci run
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git rev-parse --verify --quiet "refs/tags/$TAG^{commit}" > /dev/null; then
+            echo "::error::tag $TAG does not exist"
+            exit 1
+          fi
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          runs="$(gh run list --workflow ci.yml --commit "$sha" --status success --limit 1 --json databaseId --jq length)"
+          if [ "$runs" != "1" ]; then
+            echo "::error::no successful run of the workflow ci for $sha (tag $TAG)"
+            exit 1
+          fi
+          echo "tag $TAG is commit $sha, and its ci run passed"
+      - name: Move the branch stable
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # The script comes from the branch of this run: an older tag may not have it.
+          cp scripts/release_channels.py "$RUNNER_TEMP/release_channels.py"
+          git checkout --quiet --detach "refs/tags/$TAG"
+          uv run --script "$RUNNER_TEMP/release_channels.py" --root "$PWD" marketplace stable
+          if ! git diff --quiet -- .claude-plugin/marketplace.json; then
+            git add .claude-plugin/marketplace.json
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit --quiet -m "Channel stable: $TAG with the marketplace name agent-graph-kit"
+          fi
+          git push --force origin HEAD:refs/heads/stable
+      - name: Make the release the latest release
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          else
+            gh release create "$TAG" --verify-tag --latest --title "$TAG" --generate-notes
+          fi

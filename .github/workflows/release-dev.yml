@@ -1,0 +1,59 @@
+# Channel dev (issue #326). When a push to main carries a plugin version that has no tag yet:
+# run the tests, then tag the version, create a pre-release and move the branch dev.
+# The owner's checklist is docs/checks/release-channels.md.
+name: release-dev
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+concurrency:
+  group: release-dev
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth 0 fetches all tags; without them every push would look like a new version.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # setup-uv publishes no major tags since v8; v10.2.0 is the current major.
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Check for a new plugin version
+        id: check
+        run: |
+          result="$(uv run --script scripts/release_channels.py check)"
+          echo "$result"
+          tag=""
+          case "$result" in
+            "release "*) tag="${result#release }" ;;
+          esac
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Run the tests
+        if: startsWith(steps.check.outputs.result, 'release ')
+        run: uv run --with pytest pytest
+      - name: Create the tag
+        if: startsWith(steps.check.outputs.result, 'release ')
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+      - name: Create the pre-release
+        if: startsWith(steps.check.outputs.result, 'release ')
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" --verify-tag --prerelease --title "$TAG" --generate-notes
+      - name: Move the branch dev
+        if: startsWith(steps.check.outputs.result, 'release ')
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git checkout --quiet --detach "refs/tags/$TAG"
+          uv run --script scripts/release_channels.py marketplace dev
+          git add .claude-plugin/marketplace.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit --quiet -m "Channel dev: $TAG with the marketplace name agent-graph-kit-dev"
+          git push --force origin HEAD:refs/heads/dev

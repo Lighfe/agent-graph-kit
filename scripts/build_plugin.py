@@ -39,6 +39,8 @@ HAND_TEMPLATES = {"AGENTS.md.tmpl", "CLAUDE.md.tmpl", "scripts/qa-codex"}  # wri
 BIN_FILES = {"scripts/qa-codex": "qa-codex-launcher", "scripts/codex_exec.py": "codex_exec.py",
              "scripts/qa-result.schema.json": "qa-result.schema.json"}
 IGNORED = {"__pycache__", ".pytest_cache"}
+# files of this repo only: a plugin project does not get them (issue #326: the release checklist of the kit repo)
+KIT_ONLY = {"docs/checks/release-channels.md"}
 RELEASE_FILE = ROOT / "scripts" / "plugin-release.json"
 VERSION_LINE = re.compile(rb'^[ \t]*"version"[ \t]*:.*\r?\n', re.M)
 
@@ -51,7 +53,18 @@ def _tree(base: Path) -> dict[str, bytes]:
         p.relative_to(base).as_posix(): p.read_bytes()
         for p in sorted(base.rglob("*"))
         if p.is_file() and not (set(p.relative_to(base).parts) & IGNORED) and p.suffix != ".pyc"
+        and not _kit_only(p)
     }
+
+
+def _kit_only(path: Path) -> bool:
+    return path.is_relative_to(ROOT) and path.relative_to(ROOT).as_posix() in KIT_ONLY
+
+
+def _ignore(folder: str, names: list[str]) -> set[str]:
+    """For `shutil.copytree`: the names in `folder` that are not copied."""
+    skip = shutil.ignore_patterns(*IGNORED, "*.pyc")(folder, names)
+    return set(skip) | {n for n in names if _kit_only(Path(folder) / n)}
 
 
 def mapping() -> list[tuple[Path, Path]]:
@@ -108,7 +121,7 @@ def build() -> None:
             shutil.rmtree(dst)
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*IGNORED, "*.pyc"))
+            shutil.copytree(src, dst, ignore=_ignore)
         else:
             shutil.copy2(src, dst)
 
