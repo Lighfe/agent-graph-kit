@@ -145,16 +145,35 @@ uv run --script "${CLAUDE_SKILL_DIR}/board.py" down   # stop the stack; exit 0 a
 - Errors: any error in a read (a failing `gh` call, a bad line, a missing file) is logged and never stops the server or `board.py`. After a failing `gh` call the previous metrics stay and `agk_facts_last_success_seconds` does not move.
 - Projects: the entries of `<state dir>/monitor-projects.json` (`project` = `owner/name`, `repo` = folder where `gh` runs).
 
-The four metrics (all gauges):
+The five metrics (all gauges):
 
 | Metric | Labels | Value |
 |---|---|---|
 | `agk_issue_info` | `agk_project`, `stage`, `issue`, `title`, `order` | 1 for each sub-issue (open and closed) of each open stage issue (label `stage`). `stage` and `issue` are issue numbers as text; `order` is the position 1, 2, ... in the GitHub sub-issues list |
 | `agk_marker` | `agk_project`, `stage`, `issue`, `role`, `launch` | 1 for the current marker of each project; no series when the project has no open stage issue |
+| `agk_launch_open` | `agk_project`, `stage`, `issue`, `role`, `launch` (as `agk_marker`) | 1 while the launch of the marker is in work: the marker has a `launch`, and no owner comment on the issue of its receipt (the stage issue for a planner receipt) is newer than the receipt. No series after a result, after `## Launch stopped by outage: …`, or for the stage-level orchestrator marker. The alert "Stuck launch" reads it (see "Alerts") |
 | `agk_usage_limit_percent` | `provider`, `window` | `used_percent` from `usage-limits-claude.jsonl` and `usage-limits-codex.jsonl` in the state dir. A line counts only when `v` is 1, `used_percent` is a number and `provider` and `window` are non-empty text; the last valid line per provider and window wins; a missing file gives no series |
 | `agk_facts_last_success_seconds` | none | Unix time of the last full read (no series before the first one) |
 
 The marker (which issue and role is in work now) comes from the launch receipts: the comments `## Launch: <role> (attempt <n>)` or `(continued, round <n>)` on the sub-issues of the open stage issue, and `## Launch: planner (attempt <n>)` on the stage issue. Only comments of the owner count. A receipt followed by `## Launch not started: <same role and attempt>` is skipped. The newest remaining receipt by `createdAt` gives `stage`, `issue`, `role` and `launch` (`<receipt role>-<n>`, for example `engineer-2`). When its issue is closed and no newer receipt exists, or the stage has no receipt yet, the marker is `issue=""`, `role="orchestrator"`, `launch=""` (work of the stage). The planner receipt gives `issue=""`, `role="planner"`. With more than one open stage issue, the newest receipt of all of them wins, and a stage with no receipt at all uses the highest stage number. Roles: `pm`, `engineer`, `qa-claude` (receipt role `qa`, line `Agent: qa-engineer`), `qa-codex` (line `Agent: qa-codex`), `planner`, `orchestrator`. The boards join OTel data with this marker (issue #312).
+
+## Alerts
+
+Grafana has two alert rules, in the folder "agk". See them in Grafana at Alerting > Alert rules (`http://127.0.0.1:3000/alerting/list`): each rule shows its state (Normal, Pending or Firing) and, when it fires, one line per issue or launch. There is no contact point: the kit sends no e-mail, chat message or desktop notification, so look at the list.
+
+- **Runaway issue**: one issue used more tokens than the limit. This is the case of agents that go in circles: many returns, or a launch that does not end. The count is the one of the boards: `agk:tokens:1m`, all token kinds (cache included), Claude and Codex together, summed by project and issue over the last 365 days (the retention of Prometheus). Tokens with an empty `issue` (work of the orchestrator between the issues of a stage) never count. When it fires: open the issue on the history board, look at its launches, and stop the loop when the issue does not move.
+- **Stuck launch**: a launch is in work and uses no tokens. In work means `agk_launch_open` (see "Facts"): the launch receipt is the newest owner comment on its issue. The rule fires when the same launch was in that state for the whole limit and `agk:tokens:1m` counted no token for its project and issue in that time; one counted token starts the time again. A long Codex QA run that uses tokens does not fire it. When it fires: the agent may hang, or its session ended without a result; look at the session, or start the loop again.
+
+The two limits are environment variables, set when you run `up`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGK_ALERT_ISSUE_TOKENS` | `23000000` | "Runaway issue" fires above this number of tokens for one issue. The default is twice the largest issue of one measured stage (11.3 M tokens), rounded to the nearest million |
+| `AGK_ALERT_STUCK_MINUTES` | `45` | "Stuck launch" fires after this number of minutes |
+
+Example: `AGK_ALERT_ISSUE_TOKENS=40000000 uv run --script "${CLAUDE_SKILL_DIR}/board.py" up`. A value that is not a whole number above 0 stops `up` with exit 2 before anything starts. A later `up` without the variable goes back to the default.
+
+How the limits get into Grafana: the rules are in `grafana/provisioning/alerting/agk-alerts.yaml`, with `${AGK_ALERT_ISSUE_TOKENS}` and `${AGK_ALERT_STUCK_MINUTES}` in the place of the numbers. Grafana does not expand an environment variable in the query of an alert file, so `up` writes a copy with the numbers to `<state dir>/monitor-alerts.yaml` (mode 0600), and `compose.yaml` puts that copy over the file in the container. `compose.yaml` also sets both variables for Grafana, with the same defaults. When a limit or the rules file changed, `up` starts Grafana again so it reads the new rules; the rules cannot be edited in Grafana. Both rules stay Normal when their query gives no data.
 
 ## The live board
 

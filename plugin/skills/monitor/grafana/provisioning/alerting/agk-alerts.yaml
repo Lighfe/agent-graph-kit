@@ -1,0 +1,100 @@
+# The two alert rules of the monitor stack (issue #327). They show in the Grafana alert list
+# (Alerting > Alert rules, folder "agk"). There is no contact point: nothing is sent anywhere.
+# Spec: docs/specs/2026-11-14-capstone-readiness.md, Part D
+#
+# The two limits are the settings AGK_ALERT_ISSUE_TOKENS and AGK_ALERT_STUCK_MINUTES (defaults in
+# compose.yaml). Grafana 13.2.4 expands environment variables only in some fields of this file (for
+# example `for` and `title`), not in a query model and not in an annotation. So `board.py up` writes
+# the two values: it copies this file to <state dir>/monitor-alerts.yaml with each ${AGK_ALERT_...}
+# replaced by its number, and compose.yaml puts that copy over this file in the container.
+# For the same reason $labels in an annotation is written with one dollar sign. Keep every dollar
+# sign out of the fields that Grafana expands (uid, title, name, folder, refId, datasourceUid).
+#
+# The file keeps to the block style that the small YAML reader of the tests can read:
+# every query is one line in single quotes, and there is no flow list or flow map.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: agk-runaway
+    folder: agk
+    interval: 5m
+    rules:
+      # One issue used more tokens than the limit: all token kinds, Claude and Codex together, summed
+      # over the Prometheus retention (365 d), as on the boards. Tokens with an empty `issue` are
+      # stage-level orchestrator work and never count.
+      - uid: agk-runaway-issue
+        title: Runaway issue
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: agk-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              expr: 'sum by (agk_project, issue) (sum_over_time(agk:tokens:1m{issue!=""}[365d])) > ${AGK_ALERT_ISSUE_TOKENS}'
+              instant: true
+              range: false
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          source: agk
+        annotations:
+          summary: 'Issue {{ $labels.issue }} of {{ $labels.agk_project }} used more than ${AGK_ALERT_ISSUE_TOKENS} tokens'
+          description: 'One issue spends far more tokens than normal. Look at its launches on the board, and stop the loop when the agents turn in circles.'
+  - orgId: 1
+    name: agk-stuck
+    folder: agk
+    interval: 1m
+    rules:
+      # A launch is in work (agk_launch_open of facts.py: no owner comment after its receipt) and no
+      # token was counted for its project and issue. The query looks at the last two minutes, and `for`
+      # keeps the rule pending until the same launch (the label `launch`) was in that state for
+      # AGK_ALERT_STUCK_MINUTES minutes without a break. One counted token starts the time again.
+      # `!= 0`: a minute of agk:tokens:1m can be below 0 after a counter reset; that is token use too.
+      - uid: agk-stuck-launch
+        title: Stuck launch
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: agk-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              expr: 'agk_launch_open unless on (agk_project, issue) (sum by (agk_project, issue) (sum_over_time(agk:tokens:1m[2m])) != 0)'
+              instant: true
+              range: false
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        for: ${AGK_ALERT_STUCK_MINUTES}m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          source: agk
+        annotations:
+          summary: 'Launch {{ $labels.launch }} on issue {{ $labels.issue }} of {{ $labels.agk_project }} used no tokens for ${AGK_ALERT_STUCK_MINUTES} minutes'
+          description: 'The launch has a receipt and no result, and nothing was counted for its issue. The agent may hang or the session may have ended.'

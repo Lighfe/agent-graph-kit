@@ -107,8 +107,19 @@ services:
       # The addresses of the data sources are settings, so the stack can run elsewhere later.
       AGK_PROMETHEUS_URL: "${AGK_PROMETHEUS_URL:-http://prometheus:9090}"
       AGK_LOKI_URL: "${AGK_LOKI_URL:-http://loki:3100}"
+      # The limits of the two alert rules (grafana/provisioning/alerting/agk-alerts.yaml, issue #327):
+      # the tokens of one issue, and the minutes a launch may be in work without a token.
+      AGK_ALERT_ISSUE_TOKENS: "${AGK_ALERT_ISSUE_TOKENS:-23000000}"
+      AGK_ALERT_STUCK_MINUTES: "${AGK_ALERT_STUCK_MINUTES:-45}"
+      # A hash of the alert file that `board.py up` wrote. Compose does not see a changed file,
+      # but it sees this value, so Grafana starts again and reads the new rules.
+      AGK_ALERTS_VERSION: "${AGK_ALERTS_VERSION:-}"
     secrets:
       - grafana_admin
+    configs:
+      # The alert file with the two limits written in by `board.py up`, over the file of the same name.
+      - source: agk_alerts
+        target: /etc/grafana/provisioning/alerting/agk-alerts.yaml
     volumes:
       - type: bind
         source: ./grafana/provisioning
@@ -126,6 +137,9 @@ configs:
   # The target list of the scrape job `facts`; the port is a setting.
   facts_targets:
     content: '[{"targets": ["${AGK_FACTS_HOST:-host.docker.internal}:${AGK_FACTS_PORT:-9464}"]}]'
+  # The alert rules of Grafana. `board.py up` sets AGK_ALERTS_FILE to its copy with the limits written in.
+  agk_alerts:
+    file: "${AGK_ALERTS_FILE:-./grafana/provisioning/alerting/agk-alerts.yaml}"
 
 secrets:
   grafana_admin:

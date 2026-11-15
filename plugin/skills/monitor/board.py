@@ -12,12 +12,15 @@ Every port is on 127.0.0.1 only. Docker is needed for this part only.
 The Collector keeps only data of the projects in `<state dir>/monitor-projects.json`; `up` writes that
 file once with the current project when it is missing. The admin password of Grafana is in
 `<state dir>/grafana-admin` (mode 0600, made on the first `up`); this script prints the path, never the value.
+`up` writes the alert rules of Grafana to `<state dir>/monitor-alerts.yaml` with the two limits
+AGK_ALERT_ISSUE_TOKENS and AGK_ALERT_STUCK_MINUTES (issue #327).
 `facts.py` (issue #310) runs on the host and listens on the gateway address of the compose network (never on
 0.0.0.0), the address Prometheus scrapes (issue #321). Its process id is in `<state dir>/facts.pid`, its log in `<state dir>/facts.log`.
 Spec: docs/specs/2026-11-13-otel-monitoring-boards.md, Part B
 """
 
 import argparse
+import hashlib
 import importlib.util
 import ipaddress
 import json
@@ -47,6 +50,14 @@ PORTS = {
     "AGK_GRAFANA_PORT": "3000",
     "AGK_FACTS_PORT": "9464",
 }
+# The limits of the two alert rules (issue #327): environment variable and default. `compose.yaml` has the
+# same defaults. Grafana does not expand a variable in a query of an alert file, so `up` writes the values.
+ALERT_LIMITS = {
+    "AGK_ALERT_ISSUE_TOKENS": "23000000",
+    "AGK_ALERT_STUCK_MINUTES": "45",
+}
+ALERTS_TEMPLATE = HERE / "grafana" / "provisioning" / "alerting" / "agk-alerts.yaml"
+LIMIT = re.compile(r"[1-9][0-9]{0,14}")
 SLUG = re.compile(r"[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+")
 
 
@@ -89,6 +100,38 @@ def headers_helper_path():
 
 def port(name):
     return os.environ.get(name) or PORTS[name]
+
+
+def alerts_path():
+    """The alert file that Grafana reads: the file of the skill with the two limits written in."""
+    return data.state_dir() / "monitor-alerts.yaml"
+
+
+def alert_limits():
+    """{variable: value} of the two alert limits, from the environment or the default. Each value is a
+    whole number above 0 (it goes into a query), else ValueError."""
+    limits = {}
+    for name, default in ALERT_LIMITS.items():
+        value = (os.environ.get(name) or default).strip()
+        if not LIMIT.fullmatch(value):
+            raise ValueError(f"{name} is {value!r}, not a whole number above 0")
+        limits[name] = value
+    return limits
+
+
+def render_alerts(text, limits):
+    """The text of the alert file with each `${<variable>}` replaced by its value."""
+    for name, value in limits.items():
+        text = text.replace("${" + name + "}", value)
+    return text
+
+
+def write_alerts(limits):
+    """Write the alert file for Grafana and return (path, a hash of its text)."""
+    text = render_alerts(ALERTS_TEMPLATE.read_text(encoding="utf-8"), limits)
+    path = alerts_path()
+    write_private(path, text)
+    return path, hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 # --- projects ---------------------------------------------------------------------------------
@@ -374,6 +417,11 @@ def up():
         say(f"otelHeadersHelper for the user settings: {install_headers_helper()}")
     except OSError as e:
         say(f"could not write the otelHeadersHelper ({e}); Claude Code data has no project tag.", err=True)
+    try:
+        limits = alert_limits()
+    except ValueError as e:
+        say(f"{e}. Nothing was started.", err=True)
+        return 2
     stop_facts()  # a facts.py of an earlier `up` is replaced, so its port is free
     if port_in_use(port("AGK_FACTS_PORT")):
         say(f"the port {port('AGK_FACTS_PORT')} of facts.py is in use. Set AGK_FACTS_PORT to a free port "
@@ -381,6 +429,13 @@ def up():
         return 2
     password_file = ensure_password()
     env = stack_env(password_file, pattern)
+    try:
+        alerts_file, alerts_version = write_alerts(limits)
+    except OSError as e:
+        say(f"could not write the alert file ({e}). Nothing was started.", err=True)
+        return 2
+    env.update(limits)
+    env.update({"AGK_ALERTS_FILE": str(alerts_file.resolve()), "AGK_ALERTS_VERSION": alerts_version})
     try:
         code = compose(env, "up", "-d")
     except KeyboardInterrupt:
