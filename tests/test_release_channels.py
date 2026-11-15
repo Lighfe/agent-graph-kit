@@ -568,6 +568,8 @@ def test_dev_run_stops_on_a_bad_version(world):
 # --- release-stable.yml -----------------------------------------------------------------------
 
 GATE = "Check the tag and its ci run"
+CHECKOUT = "Check out the tag"
+TESTS = "Run the tests"
 MOVE = "Move the branch stable"
 RELEASE = "Make the release the latest release"
 
@@ -592,8 +594,18 @@ def test_stable_gate_is_before_any_branch_or_release_step():
         assert "if" not in s and "continue-on-error" not in s, s.get("name")
 
 
+def test_stable_test_step_runs_the_test_command():
+    assert step(STABLE, TESTS)["run"].strip() == "uv run --with pytest pytest"
+
+
+def test_stable_test_step_is_before_any_tag_or_branch_step():
+    all_steps = steps(STABLE)
+    writing = [i for i, s in enumerate(all_steps) if _writes(s)]
+    assert index(STABLE, GATE) < index(STABLE, CHECKOUT) < index(STABLE, TESTS) < min(writing)
+
+
 def test_stable_steps_take_the_tag_from_the_input():
-    for name in (GATE, MOVE, RELEASE):
+    for name in (GATE, CHECKOUT, MOVE, RELEASE):
         assert step(STABLE, name)["env"]["TAG"] == "${{ inputs.tag }}"
 
 
@@ -606,12 +618,18 @@ def test_stable_gate_asks_for_a_successful_run_of_ci():
 
 
 def _stable_run(world, tag, ci_runs, release_exists=False):
-    """Run the steps of release-stable as GitHub would: stop at the first step that fails."""
+    """Run the steps of release-stable as GitHub would: stop at the first step that fails.
+
+    The test step does not run the suite; it records the commit it would test in `world.tested`."""
     _git(world.repo, "fetch", "-q", "--tags", "origin")
     _git(world.repo, "checkout", "-q", "--detach", "origin/main")
+    world.tested = None
     for s in steps(STABLE):
         if "run" not in s:
             continue
+        if s["name"] == TESTS:
+            world.tested = _git(world.repo, "rev-parse", "HEAD")
+            continue  # the suite does not run itself
         done = world.run_step(s, TAG=tag, FAKE_CI_RUNS=str(ci_runs), FAKE_RELEASE_EXISTS="1" if release_exists else "0")
         if done.returncode != 0:
             return s["name"], done
@@ -650,6 +668,7 @@ def test_stable_stops_when_the_input_is_a_branch_name(tagged):
 def test_stable_stops_when_the_commit_has_no_successful_ci_run(tagged):
     failed, done = _stable_run(tagged, "v0.2.0", ci_runs=0)
     assert failed == GATE
+    assert tagged.tested is None
     assert f"no successful run of the workflow ci for {tagged.first}" in done.stdout + done.stderr
     assert tagged.remote_ref("refs/heads/stable") is None
     assert [c.split()[:2] for c in tagged.gh_calls()] == [["run", "list"]]
@@ -658,6 +677,7 @@ def test_stable_stops_when_the_commit_has_no_successful_ci_run(tagged):
 def test_stable_moves_the_branch_to_the_hand_set_tag_and_creates_its_release(tagged):
     failed, done = _stable_run(tagged, "v0.2.0", ci_runs=1)
     assert failed is None, done and done.stderr
+    assert tagged.tested == tagged.first  # the tests run on the commit of the tag, not on main
     assert tagged.remote_ref("refs/heads/stable") == tagged.first
     assert json.loads(tagged.remote_file("stable", MARKETPLACE))["name"] == "agent-graph-kit"
     assert json.loads(tagged.remote_file("stable", MANIFEST))["version"] == "0.2.0"

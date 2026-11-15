@@ -1,6 +1,7 @@
-# Channel stable (issue #326). A manual run moves the branch stable to a tag whose commit passed
-# the workflow ci, and makes the release of that tag the latest release. A run with an older tag
-# is the rollback. The owner's checklist is docs/checks/release-channels.md.
+# Channel stable (issue #326). A manual run takes a tag whose commit passed the workflow ci,
+# runs the tests on that commit, moves the branch stable to it, and makes the release of that
+# tag the latest release. A run with an older tag is the rollback. The owner's checklist is
+# docs/checks/release-channels.md.
 name: release-stable
 on:
   workflow_dispatch:
@@ -40,13 +41,20 @@ jobs:
             exit 1
           fi
           echo "tag $TAG is commit $sha, and its ci run passed"
-      - name: Move the branch stable
+      - name: Check out the tag
         env:
           TAG: ${{ inputs.tag }}
         run: |
           # The script comes from the branch of this run: an older tag may not have it.
           cp scripts/release_channels.py "$RUNNER_TEMP/release_channels.py"
           git checkout --quiet --detach "refs/tags/$TAG"
+      # The tests run on the commit of the tag, before the branch stable moves.
+      - name: Run the tests
+        run: uv run --with pytest pytest
+      - name: Move the branch stable
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
           uv run --script "$RUNNER_TEMP/release_channels.py" --root "$PWD" marketplace stable
           if ! git diff --quiet -- .claude-plugin/marketplace.json; then
             git add .claude-plugin/marketplace.json
