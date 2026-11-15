@@ -64,7 +64,9 @@ groups:
       # token was counted for its project and issue. The query looks at the last two minutes, and `for`
       # keeps the rule pending until the same launch (the label `launch`) was in that state for
       # AGK_ALERT_STUCK_MINUTES minutes without a break. One counted token starts the time again.
-      # `!= 0`: a minute of agk:tokens:1m can be below 0 after a counter reset; that is token use too.
+      # A minute of agk:tokens:1m can be below 0 after a counter reset; that is token use too. So the
+      # query never adds samples up (+100 and -100 would give 0, as if nothing was counted): a series
+      # counts as token use when its largest or its smallest sample of the two minutes is not 0.
       - uid: agk-stuck-launch
         title: Stuck launch
         condition: B
@@ -76,7 +78,7 @@ groups:
               to: 0
             model:
               refId: A
-              expr: 'agk_launch_open unless on (agk_project, issue) (sum by (agk_project, issue) (sum_over_time(agk:tokens:1m[2m])) != 0)'
+              expr: 'agk_launch_open unless on (agk_project, issue) ((max_over_time(agk:tokens:1m[2m]) != 0) or (min_over_time(agk:tokens:1m[2m]) != 0))'
               instant: true
               range: false
           - refId: B

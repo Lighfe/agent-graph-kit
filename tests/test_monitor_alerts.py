@@ -1,6 +1,6 @@
 """Tests for the two Grafana alert rules of the monitor skill (issue #327): `Runaway issue` and `Stuck launch`.
 
-No test starts Grafana, Docker or the network: the tests read the provisioning file, `compose.yaml` and the
+No test starts Grafana or uses the network: the tests read the provisioning file, `compose.yaml` and the
 part of `board.py` that writes the two limits into the file. All data is synthetic."""
 
 import importlib.util
@@ -123,7 +123,9 @@ def test_stuck_launch_query():
     rule = rules()["Stuck launch"]
     expr = query(rule)["model"]["expr"]
     assert expr == ("agk_launch_open unless on (agk_project, issue)"
-                    " (sum by (agk_project, issue) (sum_over_time(agk:tokens:1m[2m])) != 0)")
+                    " ((max_over_time(agk:tokens:1m[2m]) != 0) or (min_over_time(agk:tokens:1m[2m]) != 0))")
+    # samples of agk:tokens:1m can be below 0, so the query never adds them up: +100 and -100 give 0
+    assert "sum" not in expr
     assert rule["for"] == "${AGK_ALERT_STUCK_MINUTES}m"
     # the look-back of the query covers at least one run of the rule, so no counted minute is missed
     assert rule["group"]["interval"] == "1m"
@@ -135,6 +137,90 @@ def test_stuck_launch_with_the_default_limit(tmp_path):
     assert "45 minutes" in rule["annotations"]["summary"]
     other = rules(rendered(tmp_path, {**DEFAULTS, "AGK_ALERT_STUCK_MINUTES": "90"}))["Stuck launch"]
     assert other["for"] == "90m"
+
+
+# The behaviour of the `Stuck launch` query over time, run by `promtool test rules` in the Prometheus image of
+# compose.yaml: the query of the alert file as a Prometheus alert rule with `for: 45m`, on synthetic series.
+# Each case: (name, series of agk:tokens:1m as (labels, one value for each minute), minutes at which the
+# alert fires, minutes at which it does not fire). The launch is open for the whole time.
+PROMETHEUS_IMAGE = read_yaml(COMPOSE)["services"]["prometheus"]["image"]
+TOKENS = 'agk_project="p", stage="s1", issue="10", role="engineer", launch="engineer-1", model="m"'
+STUCK_CASES = [
+    ("no_token_series", [], [46, 90], [44]),
+    ("only_zero_samples", [(TOKENS + ', kind="output"', [0] * 91)], [46, 90], [44]),
+    # the case of the QA return: +100 and -100 in turn add up to 0 in every window of two minutes
+    ("plus_and_minus_in_turn", [(TOKENS + ', kind="output"', [100, -100] * 45 + [100])], [], [44, 46, 60, 90]),
+    # two token kinds that add up to 0 in each minute
+    ("two_kinds_cancel", [(TOKENS + ', kind="output"', [100] * 91), (TOKENS + ', kind="cache_read"', [-100] * 91)],
+     [], [46, 90]),
+    # one counted token at minute 30 starts the time again: the windows of 30m and 31m hold it
+    ("one_token_starts_the_time_again", [(TOKENS + ', kind="output"', [0] * 30 + [1] + [0] * 60)], [78, 90], [46, 76]),
+    ("one_minute_below_zero_starts_the_time_again", [(TOKENS + ', kind="output"', [0] * 30 + [-5] + [0] * 60)],
+     [78, 90], [46, 76]),
+    # tokens of another issue of the project are not tokens of this launch
+    ("tokens_of_another_issue", [(TOKENS.replace('issue="10"', 'issue="11"') + ', kind="output"', [100] * 91)],
+     [46, 90], [44]),
+]
+
+
+def promtool_available():
+    probe = subprocess.run(["docker", "image", "inspect", PROMETHEUS_IMAGE], capture_output=True)
+    return probe.returncode == 0
+
+
+def stuck_promtool_files(expr, cases):
+    """The rule file and the test file for `promtool test rules`, as text."""
+    rule = ("groups:\n  - name: stuck\n    interval: 1m\n    rules:\n      - alert: StuckLaunch\n"
+            f"        expr: '{expr}'\n        for: 45m\n")
+    fired = ('              - exp_labels:\n                  agk_project: p\n                  stage: s1\n'
+             '                  issue: "10"\n                  role: engineer\n                  launch: engineer-1\n')
+    out = ["rule_files:\n  - rule.yml\nevaluation_interval: 1m\ntests:\n"]
+    for name, series, firing, quiet in cases:
+        out.append(f"  - name: {name}\n    interval: 1m\n    input_series:\n")
+        out.append("      - series: 'agk_launch_open{agk_project=\"p\", stage=\"s1\", issue=\"10\", role=\"engineer\","
+                   " launch=\"engineer-1\"}'\n        values: '1x90'\n")
+        for labels, values in series:
+            out.append(f"      - series: 'agk:tokens:1m{{{labels}}}'\n        values: '{' '.join(map(str, values))}'\n")
+        out.append("    alert_rule_test:\n")
+        for minute in sorted(firing + quiet):
+            out.append(f"      - eval_time: {minute}m\n        alertname: StuckLaunch\n")
+            out.append("        exp_alerts:\n" + fired if minute in firing else "        exp_alerts: []\n")
+    return rule, "".join(out)
+
+
+def run_promtool(tmp_path, expr, cases):
+    rule, test = stuck_promtool_files(expr, cases)
+    (tmp_path / "rule.yml").write_text(rule, encoding="utf-8")
+    (tmp_path / "test.yaml").write_text(test, encoding="utf-8")
+    return subprocess.run(["docker", "run", "--rm", "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}",
+                           "-v", f"{tmp_path}:/r:ro", "--entrypoint", "promtool", PROMETHEUS_IMAGE,
+                           "test", "rules", "/r/test.yaml"], capture_output=True, text=True, timeout=120)
+
+
+def test_stuck_cases_are_valid_yaml_for_promtool(tmp_path):
+    expr = query(rules(rendered(tmp_path))["Stuck launch"])["model"]["expr"]
+    rule, test = stuck_promtool_files(expr, STUCK_CASES)
+    (tmp_path / "rule.yml").write_text(rule, encoding="utf-8")
+    (tmp_path / "test.yaml").write_text(test, encoding="utf-8")
+    assert read_yaml(tmp_path / "rule.yml")["groups"][0]["rules"][0]["expr"] == expr
+    assert [t["name"] for t in read_yaml(tmp_path / "test.yaml")["tests"]] == [c[0] for c in STUCK_CASES]
+
+
+@pytest.mark.skipif(not promtool_available(), reason="needs Docker and the local Prometheus image of compose.yaml")
+def test_stuck_launch_over_time(tmp_path):
+    expr = query(rules(rendered(tmp_path))["Stuck launch"])["model"]["expr"]
+    res = run_promtool(tmp_path, expr, STUCK_CASES)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+@pytest.mark.skipif(not promtool_available(), reason="needs Docker and the local Prometheus image of compose.yaml")
+def test_a_query_that_adds_the_samples_up_fails_the_cases(tmp_path):
+    # the query of the first version: the cases catch it, so they do check the cancellation
+    old = ("agk_launch_open unless on (agk_project, issue)"
+           " (sum by (agk_project, issue) (sum_over_time(agk:tokens:1m[2m])) != 0)")
+    res = run_promtool(tmp_path, old, STUCK_CASES)
+    assert res.returncode != 0
+    assert "plus_and_minus_in_turn" in res.stdout + res.stderr
 
 
 # --- the two variables ------------------------------------------------------------------------
