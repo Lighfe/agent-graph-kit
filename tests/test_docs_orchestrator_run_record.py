@@ -25,16 +25,27 @@ def test_step_names_options_and_failure_rule():
     assert "go on" in step
 
 
-def test_readme_section_and_entry():
-    sec = README.split("## Run record")[1].split("\n## ")[0]
-    for k in ["RUN_RECORD_FILE", "incomplete by design", "estimate", "run_record.py> limit", "--record", "/permissions", "$defaults"]:
-        assert k in sec
+def _readme_writer_entry():
+    """The run-record writer entry (entry 4) in the set-up section of the README (issue #330)."""
+    setup = README.split("## Set-up the Agent Graph Kit")[1].split("\n## ")[0]
+    return setup.split("Entry 4 (run-record writer)")[1].split("An entry for a task's")[0]
+
+
+def test_readme_writer_entry_is_in_the_set_up_section():
+    setup = README.split("## Set-up the Agent Graph Kit")[1].split("\n## ")[0]
+    for k in ["/permissions", "$defaults", "four Auto mode entries"]:
+        assert k in setup
+    entry = _readme_writer_entry()
+    assert "```text" in entry and "Without entry 4" in entry
+    # The run-record details left the README (issue #330); the living spec keeps them.
+    assert "## Run record" not in README
+    for k in ["RUN_RECORD_FILE", "run_record.py> limit", "run_report.py"]:
+        assert k not in README
 
 
 def test_readme_entry_matches_orchestrator_command():
-    sec = README.split("## Run record")[1].split("\n## ")[0]
     cmd = [l.strip() for l in DOC.splitlines() if l.strip().startswith("uv run --script <run_record.py> write")][0]
-    assert cmd in sec
+    assert cmd in _readme_writer_entry()
 
 
 def test_spec_section():
@@ -61,6 +72,7 @@ def test_record_step_names_both_sources_of_the_auto_mode_entry():
         step = _record_step(path.read_text())
         assert "the Auto mode entry in the README allows" not in step, path
         assert "/agk:setup" in step and "README" in step and "kit repo" in step, path
+        assert "set-up steps of the README" in step and "README section on the run record" not in step, path
 
 
 def test_record_step_names_the_skill_folder_not_a_kit_path_as_this_repo():

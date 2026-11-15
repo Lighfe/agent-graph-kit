@@ -254,7 +254,7 @@ def test_manual_checks_missing(project, tmp_path):
     for label in ("gh login", "uv", "Codex login", "Codex trust entry"):
         assert status_line(r.stdout, label).startswith("MISSING"), label
     assert "gh auth login" in r.stdout
-    assert "README.md, Prerequisites" in r.stdout
+    assert 'README.md, "Set-up the Agent Graph Kit", Prerequisites' in r.stdout
     assert "codex login" in r.stdout
     assert "```bash\n" in r.stdout and "project folder only" in r.stdout
     assert os.path.realpath(project) in trust_cmd(r.stdout)
@@ -318,8 +318,8 @@ def test_auto_mode_entries_print_as_four_paste_blocks(project, tmp_path):
 
 
 def setup_entry(n):
-    """The entry text of README.md, "Auto mode allow entries", as one line."""
-    section = README.split("### Auto mode allow entries")[1]
+    """The entry text of README.md, in the set-up steps, as one line."""
+    section = route_section()
     block = section.split(f"Entry {n} ")[1].split("```text\n")[1].split("```")[0]
     return " ".join(block.split())
 
@@ -336,9 +336,8 @@ def test_entries_in_the_script_equal_the_readme():
 
 
 def run_record_entry():
-    """The run-record entry block of README.md (the block after "**Auto mode entry.**"), as one line."""
-    block = README.split("**Auto mode entry.**")[1].split("```text\n")[1].split("```")[0]
-    return " ".join(block.split())
+    """The run-record entry block of README.md (entry 4 of the set-up steps), as one line."""
+    return setup_entry(4)
 
 
 def test_entry_4_equals_the_readme_run_record_entry():
@@ -434,7 +433,7 @@ def test_gitignore_line_with_leading_space_is_not_the_required_line(project, tmp
 
 
 def route_section():
-    return README.split("## Start a new project")[1].split("## How the hooks work")[0]
+    return README.split("## Set-up the Agent Graph Kit")[1].split("\n## ")[0]
 
 
 def test_route_readme_names_labels_and_closing_steps_and_skill_lists_the_files():
@@ -442,8 +441,9 @@ def test_route_readme_names_labels_and_closing_steps_and_skill_lists_the_files()
     for label in ("ready", "needs-owner", "later", "stage"):
         assert f"gh label create {label} " in route
     # order: trust dialog, plugin, setup, labels, push, hook check, Lovable, stage-start
-    order = ["trust dialog", "claude plugin install", "/agk:setup", "gh label create ready",
-             "git push", "/agk:hook-activation-check", "Optional: set up the Lovable frontend lane", "/stage-start"]
+    order = ["trust dialog", "claude plugin install agk@", "/agk:setup", "gh label create ready",
+             "git push", "/agk:hook-activation-check", "Optional: set up the Lovable frontend lane",
+             "Plan the first stage with `/stage-start`"]
     positions = [route.index(x) for x in order]
     assert positions == sorted(positions)
     assert "ignored" in route and "permissions.allow" in route
@@ -522,6 +522,25 @@ def test_skill_and_readme_describe_the_trust_command():
     skill = (SETUP.parent / "SKILL.md").read_text()
     assert "fenced block" in skill and "project folder only" in skill
     assert "prints one command" in README and "project folder only" in README
+    assert "Codex trust entry" in route_section()
+
+
+def test_route_readme_names_superpowers_the_owner_rule_and_the_channels():
+    """Issue #330: the set-up section holds what "Project set-up reference" gave, and the channels."""
+    route = route_section()
+    prereq = route.split("### Prerequisites")[1].split("### Steps")[0]
+    assert "claude plugin install superpowers@claude-plugins-official" in prereq
+    assert "](docs/lovable-frontend-lane.md)" in prereq
+    owner = [l for l in route.splitlines() if "owned by your GitHub user account" in l]
+    assert len(owner) == 1
+    assert "logged in as that user" in owner[0] and "`OWNER`" in owner[0]
+    assert "claude plugin marketplace add Lighfe/agent-graph-kit#stable" in route
+    dev = [l for l in route.splitlines() if "`dev` channel" in l]
+    assert len(dev) == 1
+    for k in ("`#dev`", "`agent-graph-kit-dev`", "`agk@agent-graph-kit-dev`"):
+        assert k in dev[0]
+    for n in (1, 2, 3, 4):
+        assert setup_entry(n)
 
 
 @pytest.mark.integration

@@ -98,7 +98,7 @@ def test_marketplace_lists_the_plugin_and_the_readme_names_it():
     mkt = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     assert [(p["name"], p["source"]) for p in mkt["plugins"]] == [("agk", "./plugin")]
     readme = (ROOT / "README.md").read_text()
-    assert "claude plugin marketplace add Lighfe/agent-graph-kit" in readme
+    assert "claude plugin marketplace add Lighfe/agent-graph-kit#stable" in readme
     assert f"claude plugin install agk@{mkt['name']} --scope project" in readme
 
 

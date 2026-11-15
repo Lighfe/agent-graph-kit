@@ -33,7 +33,8 @@ def section(text, heading):
     return "\n".join(out)
 
 
-ALLOW = section(README, "### Auto mode allow entries")
+# The Auto mode entries are in the set-up steps (issue #330), indented as part of step 5.
+ALLOW = "\n".join(line.strip() for line in section(README, "### Steps").splitlines())
 
 
 def entry3_text():
@@ -46,12 +47,11 @@ def entry3_text():
     return m.group(1)
 
 
-def test_readme_says_three_entries_and_never_two():
-    assert "Three agent calls need an allow entry" in ALLOW
-    assert "Two agent calls" not in ALLOW
-    assert not re.search(r"\b[Tt]wo (agent calls|entries)\b", ALLOW)
+def test_readme_says_four_entries_and_never_two_or_three():
+    assert "four agent calls need an allow entry" in ALLOW
+    assert not re.search(r"\b([Tt]wo|[Tt]hree) (agent calls|entries|Auto mode entries)\b", ALLOW)
     headings = re.findall(r"^Entry (\d) \(", ALLOW, re.M)
-    assert headings == ["1", "2", "3"]
+    assert headings == ["1", "2", "3", "4"]
 
 
 def test_entry3_allows_only_the_relabel_after_confirmation():

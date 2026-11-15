@@ -8,8 +8,8 @@ never meaning.
 Files read (INSTRUCTION_FILES below): AGENTS.md, CLAUDE.md, docs/process.md,
 docs/task-template.md, every .md file in docs/team/ and .claude/agents/, every
 .md file under .agents/skills/, the living spec docs/specs/agent-graph-kit.md,
-and of README.md only two sections (README_SECTIONS below: the new-project
-section and the set-up reference), each from its heading to the
+and of README.md the sections in README_SECTIONS below (set-up, update,
+monitoring, development and release, docs), each from its heading to the
 next "## " heading.
 
 Candidates: the inline code spans with single backticks and the markdown link
@@ -63,8 +63,11 @@ INSTRUCTION_FILES = [
 ]
 README = "README.md"
 README_SECTIONS = [
-    "## Start a new project",
-    "## Project set-up reference",
+    "## Set-up the Agent Graph Kit",
+    "## Update the kit",
+    "## Monitoring",
+    "## Development and release",
+    "## Docs",
 ]
 
 # Paths that are skipped, with the reason for each.
@@ -330,7 +333,7 @@ def test_section_ends_at_the_next_level_two_heading():
 
 def test_readme_route_anchor_links_point_to_headings():
     readme = (ROOT / README).read_text(encoding="utf-8")
-    route = section(readme, "## Start a new project")
+    route = section(readme, "## Set-up the Agent Graph Kit")
     slugs = set()
     for line in outside_fences(readme):
         m = re.match(r"^#+\s+(.*)$", line)

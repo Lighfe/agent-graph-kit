@@ -2,25 +2,43 @@
 
 ![Agentic Graph Engineering: five agents (orchestrator, planner, PM, software engineer, QA engineer) joined by handoffs, with the tools Claude Code, Codex and Lovable](docs/assets/agk-overview.png)
 
-A reusable set-up for AI-native development with several agents (Graph Engineering).
+## Purpose
 
-The kit is already a working Claude Code plugin, `agk`. It is work in progress. To use it, follow "Start a new project" below.
+When pursuing AI-driven development projects, I continuously ran into the following issues:
 
-Target architecture:
+- Agents going "rogue" and taking the initiative where I didn't want that
+- Also the opposite: agents relying too much on me and escalating unnecessarily
+- Documentation drift and out-of-date specs lurking somewhere
+- Spec-driven development turns into maintaining, fixing and patching specs, with more and more overhead
+- Project, scope, code and docs grow larger and larger, and both the AI and I lose focus
+- The project hitting a dead end, where I realize that we had a faulty assumption or took a wrong turn at some point
 
-- The entry command sets the role of the Claude Code main session: `/goal …` makes it the orchestrator, `/stage-start` makes it the planner, and without a command it has no role (questions and reports, no loop, no planning).
-- Workers are Claude Code subagents, Codex CLI, and Lovable (MCP).
-- Jev (TypeSafe AI) makes fast, typed decisions at the handoffs between workers.
+The meta-question I've been pursuing in this project is: << How do I want to work with AI agents following a spec-driven development approach? >>
 
-How the kit works (v1 parts): the orchestrator runs the loop in [docs/process.md](docs/process.md). The PM and the engineer are Claude subagents. Hooks in `.claude/hooks/` check each role launch and each `gh issue close`, and deny the call when the issue is not in the right state. QA runs through the Codex QA launcher `scripts/qa-codex` (`codex exec` in a sandbox). When Codex is not available, the Claude subagent `qa-engineer` is the fallback. Issues with `Lane: frontend` go to the Lovable frontend lane: the subagent `frontend-engineer` drives Lovable through MCP, and the code lives in the `frontend/` submodule. Jev is not part of v1.
+The Agent Graph Kit is a project for my personal use that sets up my agentic graph engineering exactly the way that I want to work, heavily inspired by the AI-Native Development approach from Alexey Grigorev (DataTalks.Club). It allows me to start any new project and have my agents behave the way that I want from the get-go.
 
-## Status
+I focused on two things here:
 
-v1: guard hooks, Codex QA with the Claude fallback, and the Lovable frontend lane. The first project that used these parts is the paint-math demo.
+1. A principled AI development approach that follows the graph engineering paradigm
+2. Staying in the loop as the human who drives the direction and purpose of the projects, while not having to babysit agents at the same time
 
-v2: the kit is a Claude Code plugin, `agk`. This is the plugin route: use "Start a new project" below.
+Three things this project is not:
 
-## Start a new project
+1. The most time- and token-efficient way to build applications
+2. An AI safety harness. While I use hooks to enforce certain behaviors, these cannot withstand malicious attacks.
+3. State-of-the-art agentic AI. There are most likely better existing (open source) products out there that have already solved very similar issues. This plugin itself makes heavy use of Jesse Vincent's superpowers plugin, e.g. for brainstorming and writing the spec/plan.
+
+## What the kit does
+
+The kit is a Claude Code plugin, `agk`. It gives the main session one of two roles, and each role starts with one command.
+
+- **`/stage-start`: the planner plans a stage with you.** A stage is one piece of work with one purpose. In dialogue with you, the planner writes the spec, then the plan, and turns the plan into GitHub issues: one stage issue with the tasks as its sub-issues. Nothing is built before you confirm the stage.
+- **`/goal …`: the orchestrator runs the stage.** It takes one issue at a time through three agents: the PM grooms the issue into checkable acceptance criteria, the software engineer implements it with tests, and the QA engineer (Codex in a sandbox; a Claude subagent is the fallback) checks the result against the criteria. Every handoff is a comment on the issue. Hooks check every handoff: they deny a launch or a `gh issue close` when the issue is not in the right state. A question that only you can answer (money, settings, a change of intent or scope) is escalated to you; everything else is settled inside the team. The stage ends with a stage review by the planner.
+- **What you see at the end:** closed issues with their full history in the comments, a stage review with options for the next stage, a released plugin version (in this repo), and the boards that show what each stage, issue and role cost.
+
+The rules of the loop are in [docs/process.md](docs/process.md).
+
+## Set-up the Agent Graph Kit
 
 One route, from an empty folder to a first working loop. Do the steps in order. Each step needs only what the steps before it gave.
 
@@ -32,7 +50,9 @@ Public repo rule: no secrets, no real account data and no full third-party artic
 - `gh`, logged in (`gh auth status`; if it fails, run `gh auth login`)
 - `uv` (the guard hook runs with `uv run --script`, and so does the Codex QA launcher)
 - Codex CLI, logged in (`codex login`)
+- The superpowers plugin (the planner uses its skills for brainstorming and for writing the plan): `claude plugin install superpowers@claude-plugins-official`
 - Optional, for the Lovable frontend lane only: see [docs/lovable-frontend-lane.md](docs/lovable-frontend-lane.md)
+- Optional, for the boards only: Docker (see [Monitoring](#monitoring))
 
 The memory cap of heavy jobs uses `systemd-run --user`. On a Linux machine with systemd the owner installs nothing. Where `systemd-run` is missing, the engineer runs a smaller version first.
 
@@ -58,7 +78,7 @@ The setup checks for `gh`, `uv` and Codex were run only on a machine that has th
    cd example-app
    ```
 
-   The repo must be owned by your GitHub user account, and `gh` must be logged in as that user: see [Project repo](#project-repo).
+   The repo must be owned by your GitHub user account, and `gh` must be logged in as that user. The reason: the hooks and the QA launcher count only issue comments whose `authorAssociation` is `OWNER`, so a stranger's comment in a public repo cannot resume, pass or close an issue. The agents post with your `gh` login, so their comments count. Organization-owned repos are not supported yet.
 
 2. Open Claude Code in the project folder and accept the trust dialog:
 
@@ -71,9 +91,11 @@ The setup checks for `gh`, `uv` and Codex were run only on a machine that has th
 3. Install the plugin, in a terminal in the project folder (the git root), then start Claude Code in the folder again so that it loads the plugin:
 
    ```bash
-   claude plugin marketplace add Lighfe/agent-graph-kit
+   claude plugin marketplace add Lighfe/agent-graph-kit#stable
    claude plugin install agk@agent-graph-kit --scope project
    ```
+
+   `#stable` is the channel for users. To test a new version before it is released to `stable`, use the `dev` channel instead: add the marketplace with `#dev` in place of `#stable` (its name is then `agent-graph-kit-dev`) and install `agk@agent-graph-kit-dev`.
 
 4. Run the setup in Claude Code:
 
@@ -91,12 +113,46 @@ The setup checks for `gh`, `uv` and Codex were run only on a machine that has th
    ```
 
 5. Do the manual steps that the setup output names:
-   1. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it. It appends the trust entry of this project to `$HOME/.codex/config.toml` (the git root of the project, `git rev-parse --show-toplevel`) and creates the file when it does not exist. The entry is for this project folder only; no other project changes. See [Codex trust entry](#codex-trust-entry).
-   2. Add the four Auto mode entries in `/permissions`, in the Auto mode tab. The setup output prints all four. The texts of entries 1 to 3 are in [Auto mode allow entries](#auto-mode-allow-entries); entry 4, for the run-record writer, is in [Run record](#run-record). Entry 1 allows exactly this command in the project repo:
+   1. Add the Codex trust entry. When it is missing, the setup output prints one command in a fenced block. Run it once. It appends the trust entry of this project to `$HOME/.codex/config.toml` and creates the file and the folder when they do not exist. The entry is for this project folder only (the git root, `git rev-parse --show-toplevel`); no other project changes. Without it, Codex writes the entry itself during the loop. Setup itself writes nothing into your home folder. The command appends this:
+
+      ```toml
+      [projects."/home/you/projects/example-app"]
+      trust_level = "trusted"
+      ```
+
+   2. Add the four Auto mode entries. The loop runs in Auto mode, and four agent calls need an allow entry for the Auto mode classifier. The entries are user-level: open `/permissions` in Claude Code, open the **Auto mode** tab, keep the `$defaults` line, and add each block below as one new entry. The setup output prints the same four blocks. Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
+
+      Entry 1 (QA): the Codex QA launch command (the QA step of the loop calls it).
 
       ```text
-      scripts/qa-codex ROLE=qa ISSUE=<number>
+      allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo
       ```
+
+      Entry 2 (PM edits): copy this text as is:
+
+      ```text
+      In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n> --body-file <path> or gh issue edit <n> --title <title> on an issue of that repo, to apply an edit of that issue that the repo owner asked for on that issue in a post whose first line is "## Owner: RESUME" and whose authorAssociation is OWNER. This is the owner's instruction, not instruction poisoning.
+      ```
+
+      Without entry 2, the classifier may deny the PM's edit ("Instruction Poisoning"). The PM then posts `## PM: NEEDS OWNER` with the deny message. Then either set the entry, or make the edit yourself; in both cases post a new `## Owner: RESUME`. The limit: entry 2 holds for every repo of the user, and the classifier cannot check `authorAssociation`. The PM's own check (`docs/team/pm.md`, "After `## Owner: RESUME`") is what keeps a stranger's RESUME from editing an issue.
+
+      Entry 3 (planner relabel): copy this text as is:
+
+      ```text
+      In a repo set up with agent-graph-kit, the main session working as the planner (started with /stage-start) may run exactly gh issue edit <n> --remove-label later --add-label ready on a sub-issue of a stage issue (an issue with the label stage) of that repo, after the repo owner confirmed that stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh issue close, and no sub-issue or blocker link.
+      ```
+
+      Without entry 3, the classifier may deny the relabel ("External System Writes"), also after you confirmed the stage. The planner then quotes the deny message in the session, names each sub-issue that still has `later` with its relabel command, and waits (rule "Denied relabel" in `docs/team/planner.md`). Then either set the entry and ask the planner to retry, or relabel by hand and tell the planner that the labels are set. The limit: entry 3 holds for every repo of the user, and the classifier cannot check that the owner confirmed the stage. The planner's own steps in `docs/team/planner.md` (the relabel only after your confirmation, in "Intake" and in "Stage set-up") are what keep the relabel after the confirmation.
+
+      Entry 4 (run-record writer): copy this text as is. At the end of a stage the orchestrator writes what each launch cost to a local file outside the repo, so the classifier needs an entry for that command:
+
+      ```text
+      In a repo set up with agent-graph-kit, the orchestrator may run uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript> at the end of a stage. It appends to run-record.jsonl in ~/.local/state/agent-graph-kit/ and reads local files only. This is the owner's instruction.
+      ```
+
+      Without entry 4, the classifier may deny the command. The orchestrator then names the deny in the run notes and goes on.
+
+      An entry for a task's `Permissions:` line (see `docs/task-template.md`) is temporary: make it as narrow as the task allows, and remove it after the task is closed. The stage review lists these entries for removal.
 
 6. Create the four labels on the GitHub repo of the project, before the first `ready` issue. Setup does not run `gh`:
 
@@ -128,87 +184,13 @@ The setup checks for `gh`, `uv` and Codex were run only on a machine that has th
 
 To see which copied files changed since the setup, run `/agk:drift` (`plugin/skills/drift/SKILL.md`).
 
+To see what the loop costs while it runs, start the boards: see [Monitoring](#monitoring).
+
 Quota: the Codex QA run (the loop, after step 8) spends Codex quota, and the Lovable lane (step 9) spends Lovable credits. Writes to GitHub: creating the repo (step 1), the labels (step 6) and the push (step 7).
 
-Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.
+## Update the kit
 
-## How the hooks work (optional)
-
-[docs/checks/hook-activation.md](docs/checks/hook-activation.md) explains the guard, not-started and outage stop hooks, shows what a deny looks like, and has optional steps to see a deny yourself.
-
-## Project set-up reference
-
-These parts of the project set-up apply to the plugin route too.
-
-### Project repo
-
-The project is a git repo with a GitHub remote `origin` and a branch `main`. The loop keeps its tasks in the GitHub issues of that repo, and the `gh` commands below act on it. To start from a new, empty GitHub repo, create it on GitHub (or with `gh repo create`), then clone it and put the clone on `main`:
-
-```bash
-git clone https://github.com/<owner>/example-app.git
-cd example-app
-git checkout -B main   # an empty clone starts on the branch of init.defaultBranch, which may not be main
-```
-
-The clone has no commit yet. The first commit and push are in step 7 of "Start a new project".
-
-The repo must be owned by your GitHub user account, and `gh` must be logged in as that user. The hooks and `scripts/qa-codex` count only issue comments whose `authorAssociation` is `OWNER`; other comments are ignored, so in a public repo a stranger's comment cannot resume, pass, block or close an issue. A comment without author data is an error: the guard denies the call. The agents and hooks post with your `gh` login, so their comments count. Organization-owned repos are not supported yet: there, the owner's comments are not `OWNER` ([#75](https://github.com/Lighfe/agent-graph-kit/issues/75)).
-
-The agents post comments with `gh issue comment <n> --body-file <literal path>`, with the body written to a file first. This is a rule of `docs/process.md`, not a check: the guard does not check comment commands (the comment-form check was removed in [#90](https://github.com/Lighfe/agent-graph-kit/issues/90)). Because the agents use your login, the rule that agents never post your marker is not enforced by a check either.
-
-You post `## Owner: RESUME` on the GitHub web page, in a terminal, or from a Claude Code session, for example with `gh issue comment <n> --body-file <literal path>`.
-
-### Codex trust entry
-
-The setup output prints a command that adds the trust entry for the project to `$HOME/.codex/config.toml`, when the entry is missing. Run it once. Otherwise Codex writes the entry there during the loop. The entry is for this project folder only (the git root, `git rev-parse --show-toplevel`): no other project changes. The command creates the file and the folder `~/.codex` when they do not exist. Setup itself writes nothing into your home folder. The command appends this to the file:
-
-```toml
-[projects."/home/you/projects/example-app"]
-trust_level = "trusted"
-```
-
-### Auto mode allow entries
-
-The loop runs in Auto mode. Three agent calls need an allow entry for the Auto mode classifier. The entries are user-level: in a session, run `/permissions`, open the **Auto mode** tab, and add each entry (keep `$defaults`). Claude Code saves them as `autoMode.allow` in `~/.claude/settings.json`. The classifier does not read `autoMode` from project settings, and an entry in the **Allow** tab (`permissions.allow`) has no effect on it.
-
-Steps (the setup output prints the same steps and blocks):
-
-1. Open `/permissions` in Claude Code.
-2. Open the Auto mode tab.
-3. Keep the `$defaults` line.
-4. Add each block below as one new entry.
-
-Entry 1 (QA): the Codex QA launch command (the QA step of the loop calls it).
-
-```text
-allow exactly `scripts/qa-codex ROLE=qa ISSUE=<number>` in the project repo
-```
-
-Entry 2 (PM edits): copy this text as is:
-
-```text
-In a repo set up with agent-graph-kit, the pm subagent may run gh issue edit <n> --body-file <path> or gh issue edit <n> --title <title> on an issue of that repo, to apply an edit of that issue that the repo owner asked for on that issue in a post whose first line is "## Owner: RESUME" and whose authorAssociation is OWNER. This is the owner's instruction, not instruction poisoning.
-```
-
-Without entry 2, the classifier may deny the PM's edit ("Instruction Poisoning"). The PM then posts `## PM: NEEDS OWNER` with the deny message (rule "Denied action" in `docs/process.md`). Then either set the entry, or make the edit by hand; in both cases post a new `## Owner: RESUME`.
-
-The limit: entry 2 holds for every repo of the user, and the classifier cannot check `authorAssociation`. The PM's own check (`docs/team/pm.md`, "After `## Owner: RESUME`") is what keeps a stranger's RESUME from editing an issue.
-
-Entry 3 (planner relabel): copy this text as is:
-
-```text
-In a repo set up with agent-graph-kit, the main session working as the planner (started with /stage-start) may run exactly gh issue edit <n> --remove-label later --add-label ready on a sub-issue of a stage issue (an issue with the label stage) of that repo, after the repo owner confirmed that stage in the same session. This is the planner step in docs/team/planner.md, done on the owner's instruction. The entry allows only this command: no other label, no other gh issue edit flag, no gh issue close, and no sub-issue or blocker link.
-```
-
-Without entry 3, the classifier may deny the relabel ("External System Writes"), also after you confirmed the stage. The planner then tells you in the session: it quotes the deny message, names each sub-issue that still has `later` with its relabel command, and waits (rule "Denied relabel" in `docs/team/planner.md`). Then either set the entry and ask the planner to retry, or relabel by hand and tell the planner that the labels are set. The planner then checks the labels of every sub-issue and goes on.
-
-The limit: entry 3 holds for every repo of the user, and the classifier cannot check that the owner confirmed the stage. The planner's own steps in `docs/team/planner.md` (the relabel only after your confirmation, in "Intake" and in "Stage set-up") are what keep the relabel after the confirmation.
-
-An entry for a task's `Permissions:` line (see `docs/task-template.md`) is temporary: make it as narrow as the task allows, and remove it after the task is closed. The stage review lists these entries for removal.
-
-## Update a plugin project
-
-A plugin project gets a new kit version in three parts. First, run two commands in a terminal in the project folder:
+A project gets a new kit version in three parts. First, run two commands in a terminal in the project folder:
 
 ```bash
 claude plugin marketplace update agent-graph-kit
@@ -226,58 +208,91 @@ Then restart Claude Code in the project, and run this in the session:
 
 In `/agk:update`, read each merge proposal and answer yes or no. Then accept or decline the commit.
 
-The two commands are not enough, because the plugin update changes the hooks, agents, skills and `bin/`, but the files that `/agk:setup` copied (for example `docs/team/*`, `docs/process.md`, `scripts/qa-codex`) stay as copied until `/agk:update` runs.
-
-The kit raises the plugin version once per stage, so a new version is a released stage. If the answer is "already at the latest version" although the kit repo has a newer released version, remove the cached copy of the plugin (the folder of `agk` under the plugin cache in your Claude Code user folder, usually `~/.claude/plugins/cache/`) and run `claude plugin install agk@agent-graph-kit --scope project`.
+The two commands are not enough, because the plugin update changes the hooks, agents, skills and the `bin` folder of the plugin, but the files that `/agk:setup` copied (for example `docs/team/*`, `docs/process.md`, `scripts/qa-codex`) stay as copied until `/agk:update` runs.
 
 `drift.py --update` and `--accept` are the low-level commands that the skill uses. They are described in the drift skill (`plugin/skills/drift/SKILL.md`, `/agk:drift`). You need a terminal outside Claude Code only if `/agk:update` reports a deny.
 
-## Run record
+Channels:
 
-The orchestrator writes a run record at the end of every stage (step 4 of "Stage end" in `docs/team/orchestrator.md`). It keeps what each subagent launch cost after Claude Code deletes its transcripts. The file is local only and is never committed or posted.
-
-- **Where.** `~/.local/state/agent-graph-kit/run-record.jsonl`. The env var `RUN_RECORD_FILE` sets the whole path; else `$XDG_STATE_HOME` is used instead of `~/.local/state`. One file serves all projects on the machine.
-- **What a line holds.** One JSON line for each launch and model: project, stage, issue, role, provider, model, the four token counts, start and end time, retry count, an `estimate` flag and the source. Codex QA runs and the orchestrator have lines too. Each issue has a line with its time and its owner escalations. No prompt, comment or output text is written. Writing the same launch twice adds no second line.
-- **Weights.** The token counts are raw. The weights are applied when the file is read, from `docs/run-weights.json`. They are price ratios, an assumption, not measured plan use. Change the file and old lines read with the new weights.
-- **The orchestrator number is incomplete by design.** The writer runs before the orchestrator writes its report and final answer. The measured orchestrator line stops there. A second orchestrator line with `estimate` set to true adds a fixed factor as a guess.
-- **Percent of the limit, by hand.** Read the percent of your session limit used from your plan page at the start and at the end of a stage. Enter it with:
+- **`stable`** is what the commands above update. It moves only when the owner of the kit releases a tested version (see [Development and release](#development-and-release)). The kit raises the plugin version once per stage, so a new version is a released stage.
+- **`dev`** gets every new version first. A project installed from `dev` uses the names of that channel in the two commands: the marketplace `agent-graph-kit-dev` and the plugin `agk@agent-graph-kit-dev`.
+- **An older install without a channel** (the marketplace was added without `#stable`) follows the work branch `main`. Switch it once, then run the route above:
 
   ```bash
-  uv run --script <run_record.py> limit --project <owner/repo> --stage <stage issue> --point start --percent <0-100> --plan <plan name>
+  claude plugin marketplace remove agent-graph-kit
+  claude plugin marketplace add Lighfe/agent-graph-kit#stable
   ```
 
-  Use `--point end` at the end. It appends to `run-record-limits.jsonl` next to the record.
-- **Report.** `uv run scripts/run_report.py --record <run-record.jsonl> --limits <run-record-limits.jsonl>` prints the weighted totals next to the percent. `--weights <file>` uses another weights file.
-- **Auto mode entry.** The writer writes a file outside the repo, so the classifier needs an entry. Run `/permissions`, open the **Auto mode** tab, keep `$defaults`, and add this entry as is:
+If the answer is "already at the latest version" although the channel has another version (a newer one, or an older one after a rollback: Claude Code has no downgrade command), remove the cached copy of the plugin (the folder of `agk` under the plugin cache in your Claude Code user folder, usually `~/.claude/plugins/cache/`) and run `claude plugin install agk@agent-graph-kit --scope project`.
 
-  ```text
-  In a repo set up with agent-graph-kit, the orchestrator may run uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript> at the end of a stage. It appends to run-record.jsonl in ~/.local/state/agent-graph-kit/ and reads local files only. This is the owner's instruction.
-  ```
+## Monitoring
 
-  Without it the classifier may deny the command. The orchestrator then names the deny in the run notes and goes on; add the entry and run the command by hand.
+The kit records what the agents do with OpenTelemetry and shows it on two Grafana boards. The plugin runs inside Claude Code; the monitoring stack (OTel Collector, Prometheus, Loki and Grafana) runs in Docker and starts with one command. Claude Code and Codex send their metrics and logs to the Collector. Docker is needed for this part only, and the loop works without it.
 
-## Monitoring board (optional)
+![The board "Stages" in Grafana: the panel "Selected stage: tokens per issue, by role" for one stage, one stacked bar per issue with one segment per role](docs/assets/monitoring-board.png)
 
-The monitor skill can show its SQLite file `monitor.sqlite` in a local Grafana. Docker is needed for this part only; `/agk:setup` does not install it. Two commands, from any folder (`<skill>` is the folder of the monitor skill, `plugin/skills/monitor/` in this repo):
+Two commands, from the project root (`<skill>` is the folder of the monitor skill, `plugin/skills/monitor/` in this repo):
 
 ```bash
-uv run --script <skill>/board.py up     # start Grafana, then run the loader in the foreground; Ctrl-C stops both
+uv run --script <skill>/board.py up     # check Docker, start the stack in the background, print the URLs
 uv run --script <skill>/board.py down   # stop the stack; exit 0 also when it is not running
 ```
 
 - **URL.** `http://127.0.0.1:3000`, bound to localhost only.
-- **Password file.** User `admin`, password in `~/.local/state/agent-graph-kit/grafana-admin` (`$XDG_STATE_HOME` instead of `~/.local/state` when set), mode 0600. The first `up` writes a random value; later starts reuse it. The script prints the path, never the value.
-- **First start.** Docker downloads the Grafana image (`grafana/grafana:13.2.4`, about 480 MB), and Grafana downloads the SQLite data source plugin (`frser-sqlite-datasource` 4.0.6) into a Docker volume. After that the stack uses no network.
-- **What Grafana sees.** Only the folder of the db file (read only), its own provisioning and board files, and the password file. No GitHub token, Claude or Codex credential goes to the container. The loader runs on the host.
+- **Login.** User `admin`, password in the file `~/.local/state/agent-graph-kit/grafana-admin` (`$XDG_STATE_HOME` instead of `~/.local/state` when set), mode 0600. The first `up` writes a random value; later starts reuse it. The script prints the path, never the value.
+- **Board "Now".** The stage in work: which role works on which issue now, tokens and active time per issue and role, a timeline of the launches, the plan usage limit, and a table of the launches of the stage.
+- **Board "Stages".** The history: tokens, active time and token kinds per stage, the issues of one stage, the most expensive issues of all stages, and a drill-down from a stage to an issue, a launch and its steps (tool calls and API requests).
+- **Alerts.** Two alert rules, shown in Grafana at Alerting > Alert rules. `Runaway issue` fires when one issue used more tokens than `AGK_ALERT_ISSUE_TOKENS` (default 23 000 000): agents that go in circles. `Stuck launch` fires when a launch is in work and used no tokens for `AGK_ALERT_STUCK_MINUTES` minutes (default 45). Both limits are environment variables, set when you run `up`. No e-mail or chat message is sent: look at the list.
 
-The details are in the monitor skill (`plugin/skills/monitor/SKILL.md`, section "Grafana board (optional)").
+The details (ports, export settings, what the containers see, every panel) are in the monitor skill: [plugin/skills/monitor/SKILL.md](plugin/skills/monitor/SKILL.md).
 
-## Background
+## Development note
 
-The kit builds on the workflow from the DataTalksClub [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) by Alexey Grigorev.
+The plugin was developed with a software development method called "dogfooding": while improving the Agent Graph Kit, I used the Agent Graph Kit itself for development. The product can be found in the `plugin/` folder. But at the same time you can see that the very same agents, hooks and skills can be found at the project root. In addition to testing on this project only, the plugin was installed on new test projects as well as on a real development project: https://github.com/Lighfe/quack-rl
 
-## Design
+In [docs/archive/](docs/archive/) you can see the documented development process. I started with the agents and hooks, then made those available as a Claude marketplace plugin. Process improvements and streamlined skills followed. Monitoring with OpenTelemetry and Grafana dashboards is the newest addition, for version 0.2.0.
 
-- Accepted design: the living behavior spec [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md) (how the kit behaves now), and the other specs in [docs/specs/](docs/specs/)
-- Historical input: [docs/archive/](docs/archive/)
-- Development process of this repo: [docs/process.md](docs/process.md)
+The agent-graph-kit plugin is publicly available on the Claude marketplace and can be conveniently set up and updated.
+
+## Development and release
+
+**Tests.** One command runs the whole suite:
+
+```bash
+uv run --with pytest pytest
+```
+
+The suite has two groups, split by the pytest marker `integration`:
+
+```bash
+uv run --with pytest pytest -m "not integration"   # unit tests: run in-process, or only read a file
+uv run --with pytest pytest -m integration         # integration tests: start a real tool or a whole flow
+```
+
+The integration tests cover what runs as a process of its own: the guard hooks as Claude Code calls them, `/agk:setup`, the drift and update commands in a temporary project, the Codex QA launcher with a fake `codex` and `gh`, the release scripts, and the checks of the monitoring stack (the board script, the compose file and the alert rules).
+
+**CI.** GitHub Actions runs the test command on every push and every pull request (`.github/workflows/ci.yml`).
+
+**Release.** The plugin has two channels, each a branch of this repo: `dev` and `stable`.
+
+1. Version bump at the end of a stage: the orchestrator runs `uv run scripts/bump_plugin_version.py`, runs the tests and commits the bump.
+2. `dev`, automatic: on the push of `main`, the workflow `release-dev` sees a plugin version without a tag, runs the tests, and only when they pass sets the tag `v<version>`, creates a pre-release and moves the branch `dev`.
+3. `stable`, by hand: the owner starts the workflow `release-stable` with a tag. It checks that the tag exists and that its CI run passed, runs the tests on that commit, moves the branch `stable` and marks the release as the latest:
+
+   ```bash
+   gh workflow run release-stable.yml -f tag=v0.2.0
+   ```
+
+4. Rollback: start `release-stable` again with an older tag. `stable` then points to the older version. For a project that already has the newer version, see the last paragraph of [Update the kit](#update-the-kit).
+
+Agents commit, but they do not push, set tags or start workflows. The owner's steps, each with its expected output, are in [docs/checks/release-channels.md](docs/checks/release-channels.md).
+
+## Docs
+
+- [docs/specs/agent-graph-kit.md](docs/specs/agent-graph-kit.md): the living behavior spec, how the kit behaves now
+- [docs/specs/](docs/specs/): the spec of each stage
+- [docs/process.md](docs/process.md): how the work is organized (lifecycle, stages, rules, escalation)
+- [docs/team/](docs/team/): the role definitions (orchestrator, planner, PM, software engineer, QA engineer)
+- [docs/archive/](docs/archive/): historical input and the documented development process
+- How the hooks work: [docs/checks/hook-activation.md](docs/checks/hook-activation.md) explains the guard, not-started and outage stop hooks, shows what a deny looks like, and has optional steps to see a deny yourself
+- Report a kit problem as an issue in the repo Lighfe/agent-graph-kit on GitHub. Give the failing command, the message and the issue where it happened, with secrets redacted.

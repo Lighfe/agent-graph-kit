@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 README = (ROOT / "README.md").read_text()
-SECTION = README.split("## Update a plugin project")[1].split("\n## ")[0]
+SECTION = README.split("## Update the kit")[1].split("\n## ")[0]
 SKILL = (ROOT / "plugin/skills/drift/SKILL.md").read_text()
 SPEC = (ROOT / "docs/specs/agent-graph-kit.md").read_text()
 
@@ -20,7 +20,7 @@ def test_readme_section_in_order():
 
 def test_readme_single_update_heading():
     heads = [l for l in README.splitlines() if l.startswith("## Update")]
-    assert heads == ["## Update a plugin project"]
+    assert heads == ["## Update the kit"]
     assert "Update the plugin in" + " a project" not in README
 
 
@@ -43,3 +43,13 @@ def test_skill_names_accept_and_cleanup():
 def test_spec_names_update_accept():
     line = [l for l in SPEC.splitlines() if "/agk:drift" in l][0]
     assert "--update" in line and "--accept" in line
+
+
+def test_readme_section_names_the_channels_and_the_switch():
+    """Issue #330: the route is adapted to the channels, and an older install switches to stable."""
+    for k in ["`stable`", "`dev`", "agent-graph-kit-dev", "agk@agent-graph-kit-dev"]:
+        assert k in SECTION
+    remove = SECTION.index("claude plugin marketplace remove agent-graph-kit")
+    add = SECTION.index("claude plugin marketplace add Lighfe/agent-graph-kit#stable")
+    assert remove < add
+    assert "rollback" in SECTION and "no downgrade command" in SECTION

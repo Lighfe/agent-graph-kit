@@ -1,6 +1,6 @@
 # How the hooks work
 
-This document is optional background. You do not need it to start a project. The check that the hooks are active is run for you by `/agk:hook-activation-check` (a step of the route in the README, `## Start a new project`). Read this when you want to know what the hooks do, or see a deny yourself.
+This document is optional background. You do not need it to start a project. The check that the hooks are active is run for you by `/agk:hook-activation-check` (a step of the route in the README, `## Set-up the Agent Graph Kit`). Read this when you want to know what the hooks do, or see a deny yourself.
 
 ## The three hooks
 

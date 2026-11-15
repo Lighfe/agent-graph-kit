@@ -81,7 +81,7 @@ When the active stage's sub-issue list is not empty and every entry is closed, t
 3. Release the plugin, only when the project has such a step. When `AGENTS.md` has the heading `Kit-repo release steps`, do the orchestrator step under it, before the planner is launched. When it does not have that heading, do nothing in this step
 4. Write the run record, after the release step and before the planner is launched. It keeps the cost of the stage after Claude Code deletes the transcripts. It reads local files and writes one file outside the repo, so a failure never stops the loop:
    1. Save the issue JSON of the stage issue and of every sub-issue to one file: `gh issue view <n> --json number,comments,closedAt,labels` for each, joined as a JSON list, or as one object keyed by number
-   2. Run the writer. This is the exact command form. An Auto mode entry allows exactly this form: in a plugin project, the fourth entry that `/agk:setup` prints ("Auto mode entry 4"); in the kit repo, the entry in the README section on the run record:
+   2. Run the writer. This is the exact command form. An Auto mode entry allows exactly this form: in a plugin project, the fourth entry that `/agk:setup` prints ("Auto mode entry 4"); in the kit repo, the run-record writer entry in the set-up steps of the README:
 
       ```
       uv run --script <run_record.py> write --project <owner/repo> --stage <stage issue> --issues <issues file> --transcripts ~/.claude/projects/<project folder> --codex-usage ~/.local/state/agent-graph-kit/codex-qa-usage.jsonl --orchestrator-transcript <own transcript>

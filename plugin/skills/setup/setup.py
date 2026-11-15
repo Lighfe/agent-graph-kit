@@ -336,7 +336,7 @@ def manual_checks(root: Path, home: Path) -> None:
     if shutil.which("uv"):
         show("OK", "uv")
     else:
-        show("MISSING", "uv", "fix: install uv; see README.md, Prerequisites")
+        show("MISSING", "uv", 'fix: install uv; see README.md, "Set-up the Agent Graph Kit", Prerequisites')
     if run_ok(["codex", "login", "status"]):
         show("OK", "Codex login")
     else:
