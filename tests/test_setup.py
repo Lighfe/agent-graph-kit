@@ -591,3 +591,52 @@ def test_monitor_skill_export_settings_name_no_per_project_step():
     assert "the user block is the only place" not in part
     assert "is not a step" in part
     assert "no step per project" in part
+
+
+def write_installed(home, text):
+    f = home / ".claude" / "plugins" / "installed_plugins.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(text)
+
+
+def test_superpowers_installed_four_cases(tmp_path):
+    sys.path.insert(0, str(SETUP.parent))
+    try:
+        import setup as setup_mod
+    finally:
+        sys.path.pop(0)
+    home = tmp_path / "h"
+    home.mkdir()
+    assert setup_mod.superpowers_installed(home) is None
+    write_installed(home, "not json")
+    assert setup_mod.superpowers_installed(home) is None
+    write_installed(home, '{"plugins": {"agk@x": [{"scope": "user"}]}}')
+    assert setup_mod.superpowers_installed(home) is False
+    write_installed(home, '[1]')
+    assert setup_mod.superpowers_installed(home) is False
+    write_installed(home, '{"plugins": []}')
+    assert setup_mod.superpowers_installed(home) is False
+    write_installed(home, '{"plugins": {"superpowers@claude-plugins-official": [{"scope": "project"}]}}')
+    assert setup_mod.superpowers_installed(home) is True
+
+
+def test_setup_prints_the_superpowers_line_in_each_case(project, tmp_path):
+    home = tmp_path / "home"
+    r = run(project, tmp_path, home=home)
+    assert r.returncode == 0
+    assert "CHECK BY HAND superpowers plugin" in r.stdout
+    write_installed(home, '{"plugins": {}}')
+    r = run(project, tmp_path, home=home)
+    assert r.returncode == 0
+    assert ("MISSING       superpowers plugin\n              fix: claude plugin install "
+            "superpowers@claude-plugins-official\n") in r.stdout
+    write_installed(home, '{"plugins": {"superpowers@claude-plugins-official": []}}')
+    r = run(project, tmp_path, home=home)
+    assert r.returncode == 0
+    assert "OK            superpowers plugin\n" in r.stdout
+    out = r.stdout
+    assert out.index("Codex login") < out.index("superpowers plugin") < out.index("Codex trust entry")
+
+
+def test_skill_names_the_superpowers_check():
+    assert "superpowers" in (ROOT / "plugin/skills/setup/SKILL.md").read_text()

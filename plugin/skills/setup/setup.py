@@ -309,6 +309,18 @@ def trust_command(gitroot: str) -> str:
             + ' \'trust_level = "trusted"\' >> "$HOME/.codex/config.toml"')
 
 
+def superpowers_installed(home: Path) -> bool | None:
+    """True when installed_plugins.json has a `superpowers@...` key under `plugins` (any scope); None when unreadable."""
+    try:
+        data = json.loads((home / ".claude" / "plugins" / "installed_plugins.json").read_text())
+    except (OSError, ValueError):
+        return None
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(plugins, dict):
+        return False
+    return any(isinstance(k, str) and k.startswith("superpowers@") for k in plugins)
+
+
 def manual_checks(root: Path, home: Path) -> None:
     def show(status: str, label: str, fix: str | None = None) -> None:
         print(f"{status:<14}{label}")
@@ -329,6 +341,13 @@ def manual_checks(root: Path, home: Path) -> None:
         show("OK", "Codex login")
     else:
         show("MISSING", "Codex login", "fix: codex login")
+    sp = superpowers_installed(home)
+    if sp is None:
+        show("CHECK BY HAND", "superpowers plugin")
+    elif sp:
+        show("OK", "superpowers plugin")
+    else:
+        show("MISSING", "superpowers plugin", "fix: claude plugin install superpowers@claude-plugins-official")
     gr = git_root(root)
     if gr is None:
         show("MISSING", "Codex trust entry",
