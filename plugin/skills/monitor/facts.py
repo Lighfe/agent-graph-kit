@@ -2,8 +2,8 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Facts for the monitoring boards (issue #310): stage issues, the attribution marker and usage limits
-as Prometheus metrics on 127.0.0.1 or, when `board.py up` asks, on the gateway of the Docker network.
+"""Facts for the monitoring boards (issue #310): stage issues, the attribution marker, the open launch
+(issue #327) and usage limits as Prometheus metrics on 127.0.0.1 or, when `board.py up` asks, on the gateway of the Docker network.
 
   uv run --script facts.py [--host ADDRESS] [--port N] [--interval SECONDS]
 
@@ -158,7 +158,9 @@ def _first_line(body):
 
 def receipts(comments):
     """The launch receipts of one issue that count: from the owner, and not followed by a comment
-    `## Launch not started: <same role and attempt>`. Each is {"createdAt", "role", "n", "agent"}."""
+    `## Launch not started: <same role and attempt>`. Each is {"createdAt", "role", "n", "agent", "open"}.
+    `open` is true while no owner comment on the issue is newer than the receipt: a result, a
+    `## Launch stopped by outage: …` comment or any other owner comment ends the launch."""
     owner = [c for c in comments if c.get("authorAssociation") == "OWNER" and isinstance(c.get("createdAt"), str)]
     owner.sort(key=lambda c: c["createdAt"])
     out = []
@@ -175,7 +177,8 @@ def receipts(comments):
                 agent = line[len("Agent:"):].strip()
                 break
         out.append({"createdAt": c["createdAt"], "role": RECEIPT_ROLE.match(label).group(1),
-                    "n": m.group(2), "agent": agent})
+                    "n": m.group(2), "agent": agent,
+                    "open": not any(later["createdAt"] > c["createdAt"] for later in owner[i + 1:])})
     return out
 
 
@@ -185,11 +188,19 @@ def marker_role(receipt):
     return receipt["role"]
 
 
+class Marker(dict):
+    """The labels of `agk_marker`. `launch_open` tells whether the launch of the marker is still in work
+    (the series `agk_launch_open`); it is not a label, so the marker compares like a plain dict."""
+
+    launch_open = False
+
+
 def pick_marker(stages):
     """The marker of one project. `stages` is a list of {"number", "receipts_stage", "subs"} where `subs`
     holds {"number", "state", "receipts"}. Receipts: planner on the stage issue, the others on the
     sub-issues. The newest receipt by `createdAt` wins; its issue closed and no newer receipt, or no
-    receipt at all, gives the stage-level orchestrator marker. None when the project has no open stage."""
+    receipt at all, gives the stage-level orchestrator marker. None when the project has no open stage.
+    The result is a Marker: its `launch_open` is the `open` of the receipt it came from."""
     if not stages:
         return None
     best = None  # (createdAt, stage number, issue number or None, receipt, issue closed)
@@ -202,12 +213,14 @@ def pick_marker(stages):
                 if r["role"] != "planner" and (best is None or r["createdAt"] > best[0]):
                     best = (r["createdAt"], st["number"], sub["number"], r, sub["state"] == "closed")
     if best is None:
-        return {"stage": str(stages[0]["number"]), "issue": "", "role": "orchestrator", "launch": ""}
+        return Marker({"stage": str(stages[0]["number"]), "issue": "", "role": "orchestrator", "launch": ""})
     _, stage, issue, r, closed = best
     if closed:
-        return {"stage": str(stage), "issue": "", "role": "orchestrator", "launch": ""}
-    return {"stage": str(stage), "issue": "" if issue is None else str(issue), "role": marker_role(r),
-            "launch": f"{r['role']}-{r['n']}"}
+        return Marker({"stage": str(stage), "issue": "", "role": "orchestrator", "launch": ""})
+    marker = Marker({"stage": str(stage), "issue": "" if issue is None else str(issue), "role": marker_role(r),
+                     "launch": f"{r['role']}-{r['n']}"})
+    marker.launch_open = bool(r.get("open"))
+    return marker
 
 
 def read_project(entry):
@@ -227,7 +240,9 @@ def read_project(entry):
                        "subs": subs})
     marker = pick_marker(stages)
     if marker is not None:
-        marker = {"agk_project": project, **marker}
+        launch_open = marker.launch_open
+        marker = Marker({"agk_project": project, **marker})
+        marker.launch_open = launch_open
     return {"issues": issues, "marker": marker}
 
 
@@ -318,6 +333,9 @@ def render(facts, success_time):
     block("agk_marker", "The issue and role in work now, 1 for each project.",
           [_series("agk_marker", {k: m[k] for k in ("agk_project", "stage", "issue", "role", "launch")}, 1)
            for m in facts["markers"]])
+    block("agk_launch_open", "The launch of the marker is in work: no owner comment after its receipt.",
+          [_series("agk_launch_open", {k: m[k] for k in ("agk_project", "stage", "issue", "role", "launch")}, 1)
+           for m in facts["markers"] if m["launch"] and getattr(m, "launch_open", False)])
     block("agk_usage_limit_percent", "Used share of a plan usage limit window, in percent.",
           [_series("agk_usage_limit_percent", {"provider": p, "window": w}, repr(v))
            for (p, w), v in sorted(facts["limits"].items())])

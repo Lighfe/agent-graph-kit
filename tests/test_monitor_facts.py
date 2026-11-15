@@ -274,3 +274,63 @@ def test_facts_default_host_is_loopback_and_accepts_a_private_gateway():
         assert server.server_address[0] == "127.0.0.1"
     finally:
         server.server_close()
+
+
+# --- agk_launch_open: is the marker's launch still in work (issue #327) -------------------------
+
+def open_series(rig):
+    series = parse(facts.render(rig.read(), 1.0))
+    return [(dict(labels), value) for (name, labels), value in series.items() if name == "agk_launch_open"]
+
+
+def test_launch_open_while_receipt_is_newest_comment(rig):
+    rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"),
+                         comment("## PM: GROOMED", "2026-01-01T10:30:00Z"),
+                         receipt("engineer", 1, "2026-01-01T11:00:00Z"),
+                         comment("a stranger", "2026-01-01T11:30:00Z", "NONE")]})
+    assert open_series(rig) == [({"agk_project": "own/demo", "stage": "5", "issue": "10", "role": "engineer",
+                                  "launch": "engineer-1"}, "1")]
+    text = facts.render(rig.read(), 1.0)
+    assert "# TYPE agk_launch_open gauge" in text
+
+
+def test_launch_open_ends_with_a_later_result_comment(rig):
+    rig.comments({"10": [receipt("engineer", 1, "2026-01-01T11:00:00Z"),
+                         comment("## Engineer: DONE\nCommits: a..b", "2026-01-01T11:40:00Z")]})
+    assert rig.marker()["launch"] == "engineer-1"  # the marker stays
+    assert open_series(rig) == []
+
+
+def test_launch_open_ends_with_a_later_outage_comment(rig):
+    rig.comments({"10": [receipt("qa", 2, "2026-01-01T11:00:00Z", agent="qa-codex"),
+                         comment("## Launch stopped by outage: qa (attempt 2)\nreason", "2026-01-01T11:05:00Z")]})
+    assert rig.marker()["launch"] == "qa-2"
+    assert open_series(rig) == []
+
+
+def test_launch_open_not_for_stage_level_orchestrator_marker(rig):
+    assert rig.marker()["launch"] == ""
+    assert open_series(rig) == []
+    # the newest receipt is on a closed issue: stage-level marker again, and no open launch
+    rig.comments({"12": [receipt("qa", 1, "2026-01-01T11:00:00Z")]})
+    assert rig.marker()["launch"] == ""
+    assert open_series(rig) == []
+
+
+def test_launch_open_planner_reads_the_stage_issue(rig):
+    rig.comments({"5": [receipt("planner", 1, "2026-01-01T12:00:00Z")],
+                  "10": [comment("a later comment on a sub-issue", "2026-01-01T13:00:00Z")]})
+    assert open_series(rig) == [({"agk_project": "own/demo", "stage": "5", "issue": "", "role": "planner",
+                                  "launch": "planner-1"}, "1")]
+    rig.comments({"5": [receipt("planner", 1, "2026-01-01T12:00:00Z"),
+                        comment("## Planner: STAGE REVIEW", "2026-01-01T12:20:00Z")]})
+    assert open_series(rig) == []
+
+
+def test_launch_open_not_for_the_older_marker_after_not_started(rig):
+    # the skipped receipt gives the older launch as the marker; that launch has newer comments
+    rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"),
+                         receipt("engineer", 1, "2026-01-01T11:00:00Z"),
+                         comment("## Launch not started: engineer (attempt 1)\nreason", "2026-01-01T11:01:00Z")]})
+    assert rig.marker()["launch"] == "pm-1"
+    assert open_series(rig) == []
