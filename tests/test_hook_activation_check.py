@@ -71,6 +71,7 @@ def _enable_plugin(env, value=True):
     (folder / "settings.json").write_text(json.dumps({"enabledPlugins": {"agk@kit": value}}))
 
 
+@pytest.mark.integration
 def test_no_registration_evidence_is_unproven_check_1_naming_every_event(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
@@ -88,6 +89,7 @@ def _cache_copy(env):
     return plugin
 
 
+@pytest.mark.integration
 def test_cache_install_without_registration_fails_check_1(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
@@ -96,6 +98,7 @@ def test_cache_install_without_registration_fails_check_1(tmp_path):
     assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
+@pytest.mark.integration
 def test_enabled_plugin_in_a_cache_folder_is_ok(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env)
@@ -105,6 +108,7 @@ def test_enabled_plugin_in_a_cache_folder_is_ok(tmp_path):
     assert lines[-1] == "OK all 4 checks passed" and r.returncode == 0
 
 
+@pytest.mark.integration
 def test_real_off_agk_entry_false_fails_check_1_outside_the_cache(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env, False)
@@ -114,6 +118,7 @@ def test_real_off_agk_entry_false_fails_check_1_outside_the_cache(tmp_path):
     assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
+@pytest.mark.integration
 def test_unproven_check_1_with_another_failed_check_gives_failed_last_line(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
@@ -123,6 +128,7 @@ def test_unproven_check_1_with_another_failed_check_gives_failed_last_line(tmp_p
     assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
+@pytest.mark.integration
 def test_agk_entry_false_fails_check_1_even_when_settings_hooks_register_all_events(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env, False)
@@ -135,6 +141,7 @@ def test_agk_entry_false_fails_check_1_even_when_settings_hooks_register_all_eve
     assert lines[-1] == "FAILED at least one check failed" and r.returncode == 1
 
 
+@pytest.mark.integration
 def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
@@ -145,6 +152,7 @@ def test_hooks_in_the_project_settings_count_as_registered_for_those_events(tmp_
     assert "PreToolUse" not in lines[0]
 
 
+@pytest.mark.integration
 def test_all_checks_ok_in_a_set_up_project_and_nothing_is_written(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env)
@@ -158,6 +166,7 @@ def test_all_checks_ok_in_a_set_up_project_and_nothing_is_written(tmp_path):
     assert _snapshot(proj) == before
 
 
+@pytest.mark.integration
 def test_missing_module_fails_check_3_and_the_last_line(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env)
@@ -172,6 +181,7 @@ def test_missing_module_fails_check_3_and_the_last_line(tmp_path):
     assert lines[-1].startswith("FAILED")
 
 
+@pytest.mark.integration
 def test_disabled_plugin_fails_check_1_and_missing_codex_fails_check_4(tmp_path):
     env = _env(tmp_path, _stubs(tmp_path))
     _enable_plugin(env)  # enabled for the user, switched off for this project
@@ -189,6 +199,7 @@ def test_disabled_plugin_fails_check_1_and_missing_codex_fails_check_4(tmp_path)
 
 
 @pytest.mark.parametrize("where", ["home", "project", "local"])
+@pytest.mark.integration
 def test_disable_all_hooks_fails_check_1(tmp_path, where):
     env = _env(tmp_path, _stubs(tmp_path))
     proj = _project(tmp_path, env)
@@ -205,6 +216,7 @@ def test_disable_all_hooks_fails_check_1(tmp_path, where):
     assert lines[-1].startswith("FAILED") and r.returncode == 1
 
 
+@pytest.mark.integration
 def test_self_check_mode_ends_without_gh_or_codex(tmp_path):
     # gh and codex that record a call: none may run
     stubs = tmp_path / "stubs"

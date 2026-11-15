@@ -226,17 +226,20 @@ def _cli(world, *args, cwd=None):
     )
 
 
+@pytest.mark.integration
 def test_cli_check_prints_release_for_a_version_without_tag(world):
     done = _cli(world, "--root", str(world.repo), "check")
     assert (done.returncode, done.stdout) == (0, "release v0.2.0\n")
 
 
+@pytest.mark.integration
 def test_cli_check_prints_no_release_when_the_tag_exists(world):
     _git(world.repo, "tag", "v0.2.0")
     done = _cli(world, "--root", str(world.repo), "check")
     assert (done.returncode, done.stdout) == (0, "no release\n")
 
 
+@pytest.mark.integration
 def test_cli_check_exits_1_on_a_bad_version(world):
     _set_version(world.repo, "0.2")
     done = _cli(world, "--root", str(world.repo), "check")
@@ -245,6 +248,7 @@ def test_cli_check_exits_1_on_a_bad_version(world):
     assert "not a version: 0.2" in done.stderr
 
 
+@pytest.mark.integration
 def test_cli_marketplace_rewrites_the_file_in_place(world):
     done = _cli(world, "--root", str(world.repo), "marketplace", "dev")
     assert done.returncode == 0, done.stderr
@@ -252,12 +256,14 @@ def test_cli_marketplace_rewrites_the_file_in_place(world):
     assert _git(world.repo, "status", "--porcelain").split() == ["M", MARKETPLACE]
 
 
+@pytest.mark.integration
 def test_cli_marketplace_refuses_another_channel(world):
     done = _cli(world, "--root", str(world.repo), "marketplace", "main")
     assert done.returncode != 0
     assert (world.repo / MARKETPLACE).read_text(encoding="utf-8") == MARKET_TEXT
 
 
+@pytest.mark.integration
 def test_cli_default_root_is_the_repo_of_the_script(world):
     done = subprocess.run(["uv", "run", "--script", "scripts/release_channels.py", "check"], cwd=world.repo,
                           env=world.env(), capture_output=True, text=True)
@@ -503,6 +509,7 @@ def _dev_run(world):
     return ran, out
 
 
+@pytest.mark.integration
 def test_dev_run_with_a_new_version_tags_and_moves_dev(world):
     ran, out = _dev_run(world)
     assert out == {"result": "release v0.2.0", "tag": "v0.2.0"}
@@ -517,6 +524,7 @@ def test_dev_run_with_a_new_version_tags_and_moves_dev(world):
     assert json.loads(world.remote_file("main", MARKETPLACE))["name"] == "agent-graph-kit"
 
 
+@pytest.mark.integration
 def test_dev_run_creates_a_pre_release_for_the_tag(world):
     _dev_run(world)
     calls = world.gh_calls()
@@ -526,6 +534,7 @@ def test_dev_run_creates_a_pre_release_for_the_tag(world):
     assert "--verify-tag" in calls[0].split()
 
 
+@pytest.mark.integration
 def test_dev_run_without_a_new_version_does_nothing_more(world):
     _dev_run(world)
     dev = world.remote_ref("refs/heads/dev")
@@ -542,6 +551,7 @@ def test_dev_run_without_a_new_version_does_nothing_more(world):
     assert world.gh_calls() == []
 
 
+@pytest.mark.integration
 def test_dev_run_with_the_next_version_force_moves_dev(world):
     _dev_run(world)
     _git(world.repo, "checkout", "-q", "main")
@@ -556,6 +566,7 @@ def test_dev_run_with_the_next_version_force_moves_dev(world):
     assert json.loads(world.remote_file("dev", MANIFEST))["version"] == "0.2.1"
 
 
+@pytest.mark.integration
 def test_dev_run_stops_on_a_bad_version(world):
     _set_version(world.repo, "0.2")
     world.push("bad version")
@@ -651,6 +662,7 @@ def tagged(tmp_path):
     return world
 
 
+@pytest.mark.integration
 def test_stable_stops_when_the_tag_does_not_exist(tagged):
     failed, done = _stable_run(tagged, "v9.9.9", ci_runs=1)
     assert failed == GATE
@@ -659,12 +671,14 @@ def test_stable_stops_when_the_tag_does_not_exist(tagged):
     assert tagged.gh_calls() == []
 
 
+@pytest.mark.integration
 def test_stable_stops_when_the_input_is_a_branch_name(tagged):
     failed, _ = _stable_run(tagged, "main", ci_runs=1)
     assert failed == GATE
     assert tagged.remote_ref("refs/heads/stable") is None
 
 
+@pytest.mark.integration
 def test_stable_stops_when_the_commit_has_no_successful_ci_run(tagged):
     failed, done = _stable_run(tagged, "v0.2.0", ci_runs=0)
     assert failed == GATE
@@ -674,6 +688,7 @@ def test_stable_stops_when_the_commit_has_no_successful_ci_run(tagged):
     assert [c.split()[:2] for c in tagged.gh_calls()] == [["run", "list"]]
 
 
+@pytest.mark.integration
 def test_stable_moves_the_branch_to_the_hand_set_tag_and_creates_its_release(tagged):
     failed, done = _stable_run(tagged, "v0.2.0", ci_runs=1)
     assert failed is None, done and done.stderr
@@ -689,6 +704,7 @@ def test_stable_moves_the_branch_to_the_hand_set_tag_and_creates_its_release(tag
     assert "--prerelease" not in create
 
 
+@pytest.mark.integration
 def test_stable_makes_an_existing_pre_release_a_full_latest_release(tagged):
     failed, done = _stable_run(tagged, "v0.2.1", ci_runs=1, release_exists=True)
     assert failed is None, done and done.stderr
@@ -699,6 +715,7 @@ def test_stable_makes_an_existing_pre_release_a_full_latest_release(tagged):
     assert not any(c.startswith("release create") for c in tagged.gh_calls())
 
 
+@pytest.mark.integration
 def test_stable_rollback_moves_the_branch_back_to_the_older_tag(tagged):
     assert _stable_run(tagged, "v0.2.1", ci_runs=1, release_exists=True)[0] is None
     assert tagged.remote_ref("refs/heads/stable") == tagged.second
@@ -708,6 +725,7 @@ def test_stable_rollback_moves_the_branch_back_to_the_older_tag(tagged):
     assert tagged.remote_tags() == ["v0.2.0", "v0.2.1"]
 
 
+@pytest.mark.integration
 def test_stable_puts_the_stable_name_on_a_commit_with_another_name(tagged):
     _git(tagged.repo, "checkout", "-q", "main")
     path = tagged.repo / MARKETPLACE

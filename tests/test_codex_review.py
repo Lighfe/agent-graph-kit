@@ -182,6 +182,7 @@ def _main(*argv):
     return review.main(list(argv), today=DATE)
 
 
+@pytest.mark.integration
 def test_run_codex_arguments_and_prompt(env, monkeypatch, capsys):
     calls = []
     _fake(monkeypatch, CodexRun("ok", DATA, ""), calls)
@@ -200,6 +201,7 @@ def test_model_matches_qa_codex():
     assert f'QA_MODEL = "{review.MODEL}"' in text
 
 
+@pytest.mark.integration
 def test_success_writes_file_and_prints_path(env, monkeypatch, capsys):
     _fake(monkeypatch, CodexRun("ok", DATA, ""))
     assert _main("--target", "AGENTS.md", "--topic", "demo") == 0
@@ -210,6 +212,7 @@ def test_success_writes_file_and_prints_path(env, monkeypatch, capsys):
         DATA, topic="demo", target="AGENTS.md", date=DATE)
 
 
+@pytest.mark.integration
 def test_default_reviews_dir_is_under_the_project_root(monkeypatch, tmp_path):
     project = _git_project(tmp_path)
     monkeypatch.chdir(project)
@@ -220,6 +223,7 @@ def test_default_reviews_dir_is_under_the_project_root(monkeypatch, tmp_path):
     assert (project / "docs" / "reviews" / f"{DATE}-demo-codex-review.md").is_file()
 
 
+@pytest.mark.integration
 def test_date_defaults_to_local_today(env, monkeypatch, capsys):
     _fake(monkeypatch, CodexRun("ok", DATA, ""))
     import datetime
@@ -227,6 +231,7 @@ def test_date_defaults_to_local_today(env, monkeypatch, capsys):
     assert (env / f"{datetime.date.today().isoformat()}-demo-codex-review.md").exists()
 
 
+@pytest.mark.integration
 def test_commit_range_target(env, monkeypatch, capsys):
     calls = []
     _fake(monkeypatch, CodexRun("ok", DATA, ""), calls)
@@ -235,6 +240,7 @@ def test_commit_range_target(env, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("status", ["transient", "timeout", "invalid_output", "unavailable", "unknown"])
+@pytest.mark.integration
 def test_failure_writes_no_file(env, monkeypatch, capsys, status):
     _fake(monkeypatch, CodexRun(status, None, "no result after 30 min"))
     assert _main("--target", "AGENTS.md", "--topic", "demo") == 1
@@ -244,6 +250,7 @@ def test_failure_writes_no_file(env, monkeypatch, capsys, status):
     assert not env.exists() or not any(env.iterdir())
 
 
+@pytest.mark.integration
 def test_timeout_message(env, monkeypatch, capsys):
     _fake(monkeypatch, CodexRun("timeout", None, "no result after 30 min"))
     assert _main("--target", "AGENTS.md", "--topic", "demo") == 1
@@ -261,6 +268,7 @@ def test_timeout_message(env, monkeypatch, capsys):
     ({**DATA, "next_steps": [1]}, "next_steps"),
     ({**DATA, "findings": ["x"]}, "findings"),
 ])
+@pytest.mark.integration
 def test_invalid_shape_writes_no_file(env, monkeypatch, capsys, output, needle):
     _fake(monkeypatch, CodexRun("ok", output, ""))
     assert _main("--target", "AGENTS.md", "--topic", "demo") == 1
@@ -295,6 +303,7 @@ def test_missing_args_exit_2(env, capsys):
 
 
 @pytest.mark.parametrize("target", ["no/such/file.md", "nosuchref..HEAD", "--all", ".."])
+@pytest.mark.integration
 def test_bad_target_exits_2(env, capsys, target):
     assert _main(f"--target={target}", "--topic", "demo") == 2
     err = capsys.readouterr().err
@@ -302,6 +311,7 @@ def test_bad_target_exits_2(env, capsys, target):
     assert not env.exists()
 
 
+@pytest.mark.integration
 def test_existing_file_is_not_overwritten(env, capsys):
     env.mkdir()
     path = env / f"{DATE}-demo-codex-review.md"
@@ -311,6 +321,7 @@ def test_existing_file_is_not_overwritten(env, capsys):
     assert path.read_text(encoding="utf-8") == "old review\n"
 
 
+@pytest.mark.integration
 def test_redaction(env, monkeypatch, capsys):
     token = "sk-" + "A1b2C3d4" * 4  # synthetic
     data = {**DATA, "findings": [_finding(body=f"The key {token} is in the file.")]}
@@ -325,6 +336,7 @@ def test_redaction(env, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("sig", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+@pytest.mark.integration
 def test_signal_kills_child_and_writes_no_file(env, monkeypatch, capsys, sig):
     children = []
 
@@ -344,6 +356,7 @@ def test_signal_kills_child_and_writes_no_file(env, monkeypatch, capsys, sig):
     assert "stopped by" in capsys.readouterr().err
 
 
+@pytest.mark.integration
 def test_signal_during_write_removes_file(env, monkeypatch, capsys):
     _fake(monkeypatch, CodexRun("ok", DATA, ""))
     import builtins
@@ -365,6 +378,7 @@ def test_signal_during_write_removes_file(env, monkeypatch, capsys):
 # --- as a script -------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_script_bad_topic_from_other_cwd(tmp_path):
     p = subprocess.run([sys.executable, str(SCRIPT), "--target", "AGENTS.md", "--topic", "My Topic"],
                        cwd=tmp_path, capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -419,6 +433,7 @@ def _run_script(script, cwd, *args, path_prefix=None):
                           text=True, stdin=subprocess.DEVNULL)
 
 
+@pytest.mark.integration
 def test_plugin_copy_runs_in_a_plugin_project(tmp_path):
     script = _plugin_copy(tmp_path)
     project = _git_project(tmp_path)
@@ -432,6 +447,7 @@ def test_plugin_copy_runs_in_a_plugin_project(tmp_path):
     assert not (script.parents[3] / "docs").exists()  # nothing written next to the plugin
 
 
+@pytest.mark.integration
 def test_outside_a_git_repository_exits_2_and_writes_no_file(tmp_path):
     script = _plugin_copy(tmp_path)
     plain = tmp_path / "plain"
@@ -447,6 +463,7 @@ def test_outside_a_git_repository_exits_2_and_writes_no_file(tmp_path):
     assert not (plain / "docs").exists()
 
 
+@pytest.mark.integration
 def test_target_outside_the_project_root_is_refused(tmp_path):
     script = _plugin_copy(tmp_path)
     project = _git_project(tmp_path)
@@ -457,6 +474,7 @@ def test_target_outside_the_project_root_is_refused(tmp_path):
     assert not (project / "docs").exists()
 
 
+@pytest.mark.integration
 def test_plugin_copy_finds_codex_exec_in_plugin_bin(tmp_path):
     script = _plugin_copy(tmp_path)
     code = ("import importlib.util as u, sys; s = u.spec_from_file_location('r', sys.argv[1]); "

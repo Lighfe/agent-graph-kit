@@ -87,12 +87,14 @@ def parse(text):
     return out
 
 
+@pytest.mark.integration
 def test_marker_is_newest_receipt(rig):
     rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"), receipt("engineer", 1, "2026-01-01T11:00:00Z")]})
     assert rig.marker() == {"agk_project": "own/demo", "stage": "5", "issue": "10", "role": "engineer",
                             "launch": "engineer-1"}
 
 
+@pytest.mark.integration
 def test_marker_return_attempt(rig):
     rig.comments({"10": [receipt("engineer", 1, "2026-01-01T11:00:00Z"),
                          receipt("engineer", 2, "2026-01-01T12:00:00Z")]})
@@ -100,11 +102,13 @@ def test_marker_return_attempt(rig):
     assert (m["issue"], m["role"], m["launch"]) == ("10", "engineer", "engineer-2")
 
 
+@pytest.mark.integration
 def test_marker_continued_round_counts(rig):
     rig.comments({"10": [receipt("engineer", 3, "2026-01-01T11:00:00Z", kind="continued, round")]})
     assert rig.marker()["launch"] == "engineer-3"
 
 
+@pytest.mark.integration
 def test_marker_stage_level_after_close(rig):
     rig.comments({"12": [receipt("qa", 1, "2026-01-01T11:00:00Z")]})
     m = rig.marker()
@@ -114,6 +118,7 @@ def test_marker_stage_level_after_close(rig):
     assert (rig.marker()["issue"], rig.marker()["role"]) == ("11", "pm")
 
 
+@pytest.mark.integration
 def test_marker_planner_on_stage_issue(rig):
     rig.comments({"10": [receipt("engineer", 1, "2026-01-01T11:00:00Z")],
                   "5": [receipt("planner", 1, "2026-01-01T12:00:00Z")]})
@@ -121,6 +126,7 @@ def test_marker_planner_on_stage_issue(rig):
     assert (m["stage"], m["issue"], m["role"], m["launch"]) == ("5", "", "planner", "planner-1")
 
 
+@pytest.mark.integration
 def test_marker_qa_roles(rig):
     rig.comments({"10": [receipt("qa", 1, "2026-01-01T11:00:00Z", agent="qa-engineer")]})
     assert rig.marker()["role"] == "qa-claude"
@@ -129,6 +135,7 @@ def test_marker_qa_roles(rig):
     assert rig.marker()["launch"] == "qa-1"
 
 
+@pytest.mark.integration
 def test_marker_skips_not_started(rig):
     rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"),
                          receipt("engineer", 1, "2026-01-01T11:00:00Z"),
@@ -140,22 +147,26 @@ def test_marker_skips_not_started(rig):
     assert rig.marker()["launch"] == "engineer-2"
 
 
+@pytest.mark.integration
 def test_marker_no_receipt(rig):
     m = rig.marker()
     assert (m["stage"], m["issue"], m["role"], m["launch"]) == ("5", "", "orchestrator", "")
 
 
+@pytest.mark.integration
 def test_marker_ignores_comments_of_others(rig):
     rig.comments({"10": [comment("## Launch: engineer (attempt 1)\nAgent: x", "2026-01-01T11:00:00Z", "NONE")]})
     assert rig.marker()["role"] == "orchestrator"
 
 
+@pytest.mark.integration
 def test_no_open_stage_gives_no_marker(rig):
     rig.fx["stages"] = []
     rig.comments({})
     assert rig.read() == {"issues": [], "markers": [], "limits": {}}
 
 
+@pytest.mark.integration
 def test_issue_info_order(rig):
     issues = rig.read()["issues"]
     assert [(i["order"], i["issue"], i["title"], i["stage"]) for i in issues] == [
@@ -165,6 +176,7 @@ def test_issue_info_order(rig):
                                ("title", "Second task"), ("order", "2"))) in series
 
 
+@pytest.mark.integration
 def test_gh_failure_keeps_last_facts(rig, capsys):
     f = facts.Facts(rig.state)
     assert f.refresh() is True
@@ -179,6 +191,7 @@ def test_gh_failure_keeps_last_facts(rig, capsys):
     assert f.refresh() is True
 
 
+@pytest.mark.integration
 def test_gh_calls_read_only(rig):
     rig.comments({"10": [receipt("engineer", 1, "2026-01-01T11:00:00Z")]})
     rig.read()
@@ -218,6 +231,7 @@ def test_render_escapes_labels():
     assert series[("agk_facts_last_success_seconds", ())] == "1700000000.5"
 
 
+@pytest.mark.integration
 def test_listens_on_localhost_only(rig):
     f = facts.Facts(rig.state)
     f.refresh()
@@ -283,6 +297,7 @@ def open_series(rig):
     return [(dict(labels), value) for (name, labels), value in series.items() if name == "agk_launch_open"]
 
 
+@pytest.mark.integration
 def test_launch_open_while_receipt_is_newest_comment(rig):
     rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"),
                          comment("## PM: GROOMED", "2026-01-01T10:30:00Z"),
@@ -294,6 +309,7 @@ def test_launch_open_while_receipt_is_newest_comment(rig):
     assert "# TYPE agk_launch_open gauge" in text
 
 
+@pytest.mark.integration
 def test_launch_open_ends_with_a_later_result_comment(rig):
     rig.comments({"10": [receipt("engineer", 1, "2026-01-01T11:00:00Z"),
                          comment("## Engineer: DONE\nCommits: a..b", "2026-01-01T11:40:00Z")]})
@@ -301,6 +317,7 @@ def test_launch_open_ends_with_a_later_result_comment(rig):
     assert open_series(rig) == []
 
 
+@pytest.mark.integration
 def test_launch_open_ends_with_a_later_outage_comment(rig):
     rig.comments({"10": [receipt("qa", 2, "2026-01-01T11:00:00Z", agent="qa-codex"),
                          comment("## Launch stopped by outage: qa (attempt 2)\nreason", "2026-01-01T11:05:00Z")]})
@@ -308,6 +325,7 @@ def test_launch_open_ends_with_a_later_outage_comment(rig):
     assert open_series(rig) == []
 
 
+@pytest.mark.integration
 def test_launch_open_not_for_stage_level_orchestrator_marker(rig):
     assert rig.marker()["launch"] == ""
     assert open_series(rig) == []
@@ -317,6 +335,7 @@ def test_launch_open_not_for_stage_level_orchestrator_marker(rig):
     assert open_series(rig) == []
 
 
+@pytest.mark.integration
 def test_launch_open_planner_reads_the_stage_issue(rig):
     rig.comments({"5": [receipt("planner", 1, "2026-01-01T12:00:00Z")],
                   "10": [comment("a later comment on a sub-issue", "2026-01-01T13:00:00Z")]})
@@ -327,6 +346,7 @@ def test_launch_open_planner_reads_the_stage_issue(rig):
     assert open_series(rig) == []
 
 
+@pytest.mark.integration
 def test_launch_open_not_for_the_older_marker_after_not_started(rig):
     # the skipped receipt gives the older launch as the marker; that launch has newer comments
     rig.comments({"10": [receipt("pm", 1, "2026-01-01T10:00:00Z"),

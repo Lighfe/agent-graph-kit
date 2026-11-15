@@ -239,6 +239,7 @@ def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
+@pytest.mark.integration
 def test_numstat_from_git_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -322,6 +323,7 @@ def run(args, env=None):
                           env={**os.environ, **(env or {})})
 
 
+@pytest.mark.integration
 def test_collect_from_issues_file_writes_whole_file_mode_0600(tmp_path):
     issues = tmp_path / "issues.json"
     issues.write_text(json.dumps([standard_issue(), dict(standard_issue(), number=9)]))
@@ -344,6 +346,7 @@ def test_default_path_without_xdg(tmp_path, monkeypatch):
     assert cs.cases_path() == tmp_path / "home" / ".local" / "state" / "agent-graph-kit" / "retry-cases.jsonl"
 
 
+@pytest.mark.integration
 def test_collect_from_repo_slug_makes_only_reads(tmp_path):
     calls = tmp_path / "calls.jsonl"
     api = tmp_path / "api.json"
@@ -376,6 +379,7 @@ def test_collect_from_repo_slug_makes_only_reads(tmp_path):
     assert kinds == {"api", "graphql", "view"}
 
 
+@pytest.mark.integration
 def test_repo_slug_reads_every_page_of_edit_times(tmp_path):
     calls = tmp_path / "calls.jsonl"
     api = tmp_path / "api.json"
@@ -401,11 +405,13 @@ def test_repo_slug_reads_every_page_of_edit_times(tmp_path):
         assert "pageInfo" in query and "hasNextPage" in query and "endCursor" in query
 
 
+@pytest.mark.integration
 def test_repo_slug_needs_stage():
     res = run(["collect", "--project", PROJECT, "--repo-slug", "acme/widgets"])
     assert res.returncode == 2
 
 
+@pytest.mark.integration
 def test_gh_failure_writes_nothing(tmp_path):
     env = {"PATH": f"{FAKES}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_FAIL": "1"}
     res = run(["collect", "--project", PROJECT, "--repo-slug", "acme/widgets", "--stage", "3"], env)
@@ -442,6 +448,7 @@ def row(rid, project, stage, **extra):
     return {"id": rid, "project": project, "stage": stage, **extra}
 
 
+@pytest.mark.integration
 def test_two_stages_of_one_project_are_both_kept(tmp_path):
     collect_file(issues_file(tmp_path, [7], "a.json"), stage=1)
     res = collect_file(issues_file(tmp_path, [9], "b.json"), stage=2)
@@ -449,6 +456,7 @@ def test_two_stages_of_one_project_are_both_kept(tmp_path):
     assert [(r["id"], r["stage"]) for r in rows_of()] == [(f"{PROJECT}:7:1", 1), (f"{PROJECT}:9:1", 2)]
 
 
+@pytest.mark.integration
 def test_second_run_replaces_only_its_project_and_stage(tmp_path):
     other = [row(f"{PROJECT}:20:1", PROJECT, 2, note="b"), row("other/q:7:1", "other/q", 1, note="q1"),
              row("other/q:8:1", "other/q", 2, note="q2")]
@@ -461,6 +469,7 @@ def test_second_run_replaces_only_its_project_and_stage(tmp_path):
     assert [r["id"] for r in rows] == [f"{PROJECT}:20:1", "other/q:7:1", "other/q:8:1", f"{PROJECT}:7:1"]
 
 
+@pytest.mark.integration
 def test_run_without_cases_removes_only_its_rows(tmp_path):
     keep = [row(f"{PROJECT}:20:1", PROJECT, 2), row("other/q:7:1", "other/q", 1)]
     write_jsonl(out_path(), [row(f"{PROJECT}:7:1", PROJECT, 1), keep[0], keep[1]])
@@ -471,6 +480,7 @@ def test_run_without_cases_removes_only_its_rows(tmp_path):
     assert rows_of() == keep
 
 
+@pytest.mark.integration
 def test_issue_moved_to_another_stage_keeps_its_id_once(tmp_path):
     write_jsonl(out_path(), [row(f"{PROJECT}:7:1", PROJECT, 1, note="old"), row(f"{PROJECT}:8:1", PROJECT, 1)])
     collect_file(issues_file(tmp_path, [7]), stage=2)
@@ -479,6 +489,7 @@ def test_issue_moved_to_another_stage_keeps_its_id_once(tmp_path):
     assert rows[1]["stage"] == 2 and "note" not in rows[1]
 
 
+@pytest.mark.integration
 def test_run_without_stage_replaces_only_rows_with_stage_null(tmp_path):
     staged = row(f"{PROJECT}:20:1", PROJECT, 3)
     write_jsonl(out_path(), [row(f"{PROJECT}:30:1", PROJECT, None), staged])
@@ -488,6 +499,7 @@ def test_run_without_stage_replaces_only_rows_with_stage_null(tmp_path):
     assert [(r["id"], r["stage"]) for r in rows] == [(f"{PROJECT}:20:1", 3), (f"{PROJECT}:7:1", None)]
 
 
+@pytest.mark.integration
 def test_stage_compare_is_on_the_json_value(tmp_path):
     keep = [row(f"{PROJECT}:20:1", PROJECT, "1"), row(f"{PROJECT}:21:1", PROJECT, None),
             row(f"{PROJECT}:22:1", PROJECT, True)]
@@ -496,6 +508,7 @@ def test_stage_compare_is_on_the_json_value(tmp_path):
     assert rows_of()[:3] == keep and len(rows_of()) == 4
 
 
+@pytest.mark.integration
 def test_old_rows_keep_the_order_of_their_last_line_and_the_last_line_counts(tmp_path):
     out = out_path()
     out.parent.mkdir(parents=True)
@@ -507,6 +520,7 @@ def test_old_rows_keep_the_order_of_their_last_line_and_the_last_line_counts(tmp
     assert len(rows_of()) == 3
 
 
+@pytest.mark.integration
 def test_failed_run_leaves_old_file_byte_equal(tmp_path):
     out = out_path()
     out.parent.mkdir(parents=True)

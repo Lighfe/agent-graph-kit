@@ -46,6 +46,8 @@ import subprocess
 from fnmatch import fnmatchcase
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 INSTRUCTION_FILES = [
@@ -215,6 +217,7 @@ def test_instruction_files_are_read():
     assert headings == README_SECTIONS
 
 
+@pytest.mark.integration
 def test_every_named_repo_path_exists():
     checked, missing = check_texts(instruction_texts(), tracked_files())
     assert missing == [], "missing paths:\n" + "\n".join(f"{f}: {p}" for f, p in missing)

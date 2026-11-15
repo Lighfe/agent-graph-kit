@@ -207,6 +207,7 @@ def test_stuck_cases_are_valid_yaml_for_promtool(tmp_path):
 
 
 @pytest.mark.skipif(not promtool_available(), reason="needs Docker and the local Prometheus image of compose.yaml")
+@pytest.mark.integration
 def test_stuck_launch_over_time(tmp_path):
     expr = query(rules(rendered(tmp_path))["Stuck launch"])["model"]["expr"]
     res = run_promtool(tmp_path, expr, STUCK_CASES)
@@ -214,6 +215,7 @@ def test_stuck_launch_over_time(tmp_path):
 
 
 @pytest.mark.skipif(not promtool_available(), reason="needs Docker and the local Prometheus image of compose.yaml")
+@pytest.mark.integration
 def test_a_query_that_adds_the_samples_up_fails_the_cases(tmp_path):
     # the query of the first version: the cases catch it, so they do check the cancellation
     old = ("agk_launch_open unless on (agk_project, issue)"
@@ -339,6 +341,7 @@ class Rig:
         return ups[0] if ups else None
 
 
+@pytest.mark.integration
 def test_up_writes_the_alert_file_with_the_default_limits(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -355,6 +358,7 @@ def test_up_writes_the_alert_file_with_the_default_limits(tmp_path):
     assert "${AGK_ALERT_ISSUE_TOKENS}" in ALERTS.read_text(encoding="utf-8")
 
 
+@pytest.mark.integration
 def test_up_with_other_limits_writes_them_and_changes_the_version(tmp_path):
     rig = Rig(tmp_path)
     rig.run("up")
@@ -374,6 +378,7 @@ def test_up_with_other_limits_writes_them_and_changes_the_version(tmp_path):
     assert rig.up_env()["AGK_ALERTS_VERSION"] == env["AGK_ALERTS_VERSION"]
 
 
+@pytest.mark.integration
 def test_up_with_a_bad_limit_starts_nothing(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up", AGK_ALERT_ISSUE_TOKENS="lots")
@@ -383,6 +388,7 @@ def test_up_with_a_bad_limit_starts_nothing(tmp_path):
     assert not rig.alerts_file.exists()
 
 
+@pytest.mark.integration
 def test_down_needs_no_alert_file_and_no_limit(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("down", AGK_ALERT_ISSUE_TOKENS="lots")
@@ -392,6 +398,7 @@ def test_down_needs_no_alert_file_and_no_limit(tmp_path):
 
 @pytest.mark.skipif(subprocess.run(["sh", "-c", "docker compose version"], capture_output=True).returncode != 0,
                     reason="docker compose not installed")
+@pytest.mark.integration
 def test_docker_compose_reads_the_alert_settings(tmp_path):
     """`docker compose config` (no daemon): the defaults, and the values and the file of `board.py up`."""
     pw = tmp_path / "pw"

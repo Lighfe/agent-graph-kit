@@ -57,6 +57,7 @@ def project(tmp_path):
     return p
 
 
+@pytest.mark.integration
 def test_fresh_directory_copies_every_file(project, tmp_path):
     r = run(project, tmp_path)
     assert r.returncode == 0, r.stderr
@@ -74,6 +75,7 @@ def test_fresh_directory_copies_every_file(project, tmp_path):
     assert not (project / "scripts/qa-result.schema.json").exists()
 
 
+@pytest.mark.integration
 def test_no_overwrite_reports_a_diff_and_keeps_the_entry_out(project, tmp_path):
     (project / "docs").mkdir()
     (project / "docs/process.md").write_bytes(b"my own process\n")
@@ -90,6 +92,7 @@ def test_no_overwrite_reports_a_diff_and_keeps_the_entry_out(project, tmp_path):
     assert (project / "docs/team/pm.md").is_file() and (project / "AGENTS.md").is_file()
 
 
+@pytest.mark.integration
 def test_existing_lock_entry_stays_when_the_file_differs(project, tmp_path):
     run(project, tmp_path)
     (project / "docs/process.md").write_bytes(b"changed\n")
@@ -100,6 +103,7 @@ def test_existing_lock_entry_stays_when_the_file_differs(project, tmp_path):
     assert (project / "docs/process.md").read_bytes() == b"changed\n"
 
 
+@pytest.mark.integration
 def test_symlink_out_of_the_root_is_refused(project, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -113,6 +117,7 @@ def test_symlink_out_of_the_root_is_refused(project, tmp_path):
     assert "scripts/qa-codex" in files
 
 
+@pytest.mark.integration
 def test_missing_root_is_an_error_and_writes_nothing(tmp_path):
     missing = tmp_path / "nope"
     r = run(missing, tmp_path)
@@ -120,6 +125,7 @@ def test_missing_root_is_an_error_and_writes_nothing(tmp_path):
     assert not missing.exists()
 
 
+@pytest.mark.integration
 def test_lock_file_matches_the_files_and_a_second_run_changes_nothing(project, tmp_path):
     import hashlib
     run(project, tmp_path)
@@ -136,6 +142,7 @@ def test_lock_file_matches_the_files_and_a_second_run_changes_nothing(project, t
     assert (project / ".agent-graph-kit.lock").read_text() == lock_text
 
 
+@pytest.mark.integration
 def test_settings_file_is_created_with_the_permission_block(project, tmp_path):
     run(project, tmp_path)
     data = json.loads((project / ".claude/settings.json").read_text())
@@ -155,6 +162,7 @@ def write_settings(project, text):
     return f
 
 
+@pytest.mark.integration
 def test_existing_settings_with_only_enabled_plugins_gets_the_permissions(project, tmp_path):
     f = write_settings(project, json.dumps({"enabledPlugins": {"agk@x": True}, "model": "m"}))
     r = run(project, tmp_path)
@@ -165,6 +173,7 @@ def test_existing_settings_with_only_enabled_plugins_gets_the_permissions(projec
     assert "exists; not changed" not in r.stdout
 
 
+@pytest.mark.integration
 def test_existing_permissions_are_kept_in_order_without_duplicates(project, tmp_path):
     f = write_settings(project, json.dumps({"permissions": {
         "allow": ["Bash(ls)", ALLOW[1]], "ask": ["Bash(rm *)"], "defaultMode": "plan"}}))
@@ -175,6 +184,7 @@ def test_existing_permissions_are_kept_in_order_without_duplicates(project, tmp_
     assert perms["ask"] == ["Bash(rm *)"] and perms["defaultMode"] == "plan"
 
 
+@pytest.mark.integration
 def test_second_run_on_merged_settings_changes_nothing(project, tmp_path):
     f = write_settings(project, json.dumps({"enabledPlugins": {"a": True}}))
     run(project, tmp_path)
@@ -183,6 +193,7 @@ def test_second_run_on_merged_settings_changes_nothing(project, tmp_path):
     assert f.read_bytes() == first
 
 
+@pytest.mark.integration
 def test_invalid_json_settings_is_not_written_and_rules_are_printed(project, tmp_path):
     f = write_settings(project, "{not json")
     r = run(project, tmp_path)
@@ -192,6 +203,7 @@ def test_invalid_json_settings_is_not_written_and_rules_are_printed(project, tmp
         assert rule in r.stdout
 
 
+@pytest.mark.integration
 def test_symlinked_settings_is_not_written_and_rules_are_printed(project, tmp_path):
     (project / ".claude").mkdir()
     target = tmp_path / "elsewhere.json"
@@ -213,6 +225,7 @@ def status_line(out, label):
     return next(l for l in out.splitlines() if l.rstrip().endswith(label) and not l.startswith(" "))
 
 
+@pytest.mark.integration
 def test_manual_checks_all_ok(project, tmp_path):
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)
@@ -233,6 +246,7 @@ def run_trust_cmd(cmd, home):
                           env={"PATH": os.environ["PATH"], "HOME": str(home)})
 
 
+@pytest.mark.integration
 def test_manual_checks_missing(project, tmp_path):
     b = fake_bin(tmp_path, gh=False, uv=False, codex=False)
     r = run(project, tmp_path, bin_dir=b)
@@ -246,6 +260,7 @@ def test_manual_checks_missing(project, tmp_path):
     assert os.path.realpath(project) in trust_cmd(r.stdout)
 
 
+@pytest.mark.integration
 def test_codex_missing_program_is_missing(project, tmp_path):
     b = fake_bin(tmp_path)
     (b / "codex").unlink()
@@ -253,6 +268,7 @@ def test_codex_missing_program_is_missing(project, tmp_path):
     assert status_line(r.stdout, "Codex login").startswith("MISSING")
 
 
+@pytest.mark.integration
 def test_trust_entry_for_other_path_or_level_is_missing(project, tmp_path):
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)
@@ -262,6 +278,7 @@ def test_trust_entry_for_other_path_or_level_is_missing(project, tmp_path):
     assert status_line(r.stdout, "Codex trust entry").startswith("MISSING")
 
 
+@pytest.mark.integration
 def test_trust_entry_without_a_git_repo_says_git_init(tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
@@ -271,6 +288,7 @@ def test_trust_entry_without_a_git_repo_says_git_init(tmp_path):
     assert "git init" in r.stdout
 
 
+@pytest.mark.integration
 def test_auto_mode_entries_are_always_check_by_hand(project, tmp_path):
     home = tmp_path / "home"
     r = run(project, tmp_path, home=home)
@@ -280,6 +298,7 @@ def test_auto_mode_entries_are_always_check_by_hand(project, tmp_path):
     assert "scripts/qa-codex ROLE=qa ISSUE=<number>" in r.stdout
 
 
+@pytest.mark.integration
 def test_auto_mode_entries_print_as_four_paste_blocks(project, tmp_path):
     r = run(project, tmp_path)
     parts = r.stdout.split("```text\n")
@@ -366,6 +385,7 @@ def test_templates_are_checked_by_the_build(monkeypatch, tmp_path):
 GI_LINES = [".claude/settings.local.json", "__pycache__/"]
 
 
+@pytest.mark.integration
 def test_claude_md_is_written_and_listed_in_the_lock(project, tmp_path):
     run(project, tmp_path)
     assert (project / "CLAUDE.md").read_text() == "@AGENTS.md\n"
@@ -373,11 +393,13 @@ def test_claude_md_is_written_and_listed_in_the_lock(project, tmp_path):
     assert "CLAUDE.md" in json.loads((project / ".agent-graph-kit.lock").read_text())["files"]
 
 
+@pytest.mark.integration
 def test_gitignore_is_created_with_the_two_lines(project, tmp_path):
     run(project, tmp_path)
     assert (project / ".gitignore").read_text().splitlines() == GI_LINES
 
 
+@pytest.mark.integration
 def test_second_run_changes_neither_claude_md_nor_gitignore(project, tmp_path):
     run(project, tmp_path)
     snap = ((project / "CLAUDE.md").read_bytes(), (project / ".gitignore").read_bytes())
@@ -385,6 +407,7 @@ def test_second_run_changes_neither_claude_md_nor_gitignore(project, tmp_path):
     assert ((project / "CLAUDE.md").read_bytes(), (project / ".gitignore").read_bytes()) == snap
 
 
+@pytest.mark.integration
 def test_existing_claude_md_is_kept_and_a_diff_is_printed(project, tmp_path):
     (project / "CLAUDE.md").write_text("my own notes\n")
     r = run(project, tmp_path)
@@ -393,6 +416,7 @@ def test_existing_claude_md_is_kept_and_a_diff_is_printed(project, tmp_path):
     assert "CLAUDE.md" not in json.loads((project / ".agent-graph-kit.lock").read_text())["files"]
 
 
+@pytest.mark.integration
 def test_existing_gitignore_gets_only_the_missing_lines(project, tmp_path):
     (project / ".gitignore").write_text("node_modules/\n__pycache__/")
     run(project, tmp_path)
@@ -402,6 +426,7 @@ def test_existing_gitignore_gets_only_the_missing_lines(project, tmp_path):
     assert (project / ".gitignore").read_text() == "a\n.claude/settings.local.json\n__pycache__/\n"
 
 
+@pytest.mark.integration
 def test_gitignore_line_with_leading_space_is_not_the_required_line(project, tmp_path):
     (project / ".gitignore").write_text(" __pycache__/\n" + GI_LINES[0] + "\n")
     run(project, tmp_path)
@@ -433,6 +458,7 @@ def test_route_readme_has_a_runnable_repo_creation_and_no_kit_repo_lines():
     assert "manual steps of" not in route and "## Install the kit as a plugin" not in README
 
 
+@pytest.mark.integration
 def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
     out = run(project, tmp_path).stdout
     skill = (SETUP.parent / "SKILL.md").read_text()
@@ -448,6 +474,7 @@ def test_skill_shows_the_same_steps_and_blocks_as_the_output(project, tmp_path):
         assert f"```text\n{e}\n```" in skill
 
 
+@pytest.mark.integration
 def test_trust_command_makes_the_check_ok_and_toml_valid(project, tmp_path):
     import tomllib
     home = tmp_path / "home"
@@ -461,6 +488,7 @@ def test_trust_command_makes_the_check_ok_and_toml_valid(project, tmp_path):
     assert "```bash" not in again.stdout
 
 
+@pytest.mark.integration
 def test_trust_command_with_file_without_final_newline(project, tmp_path):
     import tomllib
     home = tmp_path / "home"
@@ -477,6 +505,7 @@ def test_trust_command_with_file_without_final_newline(project, tmp_path):
 
 
 @pytest.mark.parametrize("dirname", ["my project", "it's here", 'qu"ote'])
+@pytest.mark.integration
 def test_trust_command_with_odd_git_root(tmp_path, dirname):
     import tomllib
     proj = tmp_path / dirname
@@ -495,6 +524,7 @@ def test_skill_and_readme_describe_the_trust_command():
     assert "prints one command" in README and "project folder only" in README
 
 
+@pytest.mark.integration
 def test_generated_agents_md_makes_no_false_claim_about_agents_or_skills_link(project, tmp_path):
     r = run(project, tmp_path)
     assert r.returncode == 0, r.stderr
@@ -526,6 +556,7 @@ def gh_printing(tmp_path, text):
     return b
 
 
+@pytest.mark.integration
 def test_setup_prints_otel_blocks(project, tmp_path):
     # issue #324: one user-level block for all projects; it names no project and no plugin path
     import tomllib
@@ -544,6 +575,7 @@ def test_setup_prints_otel_blocks(project, tmp_path):
     assert "OTEL" not in "".join(p.read_text() for p in project.rglob("*.json"))  # nothing is written for it
 
 
+@pytest.mark.integration
 def test_setup_names_the_user_settings_and_the_claude_code_rule(project, tmp_path):
     r = run(project, tmp_path, bin_dir=gh_printing(tmp_path, "Synthetic/demo"))
     text = r.stdout[r.stdout.index("Export settings"):]
@@ -558,6 +590,7 @@ def test_setup_names_the_user_settings_and_the_claude_code_rule(project, tmp_pat
     assert "merge into the `env` of the" not in r.stdout
 
 
+@pytest.mark.integration
 def test_setup_same_output_without_owner_name(project, tmp_path):
     r = run(project, tmp_path, bin_dir=fake_bin(tmp_path, gh=False))
     assert r.returncode == 0, r.stderr
@@ -565,6 +598,7 @@ def test_setup_same_output_without_owner_name(project, tmp_path):
     assert "<owner/name>" not in r.stdout and "OTEL_LOG_USER_PROMPTS" not in r.stdout
 
 
+@pytest.mark.integration
 def test_setup_helper_path_follows_xdg_state_home(project, tmp_path):
     state = tmp_path / "xdg-state"
     r = run(project, tmp_path, env={"XDG_STATE_HOME": str(state)})
@@ -620,6 +654,7 @@ def test_superpowers_installed_four_cases(tmp_path):
     assert setup_mod.superpowers_installed(home) is True
 
 
+@pytest.mark.integration
 def test_setup_prints_the_superpowers_line_in_each_case(project, tmp_path):
     home = tmp_path / "home"
     r = run(project, tmp_path, home=home)

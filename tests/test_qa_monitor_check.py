@@ -167,6 +167,7 @@ def cleaned_up(e):
 EMPTY = {"containers": [], "volumes": []}
 
 
+@pytest.mark.integration
 def test_success(env, stack):
     commit_monitor(env)
     stack()
@@ -179,6 +180,7 @@ def test_success(env, stack):
     assert sorted(p.name for p in folder.iterdir()) == ["cleanup.json", "summary.json"]
 
 
+@pytest.mark.integration
 def test_isolation_and_every_docker_call_carries_the_project(env, stack):
     commit_monitor(env)
     s = stack()
@@ -200,6 +202,7 @@ def test_isolation_and_every_docker_call_carries_the_project(env, stack):
     assert not (env.tmp / "out" / "state").exists()  # the state folder with the password is removed
 
 
+@pytest.mark.integration
 def test_failed_step_is_a_result_and_the_cleanup_runs(env, stack):
     commit_monitor(env)
     stack(drop_untagged=False)  # the Collector filter lets the untagged record pass
@@ -211,6 +214,7 @@ def test_failed_step_is_a_result_and_the_cleanup_runs(env, stack):
     assert cleaned_up(env) and cleanup == EMPTY
 
 
+@pytest.mark.integration
 def test_failed_up_skips_the_rest_and_cleans_up(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -224,6 +228,7 @@ def test_failed_up_skips_the_rest_and_cleans_up(env, stack, monkeypatch):
     assert cleanup == {"containers": ["agk-qa-left-over-1"], "volumes": []}
 
 
+@pytest.mark.integration
 def test_occupied_port_fails_up_and_names_the_port(env, monkeypatch):
     commit_monitor(env)
     ports = {var: free_port() for var in qa.MONITOR_PORT_VARS}
@@ -241,6 +246,7 @@ def test_occupied_port_fails_up_and_names_the_port(env, monkeypatch):
     assert cleaned_up(env) and cleanup == EMPTY
 
 
+@pytest.mark.integration
 def test_timeout_stops_the_step_and_cleans_up(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -256,6 +262,7 @@ def test_the_time_limit_is_600_seconds():
     assert qa.MONITOR_TIMEOUT_S == 600
 
 
+@pytest.mark.integration
 def test_error_of_the_launcher_still_cleans_up(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -269,6 +276,7 @@ def test_error_of_the_launcher_still_cleans_up(env, stack, monkeypatch):
     assert cleaned_up(env) and cleanup == EMPTY
 
 
+@pytest.mark.integration
 def test_error_before_the_first_step_still_cleans_up(env, monkeypatch):
     commit_monitor(env)
 
@@ -280,6 +288,7 @@ def test_error_before_the_first_step_still_cleans_up(env, monkeypatch):
     assert cleanup == EMPTY
 
 
+@pytest.mark.integration
 def test_no_docker_skips_every_step(env, monkeypatch):
     commit_monitor(env)
     (env.tmp / "empty").mkdir()
@@ -290,6 +299,7 @@ def test_no_docker_skips_every_step(env, monkeypatch):
     assert cleanup == EMPTY
 
 
+@pytest.mark.integration
 def test_failing_docker_info_skips_every_step(env, monkeypatch):
     commit_monitor(env)
     monkeypatch.setenv("FAKE_DOCKER_INFO_FAIL", "1")
@@ -297,6 +307,7 @@ def test_failing_docker_info_skips_every_step(env, monkeypatch):
     assert {s["reason"] for s in steps.values()} == {"no docker"}
 
 
+@pytest.mark.integration
 def test_no_compose_file_skips_every_step_and_starts_no_docker(env):
     commit_monitor(env, compose=False)
     steps, _, _ = run_check(env)
@@ -304,6 +315,7 @@ def test_no_compose_file_skips_every_step_and_starts_no_docker(env):
     assert docker_calls(env) == []
 
 
+@pytest.mark.integration
 def test_no_secret_in_any_file(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -316,6 +328,7 @@ def test_no_secret_in_any_file(env, stack, monkeypatch):
     assert steps["board.py up"]["log"] and len(cleanup["containers"]) == 1
 
 
+@pytest.mark.integration
 def test_password_at_the_cut_boundary_is_redacted_before_the_cut(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -345,6 +358,7 @@ def _folder_text(folder):
 
 
 @pytest.mark.parametrize("offset", [290, 296, 299, 470, 485, 490, 493])
+@pytest.mark.integration
 def test_password_at_the_cut_of_a_log_line_or_the_reason(env, stack, monkeypatch, offset):
     """The password starts `offset` characters into the output: the log lines are cut to 300, the
     reason to 500. Cutting before the redaction leaves a prefix of the password."""
@@ -361,6 +375,7 @@ def test_password_at_the_cut_of_a_log_line_or_the_reason(env, stack, monkeypatch
 
 
 @pytest.mark.parametrize("offset", [440, 450, 455])
+@pytest.mark.integration
 def test_password_at_the_cut_of_the_port_reason(env, stack, monkeypatch, offset):
     commit_monitor(env)
     stack()
@@ -379,6 +394,7 @@ def test_password_at_the_cut_of_the_port_reason(env, stack, monkeypatch, offset)
 
 
 @pytest.mark.parametrize("offset", [480, 490, 495])
+@pytest.mark.integration
 def test_password_at_the_cut_of_a_launcher_error_reason(env, stack, monkeypatch, offset):
     commit_monitor(env)
     stack()
@@ -393,6 +409,7 @@ def test_password_at_the_cut_of_a_launcher_error_reason(env, stack, monkeypatch,
 
 
 @pytest.mark.parametrize("offset", [480, 490, 495])
+@pytest.mark.integration
 def test_password_at_the_cut_of_a_reason_and_log_of_a_later_step(env, stack, monkeypatch, offset):
     """A step after `board.py up` fails with a long reason and a long log that hold the password."""
     commit_monitor(env)
@@ -406,6 +423,7 @@ def test_password_at_the_cut_of_a_reason_and_log_of_a_later_step(env, stack, mon
     assert PASSWORD[:4] not in _folder_text(folder)
 
 
+@pytest.mark.integration
 def test_log_is_cut_to_the_last_20_lines(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -416,6 +434,7 @@ def test_log_is_cut_to_the_last_20_lines(env, stack, monkeypatch):
     assert len(log) == 20 and log[0] == "line 80" and log[-1] == "line 99"
 
 
+@pytest.mark.integration
 def test_main_goes_on_after_a_failed_step_and_the_prompt_names_the_files(env, stack, monkeypatch):
     commit_monitor(env)
     stack()
@@ -436,6 +455,7 @@ def test_main_goes_on_after_a_failed_step_and_the_prompt_names_the_files(env, st
     assert "do not mark a criterion `invalid`" in prompt
 
 
+@pytest.mark.integration
 def test_main_with_no_compose_file_runs_no_docker(env):
     comment, _ = env.run(["ok"])
     assert comment.startswith("## QA: PASS")

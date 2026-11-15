@@ -69,6 +69,7 @@ def run_helper(helper, cwd, interpreter_args=()):
     ("foreign", {}),   # a git repo that is not in the project list
     ("plain", {}),     # no git repo
 ])
+@pytest.mark.integration
 def test_session_folder_gives_the_project_or_nothing(world, where, want):
     name, *sub = where.split("/")
     cwd = world[name].joinpath(*sub)
@@ -79,6 +80,7 @@ def test_session_folder_gives_the_project_or_nothing(world, where, want):
     assert seconds < 2
 
 
+@pytest.mark.integration
 def test_a_folder_that_only_starts_with_the_repo_name_is_outside(world):
     twin = world["kit"].parent / "kit-copy"
     twin.mkdir()
@@ -107,6 +109,7 @@ def test_bad_entries_are_skipped():
 
 
 @pytest.mark.parametrize("content", [None, "", "not json", "{}", '{"project": "a/b"}', "[1, 2]"])
+@pytest.mark.integration
 def test_a_missing_or_broken_list_gives_an_empty_object_and_exit_0(world, content):
     path = world["state"] / "monitor-projects.json"
     if content is None:
@@ -119,6 +122,7 @@ def test_a_missing_or_broken_list_gives_an_empty_object_and_exit_0(world, conten
     assert seconds < 2
 
 
+@pytest.mark.integration
 def test_the_list_next_to_the_helper_is_read_not_the_one_of_the_environment(world, tmp_path):
     # XDG_STATE_HOME of the session does not matter: the helper reads the list in its own folder.
     env_state = tmp_path / "other-state" / "agent-graph-kit"
@@ -129,6 +133,7 @@ def test_the_list_next_to_the_helper_is_read_not_the_one_of_the_environment(worl
     assert json.loads(res.stdout) == {}
 
 
+@pytest.mark.integration
 def test_output_is_a_json_object_of_strings(world):
     # Claude Code refuses empty output, a non-object and a non-string value (otelHeadersHelper rules).
     for where in ("kit", "plain"):
@@ -154,6 +159,7 @@ def test_the_helper_imports_nothing_that_reaches_the_network_or_starts_a_process
         assert word not in text.split('"""', 2)[2], word
 
 
+@pytest.mark.integration
 def test_the_helper_runs_with_sockets_and_processes_blocked(world, tmp_path):
     # A sitecustomize that makes every socket and process start raise: the helper still prints its answer.
     guard = tmp_path / "guard"

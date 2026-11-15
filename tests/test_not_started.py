@@ -233,6 +233,7 @@ def run_main(stdin_text):
     return code, stdout.getvalue()
 
 
+@pytest.mark.integration
 def test_5_main_with_4a_posts_and_prints_nothing(env):
     code, out = run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7")))
     assert (code, out) == (0, "")
@@ -253,6 +254,7 @@ def test_4g_main_with_bad_stdin_prints_nothing(env, stdin_text):
 
 
 @pytest.mark.parametrize("fail", ["FAKE_GH_VIEW_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_GIT_FAIL"])
+@pytest.mark.integration
 def test_4g_main_with_failing_io_prints_nothing(env, monkeypatch, fail):
     monkeypatch.setenv(fail, "1")
     assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
@@ -274,6 +276,7 @@ def write_raw_comments(path, *comments):
 
 
 @pytest.mark.parametrize("association", ["NONE", "CONTRIBUTOR", "COLLABORATOR"])
+@pytest.mark.integration
 def test_stranger_newer_receipt_does_not_stop_the_not_started_comment(env, association):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]),
                        {"body": launch("pm", call=H), "authorAssociation": "OWNER"},
@@ -283,12 +286,14 @@ def test_stranger_newer_receipt_does_not_stop_the_not_started_comment(env, assoc
         {"issue": 7, "body": f"## Launch not started: pm (attempt 1)\nCall: {H}\nReason: {NO_VERDICT}"}]
 
 
+@pytest.mark.integration
 def test_owner_newer_receipt_stops_the_not_started_comment(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm", call=H), launch("pm", 2, call=OTHER))  # control
     assert run_main(json.dumps(agent("pm", "ROLE=pm ISSUE=7"))) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_missing_author_data_posts_nothing(env, capsys):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]),
                        {"body": launch("pm", call=H), "authorAssociation": "OWNER"}, {"body": "note"})
@@ -312,11 +317,13 @@ def run_script(stdin_text, env, **extra):
     return p.returncode, p.stdout
 
 
+@pytest.mark.integration
 def test_subprocess_posts_and_prints_nothing(env):
     assert run_script(json.dumps(agent("pm", "ROLE=pm ISSUE=7")), env) == (0, "")
     assert len(lines(env["FAKE_GH_LOG"])) == 1
 
 
+@pytest.mark.integration
 def test_subprocess_holds_the_guard_lock(env):
     import fcntl
     import guard
@@ -439,6 +446,7 @@ def test_2_evidence_failure_does_not_stop_the_not_started_comment(tmp_path):
     assert len(fake.posts) == 1
 
 
+@pytest.mark.integration
 def test_main_writes_evidence_into_the_git_dir(env):
     code, out = run_main(json.dumps(sub_event("Classifier unavailable", agent_id="synthetic1")))
     assert (code, out) == (0, "")

@@ -7,6 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / ".claude" / "hooks"), str(ROOT / "scripts"), str(ROOT / "tests")]
 
 
+def pytest_configure(config):
+    # Rule (issue #328): a test that starts a subprocess during its run (directly, through a helper or a
+    # fixture) carries this marker; a test that runs fully in-process or only reads a file stays unmarked.
+    config.addinivalue_line("markers", "integration: runs a real tool or a whole flow")
+
+
 @pytest.fixture(autouse=True)
 def _steps_file(tmp_path_factory, monkeypatch):
     """No test writes step rows to the real state dir (issue #263)."""

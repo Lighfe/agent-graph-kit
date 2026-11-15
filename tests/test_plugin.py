@@ -67,6 +67,7 @@ def test_agents_use_no_front_matter_key_that_plugins_ignore():
         assert not keys & {"permissionMode", "hooks", "mcpServers"}, p.name
 
 
+@pytest.mark.integration
 def test_plugin_guard_accepts_the_namespaced_agent_name(tmp_path):
     """The plugin's guard judges `<plugin name>:pm` like `pm` (a launch without a launch line is denied)."""
     name = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())["name"]
@@ -84,6 +85,7 @@ def test_plugin_guard_accepts_the_namespaced_agent_name(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="the claude command is not available: plugin validate did not run")
+@pytest.mark.integration
 def test_claude_plugin_validate_strict_passes():
     # No telemetry: the run needs no network beyond localhost (the QA sandbox blocks telemetry hosts).
     env = {**os.environ, "DISABLE_TELEMETRY": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
@@ -101,6 +103,7 @@ def test_marketplace_lists_the_plugin_and_the_readme_names_it():
 
 
 @pytest.mark.skipif(shutil.which("claude") is None, reason="the claude command is not available: marketplace validate did not run")
+@pytest.mark.integration
 def test_claude_plugin_validate_marketplace_passes():
     env = {**os.environ, "DISABLE_TELEMETRY": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
     p = subprocess.run(["claude", "plugin", "validate", str(ROOT)], capture_output=True,

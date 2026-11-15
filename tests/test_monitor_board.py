@@ -193,6 +193,7 @@ def up_call(rig):
     return call
 
 
+@pytest.mark.integration
 def test_up_without_docker_names_docker_and_starts_nothing(tmp_path):
     rig = Rig(tmp_path, docker=False)
     res = rig.run("up")
@@ -202,6 +203,7 @@ def test_up_without_docker_names_docker_and_starts_nothing(tmp_path):
     assert not rig.projects_file.exists()
 
 
+@pytest.mark.integration
 def test_up_when_docker_info_fails_starts_nothing(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up", FAKE_DOCKER_INFO_EXIT="1")
@@ -211,6 +213,7 @@ def test_up_when_docker_info_fails_starts_nothing(tmp_path):
     assert not rig.password_file.exists()
 
 
+@pytest.mark.integration
 def test_up_starts_the_stack_in_the_background_and_exits_0(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -222,6 +225,7 @@ def test_up_starts_the_stack_in_the_background_and_exits_0(tmp_path):
     assert "127.0.0.1:4317" in res.stdout and "http://127.0.0.1:4318" in res.stdout
 
 
+@pytest.mark.integration
 def test_up_when_a_port_is_in_use_names_it_and_cleans_up(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up", FAKE_DOCKER_UP_EXIT="1", AGK_GRAFANA_PORT="3999")
@@ -230,6 +234,7 @@ def test_up_when_a_port_is_in_use_names_it_and_cleans_up(tmp_path):
     assert rig.compose_calls()[-1][-1] == "down"
 
 
+@pytest.mark.integration
 def test_up_writes_the_project_list_once_with_the_current_project(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -244,6 +249,7 @@ def test_up_writes_the_project_list_once_with_the_current_project(tmp_path):
     assert rig.calls()[-1]["env"]["AGK_PROJECT_PATTERN"] == "^(a/b[.]c|d/e)$"
 
 
+@pytest.mark.integration
 def test_up_without_a_project_list_and_without_gh_starts_nothing(tmp_path):
     rig = Rig(tmp_path, gh_fails=True)
     res = rig.run("up")
@@ -253,6 +259,7 @@ def test_up_without_a_project_list_and_without_gh_starts_nothing(tmp_path):
     assert not rig.projects_file.exists()
 
 
+@pytest.mark.integration
 def test_up_with_an_empty_project_list_starts_nothing(tmp_path):
     rig = Rig(tmp_path)
     rig.state.mkdir(parents=True)
@@ -263,6 +270,7 @@ def test_up_with_an_empty_project_list_starts_nothing(tmp_path):
     assert not rig.compose_calls()
 
 
+@pytest.mark.integration
 def test_up_passes_the_ports_and_the_host_uid(tmp_path):
     rig = Rig(tmp_path)
     rig.run("up", AGK_LOKI_PORT="3101", AGK_OTLP_GRPC_PORT="14317")
@@ -274,6 +282,7 @@ def test_up_passes_the_ports_and_the_host_uid(tmp_path):
     assert env["AGK_GRAFANA_ADMIN_FILE"] == str(rig.password_file.resolve())
 
 
+@pytest.mark.integration
 def test_password_file_is_private_reused_and_never_printed(tmp_path):
     rig = Rig(tmp_path)
     first = rig.run("up")
@@ -294,6 +303,7 @@ def test_board_py_has_no_loader_or_store_code():
         assert word not in text.lower(), word
 
 
+@pytest.mark.integration
 def test_down_exits_0_when_the_stack_is_not_running(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("down")
@@ -303,6 +313,7 @@ def test_down_exits_0_when_the_stack_is_not_running(tmp_path):
 
 
 @pytest.mark.parametrize("docker", [False, True])
+@pytest.mark.integration
 def test_down_exits_0_without_docker(tmp_path, docker):
     rig = Rig(tmp_path, docker=docker)
     res = rig.run("down", FAKE_DOCKER_INFO_EXIT="1")
@@ -310,6 +321,7 @@ def test_down_exits_0_without_docker(tmp_path, docker):
     assert not rig.compose_calls()
 
 
+@pytest.mark.integration
 def test_up_starts_facts_after_the_containers_and_down_stops_it(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -330,6 +342,7 @@ def test_up_starts_facts_after_the_containers_and_down_stops_it(tmp_path):
         raise AssertionError("facts.py still runs after down")
 
 
+@pytest.mark.integration
 def test_up_with_a_used_facts_port_starts_nothing(tmp_path):
     import socket
     rig = Rig(tmp_path)
@@ -344,6 +357,7 @@ def test_up_with_a_used_facts_port_starts_nothing(tmp_path):
     assert not rig.facts_pid_file.exists()
 
 
+@pytest.mark.integration
 def test_down_exits_0_when_facts_is_not_running(tmp_path):
     rig = Rig(tmp_path)
     assert rig.run("down").returncode == 0
@@ -400,6 +414,7 @@ def test_facts_command_passes_the_host():
     assert cmd[-2:] == ["--host", "172.19.0.1"]
 
 
+@pytest.mark.integration
 def test_up_passes_the_gateway_to_prometheus_and_facts(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -413,6 +428,7 @@ def test_up_passes_the_gateway_to_prometheus_and_facts(tmp_path):
 
 
 @pytest.mark.parametrize("text", ["", "not json", inspect_text("fd00::1"), inspect_text("0.0.0.0")])
+@pytest.mark.integration
 def test_up_without_an_address_starts_no_facts_and_goes_on(tmp_path, text):
     rig = Rig(tmp_path)
     res = rig.run("up", FAKE_DOCKER_NETWORK=text)
@@ -425,6 +441,7 @@ def test_up_without_an_address_starts_no_facts_and_goes_on(tmp_path, text):
 
 # --- the otelHeadersHelper (issue #324) ----------------------------------------------------------
 
+@pytest.mark.integration
 def test_up_installs_the_headers_helper_next_to_the_project_list(tmp_path):
     rig = Rig(tmp_path)
     res = rig.run("up")
@@ -448,6 +465,7 @@ def test_up_installs_the_headers_helper_next_to_the_project_list(tmp_path):
         assert json.loads(out.stdout) == {"x-agk-project": "own/demo-project"}
 
 
+@pytest.mark.integration
 def test_up_without_docker_installs_no_helper(tmp_path):
     rig = Rig(tmp_path, docker=False)
     rig.run("up")

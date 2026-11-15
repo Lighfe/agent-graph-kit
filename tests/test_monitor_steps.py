@@ -255,6 +255,7 @@ def test_stage_from_run_record_line(tmp_path, fake_gh):
     assert gh_calls(calls) == []
 
 
+@pytest.mark.integration
 def test_stage_from_gh_parent_one_call_per_issue(tmp_path, fake_gh):
     calls, api = fake_gh
     api.write_text(json.dumps({"parent": {"7": {"number": 21, "title": "Stage"}}}))
@@ -267,6 +268,7 @@ def test_stage_from_gh_parent_one_call_per_issue(tmp_path, fake_gh):
     assert gh_calls(calls) == [["api", "repos/{owner}/{repo}/issues/7/parent"]]
 
 
+@pytest.mark.integration
 def test_stage_null_when_gh_fails(tmp_path, fake_gh, monkeypatch):
     calls, _ = fake_gh
     monkeypatch.setenv("FAKE_GH_FAIL", "1")
@@ -277,6 +279,7 @@ def test_stage_null_when_gh_fails(tmp_path, fake_gh, monkeypatch):
     assert len(gh_calls(calls)) == 1
 
 
+@pytest.mark.integration
 def test_stage_null_when_issue_has_no_parent(tmp_path, fake_gh):
     two_launches(tmp_path)
     assert collect(tmp_path / "tr") == 0
@@ -403,6 +406,7 @@ def test_conftest_keeps_steps_out_of_real_state_dir():
     assert os.environ.get("STEPS_FILE") and Path(os.environ["STEPS_FILE"]) != real
 
 
+@pytest.mark.integration
 def test_cli_runs_as_script(tmp_path):
     two_launches(tmp_path)
     res = subprocess.run([sys.executable, str(SRC), "collect", "--project", "o/r", "--transcripts",
@@ -634,6 +638,7 @@ def test_codex_rows_with_transcripts_and_default_folder(tmp_path, monkeypatch):
     assert roles.count("pm") == 1 and roles.count(CODEX_ROLE) == 5
 
 
+@pytest.mark.integration
 def test_codex_stage_from_gh_parent(tmp_path, fake_gh):
     calls, api = fake_gh
     api.write_text(json.dumps({"parent": {"12": {"number": 40}}}))

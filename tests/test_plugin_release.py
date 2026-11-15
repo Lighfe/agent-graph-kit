@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import build_plugin
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +73,7 @@ def test_release_status_follows_stored_file(tmp_path):
     assert build_plugin.release_status(plugin, release) == "released"
 
 
+@pytest.mark.integration
 def test_commands_run_on_the_repo():
     """Both commands exit 0. The status may be `unreleased changes` between two bumps: no test fails then."""
     script = str(ROOT / "scripts" / "build_plugin.py")
@@ -132,6 +135,7 @@ def _state(repo):
     return ((repo / "plugin" / MANIFEST).read_bytes(), (repo / "scripts" / "plugin-release.json").read_bytes())
 
 
+@pytest.mark.integration
 def test_bump_of_an_unreleased_change(tmp_path):
     repo, run, version = _repo_copy(tmp_path)
     with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
@@ -150,6 +154,7 @@ def test_bump_of_an_unreleased_change(tmp_path):
     assert run("--check").returncode == 0
 
 
+@pytest.mark.integration
 def test_no_bump_when_released(tmp_path):
     repo, _, _ = _repo_copy(tmp_path)
     before = _state(repo)
@@ -158,6 +163,7 @@ def test_no_bump_when_released(tmp_path):
     assert _state(repo) == before
 
 
+@pytest.mark.integration
 def test_failing_step_leaves_files_as_they_were(tmp_path):
     repo, run, _ = _repo_copy(tmp_path)
     with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
@@ -182,6 +188,7 @@ def _bump_with_late_failure(repo):
     return subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True)
 
 
+@pytest.mark.integration
 def test_late_failure_restores_both_files(tmp_path):
     repo, run, _ = _repo_copy(tmp_path)
     with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
@@ -193,6 +200,7 @@ def test_late_failure_restores_both_files(tmp_path):
     assert _state(repo) == before
 
 
+@pytest.mark.integration
 def test_late_failure_removes_a_release_file_the_run_created(tmp_path):
     repo, run, _ = _repo_copy(tmp_path)
     with open(repo / ".claude" / "hooks" / "guard.py", "a") as f:
@@ -207,6 +215,7 @@ def test_late_failure_removes_a_release_file_the_run_created(tmp_path):
     assert (repo / "plugin" / MANIFEST).read_bytes() == manifest_before
 
 
+@pytest.mark.integration
 def test_source_change_between_bumps_is_unreleased_and_tests_pass(tmp_path):
     """A plugin source changes and `build_plugin.py` copies it; the stored hash stays. The status is
     `unreleased changes`, and the copy-match test and the version-match test both pass.

@@ -737,6 +737,7 @@ def test_comment_body_file_in_a_close_folder_passes(tmp_path):
     assert decide_nothing_read(comment_event(f"gh issue comment 5 --body-file {path}")) is None
 
 
+@pytest.mark.integration
 def test_comment_command_makes_no_gh_or_git_call(tmp_path, env):
     path = body_file(tmp_path, "## PM: GROOMED\n")
     code, out = run_guard(bash(f"gh issue comment 5 --body-file {path}"), env, FAKE_GH_FAIL="1")
@@ -908,12 +909,14 @@ def deny_reason(out):
     return hso["permissionDecisionReason"]
 
 
+@pytest.mark.integration
 def test_allowed_launch_posts_one_comment_and_prints_nothing(env):
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 1)\nAgent: pm"}]
 
 
+@pytest.mark.integration
 def test_allowed_launch_with_tool_use_id_posts_call_line(env):
     import hashlib
     code, out = run_guard({**agent("pm", "ROLE=pm ISSUE=7"), "tool_use_id": "toolu_synthetic_1"}, env)
@@ -922,6 +925,7 @@ def test_allowed_launch_with_tool_use_id_posts_call_line(env):
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": f"## Launch: pm (attempt 1)\nAgent: pm\nCall: {h}"}]
 
 
+@pytest.mark.integration
 def test_allowed_close_prints_nothing_and_posts_nothing(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
     code, out = run_guard(bash("gh issue close 7 --reason completed"), env)
@@ -929,6 +933,7 @@ def test_allowed_close_prints_nothing_and_posts_nothing(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_allowed_send_message_posts_continued_comment(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm"), "## PM: GROOMED", launch("engineer"),
                 "## Engineer: DONE\nCommits: a..b", launch("qa"), "## QA: FAIL")
@@ -940,24 +945,28 @@ def test_allowed_send_message_posts_continued_comment(env):
 
 @pytest.mark.parametrize("event", [agent("Explore", "ROLE=pm ISSUE=7"), bash("ls -la"), bash("cat .claude/x"),
                                    {"tool_name": "Agent", "tool_input": {"prompt": "ROLE=pm ISSUE=7"}}])
+@pytest.mark.integration
 def test_unguarded_call_makes_no_gh_call(env, event):
     code, out = run_guard(event, env)
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_CALLS"]) == []
 
 
+@pytest.mark.integration
 def test_g8_makes_no_gh_call(env):
     code, out = run_guard(bash("cp x .claude/settings.json"), env)
     assert code == 0 and deny_reason(out).startswith("G8:")
     assert lines(env["FAKE_GH_CALLS"]) == []
 
 
+@pytest.mark.integration
 def test_check_deny_names_the_check(env):
     code, out = run_guard(agent("software-engineer", "ROLE=engineer ISSUE=7"), env)
     assert code == 0 and deny_reason(out).startswith("G3:")
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_null_comments_deny_with_guard_error_and_post_nothing(env):
     data = json.loads(Path(env["FAKE_GH_ISSUE"]).read_text())
     data["comments"] = None
@@ -969,21 +978,25 @@ def test_null_comments_deny_with_guard_error_and_post_nothing(env):
 
 @pytest.mark.parametrize("extra", [{"FAKE_GH_FAIL": "1"}, {"FAKE_GIT_FAIL": "1"}, {"FAKE_GIT_DIRTY": "1"},
                                    {"FAKE_GH_COMMENT_FAIL": "1"}])
+@pytest.mark.integration
 def test_failures_deny(env, extra):
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, **extra)
     assert code == 0 and deny_reason(out)
 
 
+@pytest.mark.integration
 def test_failing_gh_on_close_denies(env):
     code, out = run_guard(bash("gh issue close 5"), env, FAKE_GH_FAIL="1")
     assert code == 0 and "gh" in deny_reason(out)
 
 
+@pytest.mark.integration
 def test_failing_comment_post_is_named(env):
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GH_COMMENT_FAIL="1")
     assert "gh issue comment" in deny_reason(out)
 
 
+@pytest.mark.integration
 def test_gh_not_on_path_denies(env, tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -995,11 +1008,13 @@ def test_gh_not_on_path_denies(env, tmp_path):
 
 
 @pytest.mark.parametrize("stdin", ["{", "", "[]", '"x"', "5", "null"])
+@pytest.mark.integration
 def test_broken_or_non_object_stdin_denies(env, stdin):
     code, out = run_guard(None, env, stdin=stdin)
     assert code == 0 and deny_reason(out)
 
 
+@pytest.mark.integration
 def test_multi_line_stderr_is_cut_to_its_first_line(env):
     token = "SYNTHETIC_TOKEN_0123456789"
     first = "e" * 300
@@ -1010,6 +1025,7 @@ def test_multi_line_stderr_is_cut_to_its_first_line(env):
     assert "e" * 200 in reason and "e" * 201 not in reason
 
 
+@pytest.mark.integration
 def test_deadline_denies_when_gh_hangs(env):
     start = time.monotonic()
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, GUARD_DEADLINE="2", FAKE_GH_SLEEP="30")
@@ -1018,6 +1034,7 @@ def test_deadline_denies_when_gh_hangs(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_deadline_denies_when_lock_is_held(env):
     lock_path = Path(env["FAKE_GIT_DIR"]) / guard.LOCK_NAME
     with open(lock_path, "w") as f:
@@ -1031,11 +1048,13 @@ def test_deadline_denies_when_lock_is_held(env):
 
 
 @pytest.mark.parametrize("value", ["abc", "0", "-1"])
+@pytest.mark.integration
 def test_invalid_deadline_denies(env, value):
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, GUARD_DEADLINE=value)
     assert code == 0 and deny_reason(out)
 
 
+@pytest.mark.integration
 def test_lock_serializes_two_launches_on_the_same_issue(env):
     # One PM miss first: the first guard allows the one relaunch, the second guard then sees two
     # misses in a row and denies (issue #132). Without the lock both would see one miss.
@@ -1058,11 +1077,13 @@ def test_lock_serializes_two_launches_on_the_same_issue(env):
     assert reason.startswith("G1:") and "pending" in reason
 
 
+@pytest.mark.integration
 def test_lock_file_is_in_the_git_dir(env):
     run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
     assert (Path(env["FAKE_GIT_DIR"]) / guard.LOCK_NAME).exists()
 
 
+@pytest.mark.integration
 def test_internal_error_denies_in_process(env, monkeypatch):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -1078,6 +1099,7 @@ def test_internal_error_denies_in_process(env, monkeypatch):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_main_allowed_in_process_prints_nothing(env, monkeypatch):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -1100,6 +1122,7 @@ def test_guard_script_has_pep723_header_and_stdlib_only():
 @pytest.mark.parametrize("cmd", ["bash -c 'gh issue close 5'", "gh  issue close 5", "/usr/bin/gh issue close 5",
                                  "scripts/qa-codex ROLE=qa ISSUE=5 &", "gh issue close 5 && ls",
                                  "x=(a)#; gh issue close 5", "gh {fd}>/dev/null issue close 5"])
+@pytest.mark.integration
 def test_triggered_command_without_form_denies_before_any_gh_call(env, cmd):
     code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1", FAKE_GIT_FAIL="1")
     assert code == 0 and deny_reason(out).startswith("G1:")
@@ -1108,12 +1131,14 @@ def test_triggered_command_without_form_denies_before_any_gh_call(env, cmd):
 
 @pytest.mark.parametrize("cmd", ["ls", "gh issue view 5 --comments", "gh issue list --state closed",
                                  "cat scripts/qa-codex", HEREDOC_BODY])
+@pytest.mark.integration
 def test_command_without_trigger_prints_nothing_and_makes_no_gh_call(env, cmd):
     code, out = run_guard(bash(cmd), env, FAKE_GH_FAIL="1", FAKE_GIT_FAIL="1")
     assert (code, out) == (0, "")
     assert lines(env["FAKE_GH_CALLS"]) == []
 
 
+@pytest.mark.integration
 def test_allowed_qa_codex_in_the_background_posts_its_launch_comment(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm"), "## PM: GROOMED", launch("engineer"),
                 "## Engineer: DONE\nCommits: a..b")
@@ -1150,6 +1175,7 @@ def test_hidden_close_is_denied(cmd):
 
 @pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
 @pytest.mark.parametrize("cmd", [*HIDDEN_CLOSE, *READ_AS_BASH, *KNOWN_LIMIT_PASS[:2]])
+@pytest.mark.integration
 def test_bash_runs_the_hidden_close(cmd, tmp_path):
     """Parity check: the cases above are real. bash, with the fake gh first on PATH, runs `gh issue close`."""
     calls = tmp_path / "calls.jsonl"
@@ -1164,6 +1190,7 @@ def test_bash_runs_the_hidden_close(cmd, tmp_path):
 @pytest.mark.skipif(not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists(), reason="no bash")
 @pytest.mark.parametrize("cmd", [c for c in [*MENTIONS_PASS, *NO_RUN_PASS, HEREDOC_BODY, HEREDOC_BODY_UNQUOTED]
                                  if not c.startswith("git ")])
+@pytest.mark.integration
 def test_bash_runs_no_close_for_the_passing_mentions(cmd, tmp_path):
     """Parity check the other way: the commands that now pass really run no close."""
     calls = tmp_path / "calls.jsonl"
@@ -1244,6 +1271,7 @@ def test_decide_reads_blockers_inside_the_lock_before_the_post():
     assert events == ["lock", "read", "blockers", "post", "unlock"]
 
 
+@pytest.mark.integration
 def test_guard_reads_blockers_with_the_paginated_read_form_and_the_count(env):
     write_api(env, [api_blocker(3)], count=0)
     write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
@@ -1254,11 +1282,13 @@ def test_guard_reads_blockers_with_the_paginated_read_form_and_the_count(env):
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 3)\nAgent: pm"}]
 
 
+@pytest.mark.integration
 def test_guard_allows_no_blocker(env):
     write_api(env, [], count=0)
     assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
 
 
+@pytest.mark.integration
 def test_guard_denies_one_open_blocker(env):
     write_api(env, [api_blocker(3, "open")], count=1)
     code, out = run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)
@@ -1267,6 +1297,7 @@ def test_guard_denies_one_open_blocker(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_denies_several_blockers_one_open(env):
     write_api(env, [api_blocker(3), api_blocker(4, "open"), api_blocker(5, "closed", "other/lib")], count=1)
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("pm"), "## PM: GROOMED")
@@ -1274,12 +1305,14 @@ def test_guard_denies_several_blockers_one_open(env):
     assert reason.startswith("G1:") and "octo/kit#4" in reason and "#3" not in reason
 
 
+@pytest.mark.integration
 def test_guard_allows_a_closed_blocker_in_another_repo(env):
     write_api(env, [api_blocker(9, "closed", "other/lib")], count=0)
     write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
     assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
 
 
+@pytest.mark.integration
 def test_guard_reads_every_page_of_blockers(env):
     page1 = [api_blocker(n) for n in range(1, 31)]
     page2 = [api_blocker(31, "open")]
@@ -1288,6 +1321,7 @@ def test_guard_reads_every_page_of_blockers(env):
     assert reason.startswith("G1:") and "octo/kit#31" in reason
 
 
+@pytest.mark.integration
 def test_fake_gh_without_paginate_shows_only_the_first_page(env):
     """Control for the test above: the open blocker on page 2 is found only with --paginate."""
     write_api(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]], count=1)
@@ -1296,12 +1330,14 @@ def test_fake_gh_without_paginate_shows_only_the_first_page(env):
     assert len(out.splitlines()) == 30 and '"number": 31' not in out and '"number":31' not in out
 
 
+@pytest.mark.integration
 def test_guard_denies_a_count_greater_than_the_open_entries(env):
     write_api(env, [api_blocker(3)], count=1)
     reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
     assert reason.startswith("G1:") and "cannot read" in reason
 
 
+@pytest.mark.integration
 def test_guard_denies_waiting_with_an_empty_blocker_list(env):
     write_api(env, [], count=0)
     write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
@@ -1311,6 +1347,7 @@ def test_guard_denies_waiting_with_an_empty_blocker_list(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_close_makes_no_blocker_read(env):
     write_api(env, [api_blocker(3, "open")], count=1)
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
@@ -1318,12 +1355,14 @@ def test_guard_close_makes_no_blocker_read(env):
     assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
 
 
+@pytest.mark.integration
 def test_guard_ignores_the_label_waiting(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), labels=("ready", "waiting"))
     assert run_guard(agent("pm", "ROLE=pm ISSUE=7"), env) == (0, "")
 
 
 @pytest.mark.parametrize("key", ["blocked_by", "issue"])
+@pytest.mark.integration
 def test_guard_failing_blocker_read_denies_with_guard_error(env, key):
     write_api(env, [], count=0)
     write_issue(Path(env["FAKE_GH_ISSUE"]), *WAITING_SEQ)
@@ -1339,6 +1378,7 @@ def test_guard_failing_blocker_read_denies_with_guard_error(env, key):
     ([[]], "x"),
     ([[]], {}),
 ])
+@pytest.mark.integration
 def test_guard_blocker_output_it_cannot_read_denies_with_guard_error(env, pages, count):
     data = {"blocked_by": pages}
     data["issue"] = count if isinstance(count, (str, dict)) else {"issue_dependencies_summary": {"blocked_by": count}}
@@ -1372,6 +1412,7 @@ GUARDED_CALLS = {
 
 
 @pytest.mark.parametrize("role", list(GUARDED_CALLS))
+@pytest.mark.integration
 def test_missing_author_data_denies_every_guarded_call(env, role):
     event, before = GUARDED_CALLS[role]
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), *map(owner, before), {"body": "note"})
@@ -1382,12 +1423,14 @@ def test_missing_author_data_denies_every_guarded_call(env, role):
 
 
 @pytest.mark.parametrize("role", list(GUARDED_CALLS))
+@pytest.mark.integration
 def test_same_calls_with_owner_author_data_are_allowed(env, role):
     event, before = GUARDED_CALLS[role]  # control for the test above
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), *map(owner, before), owner("note"))
     assert run_guard(event, env) == (0, "")
 
 
+@pytest.mark.integration
 def test_stranger_receipt_does_not_change_the_attempt(env):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]),
                        {"body": "## Launch: pm (attempt 1)\nAgent: pm", "authorAssociation": "NONE"})
@@ -1396,6 +1439,7 @@ def test_stranger_receipt_does_not_change_the_attempt(env):
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 1)\nAgent: pm"}]
 
 
+@pytest.mark.integration
 def test_stranger_resume_does_not_resume_through_the_guard(env):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: NEEDS OWNER"),
                        {"body": "## Owner: RESUME", "authorAssociation": "CONTRIBUTOR"})
@@ -1404,6 +1448,7 @@ def test_stranger_resume_does_not_resume_through_the_guard(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_stranger_resume_variant_does_not_resume_through_the_guard(env):
     # issue #131: the resume match ignores case and extra whitespace, but only for the owner
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: NEEDS OWNER"),
@@ -1413,6 +1458,7 @@ def test_stranger_resume_variant_does_not_resume_through_the_guard(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_owner_resume_variant_resumes_through_the_guard(env):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: NEEDS OWNER"),
                        owner("## OWNER: Resume"))
@@ -1420,6 +1466,7 @@ def test_owner_resume_variant_resumes_through_the_guard(env):
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: pm (attempt 2)\nAgent: pm"}]
 
 
+@pytest.mark.integration
 def test_stranger_pass_does_not_close_through_the_guard(env):
     write_raw_comments(Path(env["FAKE_GH_ISSUE"]), owner(launch("pm")), owner("## PM: GROOMED"),
                        owner(launch("engineer")), owner("## Engineer: DONE\nCommits: a..b"),
@@ -1501,6 +1548,7 @@ def test_decide_reads_sub_issues_inside_the_lock():
     assert events == ["lock", "read", "subs", "unlock"]
 
 
+@pytest.mark.integration
 def test_guard_stage_close_all_closed_is_allowed_without_ready_and_qa(env):
     write_subs(env, [api_blocker(3), api_blocker(4)])
     write_stage(env)
@@ -1511,6 +1559,7 @@ def test_guard_stage_close_all_closed_is_allowed_without_ready_and_qa(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_stage_close_denies_an_open_sub_issue_and_names_it(env):
     write_subs(env, [api_blocker(3), api_blocker(4, "open")])
     write_stage(env)
@@ -1518,6 +1567,7 @@ def test_guard_stage_close_denies_an_open_sub_issue_and_names_it(env):
     assert reason.startswith("G6:") and "octo/kit#4" in reason and "octo/kit#3" not in reason
 
 
+@pytest.mark.integration
 def test_guard_stage_close_counts_not_planned_as_closed(env):
     item = {**api_blocker(3), "state_reason": "not_planned"}
     write_subs(env, [item, api_blocker(4)])
@@ -1525,6 +1575,7 @@ def test_guard_stage_close_counts_not_planned_as_closed(env):
     assert run_guard(CLOSE_7, env) == (0, "")
 
 
+@pytest.mark.integration
 def test_guard_stage_close_reads_a_sub_issue_in_another_repo(env):
     write_subs(env, [api_blocker(3), api_blocker(9, "open", "other/lib")])
     write_stage(env)
@@ -1534,6 +1585,7 @@ def test_guard_stage_close_reads_a_sub_issue_in_another_repo(env):
     assert run_guard(CLOSE_7, env) == (0, "")
 
 
+@pytest.mark.integration
 def test_guard_stage_close_denies_no_sub_issue(env):
     write_subs(env, [])
     write_stage(env)
@@ -1541,6 +1593,7 @@ def test_guard_stage_close_denies_no_sub_issue(env):
     assert reason.startswith("G6:") and "no sub-issue" in reason
 
 
+@pytest.mark.integration
 def test_guard_stage_close_denies_a_total_greater_than_the_list(env):
     write_subs(env, [api_blocker(3)], total=2)
     write_stage(env)
@@ -1548,6 +1601,7 @@ def test_guard_stage_close_denies_a_total_greater_than_the_list(env):
     assert reason.startswith("G6:") and "does not hold" in reason
 
 
+@pytest.mark.integration
 def test_guard_stage_close_denies_a_closed_stage_issue(env):
     write_subs(env, [api_blocker(3)])
     write_stage(env, state="CLOSED")
@@ -1555,6 +1609,7 @@ def test_guard_stage_close_denies_a_closed_stage_issue(env):
 
 
 @pytest.mark.parametrize("key", ["sub_issues", "issue"])
+@pytest.mark.integration
 def test_guard_stage_close_failing_read_denies_with_guard_error(env, key):
     write_subs(env, [api_blocker(3)])
     write_stage(env)
@@ -1563,6 +1618,7 @@ def test_guard_stage_close_failing_read_denies_with_guard_error(env, key):
 
 
 @pytest.mark.parametrize("key", ["sub_issues", "issue"])
+@pytest.mark.integration
 def test_guard_stage_close_timed_out_read_denies_with_guard_error(env, key):
     """A read that runs past the guard's deadline denies with `guard error` too (issue #97, QA FAIL)."""
     write_subs(env, [api_blocker(3)])
@@ -1583,6 +1639,7 @@ def test_guard_stage_close_timed_out_read_denies_with_guard_error(env, key):
     ([[api_blocker(3)]], "-1"),
     ([[api_blocker(3)]], "x"),
 ])
+@pytest.mark.integration
 def test_guard_stage_close_output_it_cannot_read_denies_with_guard_error(env, pages, total):
     write_subs(env, pages=pages, total=total)
     write_stage(env)
@@ -1590,6 +1647,7 @@ def test_guard_stage_close_output_it_cannot_read_denies_with_guard_error(env, pa
     assert code == 0 and deny_reason(out).startswith("guard error")
 
 
+@pytest.mark.integration
 def test_guard_stage_close_reads_every_page(env):
     write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
     write_stage(env)
@@ -1597,6 +1655,7 @@ def test_guard_stage_close_reads_every_page(env):
     assert reason.startswith("G6:") and "octo/kit#31" in reason
 
 
+@pytest.mark.integration
 def test_fake_gh_without_paginate_shows_only_the_first_page_of_sub_issues(env):
     """Control for the test above: the open sub-issue on page 2 is found only with --paginate."""
     write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
@@ -1605,6 +1664,7 @@ def test_fake_gh_without_paginate_shows_only_the_first_page_of_sub_issues(env):
     assert len(out.splitlines()) == 30 and '"number":31' not in out
 
 
+@pytest.mark.integration
 def test_guard_non_stage_close_is_unchanged_and_reads_no_sub_issues(env):
     write_subs(env, [api_blocker(3, "open")])
     write_issue(Path(env["FAKE_GH_ISSUE"]), launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")
@@ -1731,6 +1791,7 @@ def test_decide_planner_call_off_the_stage_path_runs_no_sub_issue_read(event, is
     assert fio.sub_reads == [] and fio.posts == []
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_on_a_stage_issue_is_allowed_and_posts_the_receipt(env):
     planner_stage(env, subs=[api_blocker(3), api_blocker(4)])
     code, out = run_guard({**PLANNER_7, "tool_use_id": "toolu_synthetic_1"}, env)
@@ -1742,6 +1803,7 @@ def test_guard_planner_launch_on_a_stage_issue_is_allowed_and_posts_the_receipt(
     assert BLOCKERS_READ not in calls and COUNT_READ not in calls  # no blocker read
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_denies_an_open_sub_issue_and_names_it(env):
     planner_stage(env, subs=[api_blocker(3), api_blocker(4, "open"), api_blocker(5, "open")])
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
@@ -1750,6 +1812,7 @@ def test_guard_planner_launch_denies_an_open_sub_issue_and_names_it(env):
     assert lines(env["FAKE_GH_LOG"]) == []  # no receipt
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_denies_an_open_sub_issue_in_another_repo(env):
     planner_stage(env, subs=[api_blocker(3), api_blocker(9, "open", "other/lib")])
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
@@ -1757,6 +1820,7 @@ def test_guard_planner_launch_denies_an_open_sub_issue_in_another_repo(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_denies_no_sub_issue(env):
     planner_stage(env, subs=[])
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
@@ -1764,6 +1828,7 @@ def test_guard_planner_launch_denies_no_sub_issue(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_denies_a_total_greater_than_the_list(env):
     write_subs(env, [api_blocker(3), api_blocker(4)], total=3)
     write_stage(env)
@@ -1772,6 +1837,7 @@ def test_guard_planner_launch_denies_a_total_greater_than_the_list(env):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_reads_every_page_of_sub_issues(env):
     planner_stage(env, subs=None)
     write_subs(env, pages=[[api_blocker(n) for n in range(1, 31)], [api_blocker(31, "open")]])
@@ -1780,6 +1846,7 @@ def test_guard_planner_launch_reads_every_page_of_sub_issues(env):
 
 
 @pytest.mark.parametrize("key", ["sub_issues", "issue"])
+@pytest.mark.integration
 def test_guard_planner_launch_failing_sub_issue_read_denies_with_guard_error(env, key):
     planner_stage(env)
     code, out = run_guard(PLANNER_7, env, FAKE_GH_API_FAIL=key)
@@ -1788,6 +1855,7 @@ def test_guard_planner_launch_failing_sub_issue_read_denies_with_guard_error(env
 
 
 @pytest.mark.parametrize("pages, total", [("not json\n", 0), ([[api_blocker(3)]], "null")])
+@pytest.mark.integration
 def test_guard_planner_launch_sub_issue_output_it_cannot_read_denies_with_guard_error(env, pages, total):
     write_subs(env, pages=pages, total=total)
     write_stage(env)
@@ -1797,6 +1865,7 @@ def test_guard_planner_launch_sub_issue_output_it_cannot_read_denies_with_guard_
 
 
 @pytest.mark.parametrize("key", ["sub_issues", "issue"])
+@pytest.mark.integration
 def test_guard_planner_launch_without_stage_keeps_its_message_when_a_sub_issue_read_fails(env, key):
     write_subs(env, [api_blocker(3, "open")])
     write_issue(Path(env["FAKE_GH_ISSUE"]), labels=("ready",))
@@ -1805,6 +1874,7 @@ def test_guard_planner_launch_without_stage_keeps_its_message_when_a_sub_issue_r
     assert not any(c[:1] == ["api"] for c in lines(env["FAKE_GH_CALLS"]))
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_on_a_stage_issue_with_ready_is_allowed(env):
     planner_stage(env, labels=("stage", "ready"))
     assert run_guard(PLANNER_7, env) == (0, "")
@@ -1812,6 +1882,7 @@ def test_guard_planner_launch_on_a_stage_issue_with_ready_is_allowed(env):
 
 
 @pytest.mark.parametrize("labels", [(), ("ready",)])
+@pytest.mark.integration
 def test_guard_planner_launch_without_the_label_stage_is_denied(env, labels):
     write_issue(Path(env["FAKE_GH_ISSUE"]), labels=labels)
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
@@ -1819,30 +1890,35 @@ def test_guard_planner_launch_without_the_label_stage_is_denied(env, labels):
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_on_a_closed_stage_issue_is_denied(env):
     planner_stage(env, state="CLOSED")
     assert deny_reason(run_guard(PLANNER_7, env)[1]) == "G1: issue #7 is closed, expected an open issue"
 
 
 @pytest.mark.parametrize("label", ["later", "needs-owner"])
+@pytest.mark.integration
 def test_guard_planner_launch_with_later_or_needs_owner_is_denied(env, label):
     planner_stage(env, labels=("stage", label))
     assert deny_reason(run_guard(PLANNER_7, env)[1]) == (
         f"G1: issue #7 has the label {label}, expected no label later or needs-owner")
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_on_a_dirty_tree_is_denied(env):
     planner_stage(env)
     assert deny_reason(run_guard(PLANNER_7, env, FAKE_GIT_DIRTY="1")[1]) == (
         "G1: working tree is not clean, expected a clean tree (git status --porcelain empty)")
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_after_one_planner_miss_gets_attempt_2(env):
     planner_stage(env, planner_receipt())
     assert run_guard(PLANNER_7, env) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_after_two_planner_misses_is_denied(env):
     planner_stage(env, planner_receipt(), planner_receipt(2))
     reason = deny_reason(run_guard(PLANNER_7, env)[1])
@@ -1853,12 +1929,14 @@ def test_guard_planner_launch_after_two_planner_misses_is_denied(env):
 
 
 @pytest.mark.parametrize("after", [STAGE_REVIEW, "## Owner: RESUME"])
+@pytest.mark.integration
 def test_guard_planner_launch_after_a_result_or_resume_gets_attempt_2(env, after):
     planner_stage(env, planner_receipt(), after)
     assert run_guard(PLANNER_7, env) == (0, "")
     assert lines(env["FAKE_GH_LOG"]) == [{"issue": 7, "body": "## Launch: planner (attempt 2)\nAgent: planner"}]
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_after_two_voided_receipts_is_denied(env):
     from helpers import not_started, stopped
     x, y = "0123456789ab", "ba9876543210"
@@ -1867,6 +1945,7 @@ def test_guard_planner_launch_after_two_voided_receipts_is_denied(env):
     assert deny_reason(run_guard(PLANNER_7, env)[1]).startswith("G1: issue #7: the last 2 launches")
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_ignores_a_failing_blocker_read(env):
     # the blocker count read and the sub-issue total read share the key "issue"; the failing
     # sub-issue reads are covered above (issue #119)
@@ -1876,6 +1955,7 @@ def test_guard_planner_launch_ignores_a_failing_blocker_read(env):
     assert BLOCKERS_READ not in calls and COUNT_READ not in calls
 
 
+@pytest.mark.integration
 def test_guard_pm_launch_on_a_stage_issue_is_unchanged(env):
     write_stage(env, planner_receipt(), STAGE_REVIEW)
     reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
@@ -1899,6 +1979,7 @@ def test_decide_relaunch_after_one_miss_posts_the_next_attempt():
     assert fio.posts == [(7, "## Launch: engineer (attempt 2)\nAgent: software-engineer")]
 
 
+@pytest.mark.integration
 def test_guard_relaunch_after_one_miss_is_allowed_then_a_third_is_denied(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
     event = agent("software-engineer", "ROLE=engineer ISSUE=7")
@@ -1909,6 +1990,7 @@ def test_guard_relaunch_after_one_miss_is_allowed_then_a_third_is_denied(env):
     assert [c["body"] for c in lines(env["FAKE_GH_LOG"])] == ["## Launch: engineer (attempt 2)\nAgent: software-engineer"]
 
 
+@pytest.mark.integration
 def test_guard_close_after_one_miss_is_denied(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
     reason = deny_reason(run_guard(bash("gh issue " + "close 7"), env)[1])
@@ -1916,6 +1998,7 @@ def test_guard_close_after_one_miss_is_denied(env):
     assert "## Owner: RESUME" in reason
 
 
+@pytest.mark.integration
 def test_guard_other_role_after_one_miss_is_denied(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
     reason = deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env)[1])
@@ -1932,6 +2015,7 @@ NOT_CLEAN = "G1: working tree is not clean, expected a clean tree (git status --
     (agent("software-engineer", "ROLE=engineer ISSUE=7"), "## Launch: engineer (attempt 2)\nAgent: software-engineer"),
     (send("a1b2c3", "ROLE=engineer ISSUE=7"), "## Launch: engineer (continued, round 2)\nAgent: a1b2c3"),
 ])
+@pytest.mark.integration
 def test_guard_engineer_go_on_after_one_miss_with_a_dirty_tree_is_allowed(env, event, body):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
     assert run_guard(event, env, FAKE_GIT_DIRTY="1") == (0, "")
@@ -1943,17 +2027,20 @@ def test_guard_engineer_go_on_after_one_miss_with_a_dirty_tree_is_allowed(env, e
     agent("qa-engineer", "ROLE=qa ISSUE=7"),
     CLOSE_7,
 ])
+@pytest.mark.integration
 def test_guard_other_call_after_one_engineer_miss_with_a_dirty_tree_is_denied_as_not_clean(env, event):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS)
     assert deny_reason(run_guard(event, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_first_launch_with_a_dirty_tree_is_denied_as_not_clean(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]))
     assert deny_reason(run_guard(agent("pm", "ROLE=pm ISSUE=7"), env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
 
 
+@pytest.mark.integration
 def test_guard_two_engineer_misses_with_a_dirty_tree_give_the_two_misses_message(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS, launch("engineer", 2))
     event = agent("software-engineer", "ROLE=engineer ISSUE=7")
@@ -1963,12 +2050,14 @@ def test_guard_two_engineer_misses_with_a_dirty_tree_give_the_two_misses_message
                       "expected ## Owner: RESUME; escalate the issue")
 
 
+@pytest.mark.integration
 def test_guard_planner_launch_after_one_planner_miss_with_a_dirty_tree_is_denied_as_not_clean(env):
     planner_stage(env, planner_receipt())
     assert deny_reason(run_guard(PLANNER_7, env, FAKE_GIT_DIRTY="1")[1]) == NOT_CLEAN
     assert lines(env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_guard_close_with_a_current_pass_and_a_dirty_tree_is_denied_as_not_clean(env):
     write_issue(Path(env["FAKE_GH_ISSUE"]), *GROOMED_ENG_MISS, "## Engineer: DONE\nCommits: x..y",
                 launch("qa"), f"## QA: PASS\nVerified: {FAKE_HEAD}")

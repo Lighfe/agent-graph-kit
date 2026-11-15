@@ -322,6 +322,7 @@ def run_main(stdin_text):
     return code, stdout.getvalue()
 
 
+@pytest.mark.integration
 def test_5_main_with_4a_posts_and_prints_nothing(io_env):
     assert run_main(io_env["EVENT"]) == (0, "")
     assert lines(io_env["FAKE_GH_LOG"]) == [
@@ -336,12 +337,14 @@ def test_5_main_with_bad_stdin_prints_nothing(io_env, stdin_text):
 
 
 @pytest.mark.parametrize("fail", ["FAKE_GH_VIEW_FAIL", "FAKE_GH_COMMENT_FAIL", "FAKE_GIT_FAIL"])
+@pytest.mark.integration
 def test_4j_main_with_failing_io_prints_nothing(io_env, monkeypatch, fail):
     monkeypatch.setenv(fail, "1")
     assert run_main(io_env["EVENT"]) == (0, "")
     assert lines(io_env["FAKE_GH_LOG"]) == []
 
 
+@pytest.mark.integration
 def test_main_without_evidence_makes_no_gh_call(io_env):
     os.remove(io_env["EVIDENCE"])
     assert run_main(io_env["EVENT"]) == (0, "")
@@ -363,6 +366,7 @@ def write_raw_comments(path, *comments):
 
 
 @pytest.mark.parametrize("association", ["NONE", "CONTRIBUTOR", "COLLABORATOR"])
+@pytest.mark.integration
 def test_stranger_newer_receipt_does_not_stop_the_outage_comment(io_env, association):
     write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
                        {"body": launch("pm", 2, call="ba9876543210"), "authorAssociation": association})
@@ -371,6 +375,7 @@ def test_stranger_newer_receipt_does_not_stop_the_outage_comment(io_env, associa
         {"issue": 39, "body": f"## Launch stopped by outage: pm (attempt 1)\nCall: {X}\nReason: {REASON}"}]
 
 
+@pytest.mark.integration
 def test_owner_newer_receipt_takes_the_outage_comment(io_env):
     # control: an owner's newer receipt is the newest receipt, so the stop comment is for it
     write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
@@ -380,6 +385,7 @@ def test_owner_newer_receipt_takes_the_outage_comment(io_env):
         "## Launch stopped by outage: pm (attempt 2)"]
 
 
+@pytest.mark.integration
 def test_missing_author_data_posts_no_outage_comment(io_env, capsys):
     write_raw_comments(io_env["FAKE_GH_ISSUE"], {"body": launch("pm", call=X), "authorAssociation": "OWNER"},
                        {"body": "note", "authorAssociation": None})
@@ -404,11 +410,13 @@ def run_script(stdin_text, env, **extra):
     return p.returncode, p.stdout
 
 
+@pytest.mark.integration
 def test_subprocess_posts_and_prints_nothing(io_env):
     assert run_script(io_env["EVENT"], io_env) == (0, "")
     assert len(lines(io_env["FAKE_GH_LOG"])) == 1
 
 
+@pytest.mark.integration
 def test_subprocess_holds_the_guard_lock(io_env):
     import fcntl
     import guard

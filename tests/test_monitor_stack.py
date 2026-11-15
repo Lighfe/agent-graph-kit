@@ -231,6 +231,7 @@ def test_removed_files_are_gone():
 
 
 @pytest.mark.skipif(not shutil.which("docker"), reason="docker CLI not installed")
+@pytest.mark.integration
 def test_docker_compose_accepts_the_file(tmp_path):
     """`docker compose config` reads the file without a daemon."""
     if subprocess.run(["docker", "compose", "version"], capture_output=True).returncode != 0:

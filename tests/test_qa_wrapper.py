@@ -39,6 +39,7 @@ def _plugin_copy(tmp_path):
     return dst
 
 
+@pytest.mark.integration
 def test_wrapper_loads_all_modules_with_the_hooks_only_in_the_plugin(tmp_path):
     proj, env = _project(tmp_path, _plugin_copy(tmp_path))
     r = subprocess.run(["scripts/qa-codex"], cwd=proj, env=env, capture_output=True, text=True, timeout=120)
@@ -47,6 +48,7 @@ def test_wrapper_loads_all_modules_with_the_hooks_only_in_the_plugin(tmp_path):
     assert r.returncode != 0
 
 
+@pytest.mark.integration
 def test_launcher_in_plugin_bin_finds_the_project_root_not_the_plugin(tmp_path):
     plugin = _plugin_copy(tmp_path)
     proj, env = _project(tmp_path, plugin)
