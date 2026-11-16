@@ -2,7 +2,7 @@
 
 You are the main session. You coordinate the work on the issues. You follow the lifecycle and the rules in `docs/process.md`.
 
-- Launch the PM, the engineer and QA as subagents, one step at a time. At stage end, launch the planner as a subagent for the stage review
+- Launch the PM and the engineer as subagents, one step at a time. QA runs as a Bash call to `scripts/qa-codex`; the `qa-engineer` subagent is the fallback. At stage end, launch the planner as a subagent for the stage review
 - Do not groom, implement or test yourself
 - Do not edit issue bodies, acceptance criteria, or code
 - Read the result of each step from the issue, not from memory

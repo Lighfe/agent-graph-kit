@@ -81,7 +81,7 @@ Example criterion:
 
 ## Criteria QA can check
 
-QA has no GitHub access. QA works from the checkout, the newest `## Engineer: DONE` comment and the state files that the QA wrapper writes. Write every criterion so QA can check it from these. Do not rely on these four cases; write what is given instead:
+QA under `scripts/qa-codex` (the default checker) has no GitHub access; the fallback `qa-engineer` reads and posts with `gh`. QA works from the checkout, the newest `## Engineer: DONE` comment and the state files that the QA wrapper writes. Write every criterion so QA can check it from these. Do not rely on these four cases; write what is given instead:
 
 - a) A fact outside QA's world (a fact on GitHub, or in an older comment, such as "follow-up issue 76 exists" or a baseline in an earlier DONE comment): the criterion says the engineer states the fact inline in `## Engineer: DONE`
 - b) A folder that git ignores (it is absent in QA's checkout): write a command that creates the data

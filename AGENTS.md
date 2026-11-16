@@ -43,8 +43,10 @@ Use these skills:
 - brainstorming, writing-plans (upstream: idea → spec → plan → issues). The planner role (`docs/team/planner.md`) uses them, in the main session started with `/stage-start`. Plan tasks become issues in `docs/task-template.md` format (see Intake in `docs/process.md`).
 - test-driven-development (technique for the engineer role)
 - verification-before-completion (prose version of the "done" gate)
-- requesting-code-review, receiving-code-review (technique for the reviewer role; the reviewer role is not defined yet, do not invent it)
-- using-git-worktrees (parallel mode; parallel mode is not defined yet, do not invent it)
+
+Do not use these skills: requesting-code-review, receiving-code-review, using-git-worktrees.
+
+These skills belong to roles or modes the process does not define. Do not use them, and do not set up the role or the mode.
 
 Do not use these skills: subagent-driven-development, executing-plans.
 
