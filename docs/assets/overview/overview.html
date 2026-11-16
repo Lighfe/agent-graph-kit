@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<!--
+Render this file to docs/assets/agk-overview.png from the repo root with:
+uv run --with playwright==1.64.1 python -c "import pathlib; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(); pg = b.new_page(viewport={'width': 1600, 'height': 1000}, device_scale_factor=1.5); pg.goto(pathlib.Path('docs/assets/overview/overview.html').resolve().as_uri()); pg.evaluate('document.fonts.ready'); pg.wait_for_timeout(800); pg.screenshot(path='docs/assets/agk-overview.png'); b.close(); p.stop()"
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>agent-graph-kit overview</title>
+<style>
+  @font-face { font-family: "Kalam"; src: url("fonts/Kalam-Regular.ttf") format("truetype"); }
+  html, body { margin: 0; padding: 0; background: #fbf8f1; }
+  svg { display: block; font-family: "Kalam", cursive; }
+  text { fill: #2b2b2b; }
+  .title { font-size: 31px; }
+  .label { font-size: 24px; }
+  .small { font-size: 20px; }
+  .badge { font-size: 18px; fill: #ffffff; }
+  .loop { font-size: 30px; }
+  .orange { fill: #e07a1f; }
+  .blue { fill: #2f6db5; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="3.5"/>
+    </filter>
+    <filter id="paper" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="3"/>
+      <feColorMatrix values="0 0 0 0 0.45  0 0 0 0 0.40  0 0 0 0 0.30  0 0 0 0.05 0"/>
+    </filter>
+    <filter id="white"><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/></filter>
+    <filter id="shadow" x="-20%" y="-20%" width="150%" height="160%">
+      <feDropShadow dx="1.5" dy="2.5" stdDeviation="1.5" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+    <marker id="ao" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11" fill="none" stroke="#e07a1f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11" fill="none" stroke="#2f6db5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="ak" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M1 1 L11 6 L1 11" fill="none" stroke="#2b2b2b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- paper -->
+  <rect width="1600" height="1000" fill="#fbf8f1"/>
+  <rect width="1600" height="1000" filter="url(#paper)"/>
+
+  <!-- hand-drawn shapes and lines (text stays outside the rough filter) -->
+  <g filter="url(#rough)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- issue area -->
+    <rect x="380" y="392" width="1160" height="342" rx="22" fill="#eef3fa" stroke="#2f6db5" stroke-width="2.5" stroke-dasharray="14 9"/>
+    <!-- bottom panels -->
+    <rect x="60" y="770" width="880" height="200" rx="18" fill="#f4efe4" stroke="#2b2b2b" stroke-width="2.5"/>
+    <rect x="96" y="836" width="808" height="116" rx="14" fill="none" stroke="#2496ed" stroke-width="2.5" stroke-dasharray="10 8"/>
+    <rect x="1000" y="770" width="540" height="200" rx="18" fill="#f4efe4" stroke="#2b2b2b" stroke-width="2.5"/>
+
+    <!-- stage loop boxes -->
+    <rect x="420" y="150" width="290" height="104" rx="14" fill="#fff4e8" stroke="#e07a1f" stroke-width="3"/>
+    <rect x="1000" y="150" width="280" height="104" rx="14" fill="#fff4e8" stroke="#e07a1f" stroke-width="3"/>
+    <!-- issue loop boxes -->
+    <rect x="440" y="475" width="210" height="130" rx="14" fill="#ffffff" stroke="#2f6db5" stroke-width="3"/>
+    <rect x="760" y="475" width="290" height="130" rx="14" fill="#ffffff" stroke="#2f6db5" stroke-width="3"/>
+    <rect x="1140" y="475" width="300" height="130" rx="14" fill="#ffffff" stroke="#2f6db5" stroke-width="3"/>
+
+    <!-- one stage (orange) -->
+    <path d="M 214 216 L 412 216" stroke="#e07a1f" stroke-width="3.5" marker-end="url(#ao)"/>
+    <path d="M 716 202 L 992 202" stroke="#e07a1f" stroke-width="3.5" marker-end="url(#ao)"/>
+    <path d="M 1140 144 L 1140 92 Q 1140 80 1128 80 L 152 80 Q 140 80 140 92 L 140 116" stroke="#e07a1f" stroke-width="3.5" marker-end="url(#ao)"/>
+
+    <!-- launch: orchestrator into the issue loop -->
+    <path d="M 1050 260 L 1050 312 Q 1050 324 1038 324 L 557 324 Q 545 324 545 336 L 545 467" stroke="#2b2b2b" stroke-width="3" marker-end="url(#ak)"/>
+
+    <!-- one issue (blue) -->
+    <path d="M 656 540 L 752 540" stroke="#2f6db5" stroke-width="3.5" marker-end="url(#ab)"/>
+    <path d="M 1056 540 L 1132 540" stroke="#2f6db5" stroke-width="3.5" marker-end="url(#ab)"/>
+    <path d="M 1250 612 Q 1250 662 1200 662 L 955 662 Q 905 662 905 620" stroke="#2f6db5" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#ab)"/>
+    <path d="M 1230 468 L 1230 262" stroke="#2f6db5" stroke-width="3.5" marker-end="url(#ab)"/>
+
+    <!-- monitoring and release arrows -->
+    <path d="M 226 898 L 270 898" stroke="#2b2b2b" stroke-width="2.5" marker-end="url(#ak)"/>
+    <path d="M 598 898 L 642 898" stroke="#2b2b2b" stroke-width="2.5" marker-end="url(#ak)"/>
+    <path d="M 1262 898 L 1316 898" stroke="#2b2b2b" stroke-width="2.5" marker-end="url(#ak)"/>
+  </g>
+
+  <!-- shield on the launch edge -->
+  <g transform="translate(776 300)" filter="url(#shadow)">
+    <path d="M24 2 L44 9 Q44 36 24 48 Q4 36 4 9 Z" fill="#3d8b5a" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M15 25 L22 32 L34 18" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="834" y="365" class="small">hooks check every handoff</text>
+  <text x="1062" y="300" class="label">launch</text>
+
+  <!-- You -->
+  <g>
+      <rect x="122" y="124" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="131" y="124" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="140" y="124" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="149" y="124" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="113" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="122" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="131" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="140" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="149" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="158" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="167" y="133" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="113" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="122" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="131" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="140" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="149" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="158" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="167" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="176" y="142" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="113" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="158" y="151" width="9" height="9" fill="#a0663d"/>
+      <rect x="167" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="176" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="185" y="151" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="160" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="160" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="113" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="158" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="167" y="160" width="9" height="9" fill="#a0663d"/>
+      <rect x="176" y="160" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="185" y="160" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="169" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="169" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="113" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="122" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="131" y="169" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="169" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="158" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="167" y="169" width="9" height="9" fill="#222222"/>
+      <rect x="176" y="169" width="9" height="9" fill="#a0663d"/>
+      <rect x="185" y="169" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="178" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="178" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="113" y="178" width="9" height="9" fill="#dff3f3"/>
+      <rect x="122" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="131" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="140" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="149" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="158" y="178" width="9" height="9" fill="#dff3f3"/>
+      <rect x="167" y="178" width="9" height="9" fill="#222222"/>
+      <rect x="176" y="178" width="9" height="9" fill="#a0663d"/>
+      <rect x="185" y="178" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="187" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="95" y="187" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="113" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="122" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="131" y="187" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="187" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="158" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="167" y="187" width="9" height="9" fill="#222222"/>
+      <rect x="176" y="187" width="9" height="9" fill="#a0663d"/>
+      <rect x="185" y="187" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="86" y="196" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="113" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="158" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="167" y="196" width="9" height="9" fill="#a0663d"/>
+      <rect x="185" y="196" width="9" height="9" fill="#1fa3a3"/>
+      <rect x="104" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="113" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="205" width="9" height="9" fill="#6b3a22"/>
+      <rect x="140" y="205" width="9" height="9" fill="#6b3a22"/>
+      <rect x="149" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="158" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="167" y="205" width="9" height="9" fill="#a0663d"/>
+      <rect x="113" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="158" y="214" width="9" height="9" fill="#a0663d"/>
+      <rect x="122" y="223" width="9" height="9" fill="#a0663d"/>
+      <rect x="131" y="223" width="9" height="9" fill="#a0663d"/>
+      <rect x="140" y="223" width="9" height="9" fill="#a0663d"/>
+      <rect x="149" y="223" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="232" width="9" height="9" fill="#c2187a"/>
+      <rect x="95" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="104" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="176" y="241" width="9" height="9" fill="#c2187a"/>
+      <rect x="86" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="95" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="104" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="176" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="185" y="250" width="9" height="9" fill="#c2187a"/>
+      <rect x="86" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="95" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="104" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="176" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="185" y="259" width="9" height="9" fill="#c2187a"/>
+      <rect x="86" y="268" width="9" height="9" fill="#a0663d"/>
+      <rect x="95" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="104" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="176" y="268" width="9" height="9" fill="#c2187a"/>
+      <rect x="185" y="268" width="9" height="9" fill="#a0663d"/>
+      <rect x="86" y="277" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="113" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="122" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="131" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="140" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="149" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="158" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="167" y="277" width="9" height="9" fill="#c2187a"/>
+      <rect x="185" y="277" width="9" height="9" fill="#a0663d"/>
+      <rect x="104" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="113" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="122" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="131" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="140" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="149" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="158" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="167" y="286" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="104" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="113" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="122" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="149" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="158" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="167" y="295" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="104" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="113" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="122" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="149" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="158" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="167" y="304" width="9" height="9" fill="#3b3f5c"/>
+      <rect x="95" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="104" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="113" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="122" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="149" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="158" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="167" y="313" width="9" height="9" fill="#222222"/>
+      <rect x="176" y="313" width="9" height="9" fill="#222222"/>
+  </g>
+  <text x="140" y="364" class="title" text-anchor="middle">You</text>
+  <text x="140" y="392" class="small" text-anchor="middle">set the direction</text>
+
+  <!-- one stage labels -->
+  <text x="1300" y="90" class="loop orange">one stage</text>
+  <text x="640" y="68" class="label" text-anchor="middle">stage review</text>
+  <text x="313" y="202" class="label" text-anchor="middle">/stage-start</text>
+  <text x="854" y="188" class="label" text-anchor="middle">stage ready, /goal</text>
+
+  <!-- Planner -->
+  <text x="440" y="190" class="title">Planner</text>
+  <g transform="translate(440 204) rotate(-4 19.0 19.0)"><rect width="38" height="38" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/claude.svg" x="7" y="7" width="24" height="24" filter="url(#white)"/></g>
+  <g transform="translate(496 207) rotate(2 66.0 16)"><rect width="132" height="32" rx="9" fill="#7a5c2e" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="66.0" y="22" text-anchor="middle" class="badge" fill="#fff">superpowers</text></g>
+  <!-- Orchestrator -->
+  <text x="1020" y="190" class="title">Orchestrator</text>
+  <g transform="translate(1020 204) rotate(3 19.0 19.0)"><rect width="38" height="38" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/claude.svg" x="7" y="7" width="24" height="24" filter="url(#white)"/></g>
+
+  <!-- issue area -->
+  <text x="1515" y="716" class="loop blue" text-anchor="end">one issue</text>
+  <g transform="translate(402 684) rotate(-3 19.0 19.0)"><rect width="38" height="38" rx="9" fill="#181717" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/github.svg" x="7" y="7" width="24" height="24" filter="url(#white)"/></g>
+  <text x="452" y="712" class="label">GitHub Issues: every handoff is a comment</text>
+
+  <text x="460" y="514" class="title">PM</text>
+  <g transform="translate(460 532) rotate(-3 19.0 19.0)"><rect width="38" height="38" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/claude.svg" x="7" y="7" width="24" height="24" filter="url(#white)"/></g>
+
+  <text x="780" y="514" class="title">Software engineer</text>
+  <g transform="translate(780 528) rotate(3 17.0 17.0)"><rect width="34" height="34" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/claude.svg" x="7" y="7" width="20" height="20" filter="url(#white)"/></g>
+  <g transform="translate(826 529) rotate(-1 42.0 16)"><rect width="84" height="32" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="42.0" y="22" text-anchor="middle" class="badge" fill="#fff">Claude</text></g>
+  <g transform="translate(780 566) rotate(1 126.0 16)"><rect width="252" height="32" rx="9" fill="#e2457a" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="126.0" y="22" text-anchor="middle" class="badge" fill="#fff">Lovable: optional frontend lane</text></g>
+
+  <text x="1160" y="514" class="title">QA engineer</text>
+  <g transform="translate(1160 528) rotate(-3 17.0 17.0)"><rect width="34" height="34" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/claude.svg" x="7" y="7" width="20" height="20" filter="url(#white)"/></g>
+  <g transform="translate(1206 529) rotate(1 52.0 16)"><rect width="104" height="32" rx="9" fill="#d97757" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="52.0" y="22" text-anchor="middle" class="badge" fill="#fff">Claude QA</text></g>
+  <g transform="translate(1160 566) rotate(-1 85.0 16)"><rect width="170" height="32" rx="9" fill="#111111" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="85.0" y="22" text-anchor="middle" class="badge" fill="#fff">OpenAI: Codex QA</text></g>
+
+  <text x="1080" y="690" class="label blue" text-anchor="middle">FAIL</text>
+  <text x="1242" y="420" class="label blue">PASS: close</text>
+
+  <!-- Monitoring -->
+  <text x="88" y="814" class="title">Monitoring</text>
+  <g transform="translate(748 784) rotate(3 20.0 20.0)"><rect width="40" height="40" rx="9" fill="#2496ed" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/docker.svg" x="7" y="7" width="26" height="26" filter="url(#white)"/></g>
+  <text x="798" y="814" class="label">in Docker</text>
+  <g transform="translate(116 876) rotate(-3 22.0 22.0)"><rect width="44" height="44" rx="9" fill="#425cc7" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/opentelemetry.svg" x="7" y="7" width="30" height="30" filter="url(#white)"/></g>
+  <text x="168" y="906" class="label">OTel</text>
+  <g transform="translate(282 876) rotate(2 22.0 22.0)"><rect width="44" height="44" rx="9" fill="#e6522c" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/prometheus.svg" x="7" y="7" width="30" height="30" filter="url(#white)"/></g>
+  <text x="334" y="906" class="label">Prometheus</text>
+  <text x="463" y="908" class="title">·</text>
+  <g transform="translate(488 876) rotate(-2 22.0 22.0)"><rect width="44" height="44" rx="9" fill="#ffffff" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/loki.png" x="7" y="7" width="30" height="30"/></g>
+  <text x="540" y="906" class="label">Loki</text>
+  <g transform="translate(654 876) rotate(3 22.0 22.0)"><rect width="44" height="44" rx="9" fill="#f46800" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/grafana.svg" x="7" y="7" width="30" height="30" filter="url(#white)"/></g>
+  <text x="706" y="906" class="label">Grafana</text>
+
+  <!-- Release -->
+  <text x="1028" y="814" class="title">Release</text>
+  <g transform="translate(1034 874) rotate(-3 22.0 22.0)"><rect width="44" height="44" rx="9" fill="#2088ff" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><image href="logos/githubactions.svg" x="7" y="7" width="30" height="30" filter="url(#white)"/></g>
+  <text x="1088" y="906" class="label">GitHub Actions</text>
+  <g transform="translate(1328 882) rotate(2 65.0 16)"><rect width="130" height="32" rx="9" fill="#3d8b5a" stroke="#fff" stroke-width="3" filter="url(#shadow)"/><text x="65.0" y="22" text-anchor="middle" class="badge" fill="#fff">dev / stable</text></g>
+</svg>
+</body>
+</html>

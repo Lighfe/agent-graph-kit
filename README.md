@@ -1,6 +1,6 @@
 # agent-graph-kit
 
-![Agentic Graph Engineering: five agents (orchestrator, planner, PM, software engineer, QA engineer) joined by handoffs, with the tools Claude Code, Codex and Lovable](docs/assets/agk-overview.png)
+![Overview of agent-graph-kit: two loops. In the orange loop "one stage", you start /stage-start, the planner plans the stage, /goal hands it to the orchestrator, and a stage review comes back to you. The orchestrator launches the blue loop "one issue" in GitHub Issues: PM, software engineer, QA engineer, where FAIL goes back to the engineer and PASS closes the issue; hooks check every handoff. Below: monitoring with OpenTelemetry, Prometheus, Loki and Grafana in Docker, and release with GitHub Actions to dev and stable](docs/assets/agk-overview.png)
 
 ## Purpose
 
