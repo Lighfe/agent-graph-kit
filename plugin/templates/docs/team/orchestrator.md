@@ -213,7 +213,7 @@ After two misses of the same step, you may diagnose read-only before you escalat
 
 ## Hooks
 
-A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`. When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G8`) and what is missing. The deny message is the source of truth.
+A hook checks each launch, each `SendMessage` continuation, `qa-codex` and `gh issue close`, and checks every Bash command for writes to the settings files (`G8`). When it allows a launch, it posts `## Launch: <role> (attempt <n>)` on the issue. When it denies a call, the deny message names the failed check (`G1` … `G8`) and what is missing. The deny message is the source of truth.
 
 The hook comments are `## Launch: …`, `## Launch not started: …` and `## Launch stopped by outage: …`. They are not results.
 
