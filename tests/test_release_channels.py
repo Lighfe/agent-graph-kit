@@ -752,9 +752,17 @@ def _checklist_steps():
     return {int(parts[i]): parts[i + 1] for i in range(1, len(parts), 2)}
 
 
-def test_checklist_has_seven_numbered_steps_in_order():
+def test_checklist_has_three_numbered_steps_in_order():
     numbers = re.findall(r"^## Step (\d+): ", CHECKLIST.read_text(encoding="utf-8"), flags=re.M)
-    assert numbers == [str(n) for n in range(1, 8)]
+    assert numbers == ["1", "2", "3"]
+
+
+def test_checklist_opens_with_the_state_on_github():
+    text = CHECKLIST.read_text(encoding="utf-8")
+    state = text.split("## State on GitHub")[1].split("\n## ")[0]
+    for fact in ("ffb5378", "59ac226", "b2ae99e", "`v0.2.0`", "`v0.2.1`", "`stable`", "`dev`"):
+        assert fact in state, fact
+    assert text.index("## State on GitHub") < text.index("## Step 1:")
 
 
 def test_each_checklist_action_has_a_should_see_and_an_if_not():
@@ -765,15 +773,13 @@ def test_each_checklist_action_has_a_should_see_and_an_if_not():
 
 def test_checklist_steps_name_the_commands_of_the_issue():
     s = _checklist_steps()
-    assert "git tag v0.2.0 e2295d7" in s[1] and "git push origin v0.2.0" in s[1]
-    assert "git push origin main" in s[2]
-    assert "release-stable" in s[3] and "`v0.2.0`" in s[3]
-    assert "claude plugin marketplace add Lighfe/agent-graph-kit#stable" in s[4]
-    assert "claude plugin install agk@agent-graph-kit " in s[4] and "0.2.0" in s[4]
-    assert "release-dev" in s[5] and "git ls-remote" in s[5]
-    assert "claude plugin marketplace add Lighfe/agent-graph-kit#dev" in s[6]
-    assert "agk@agent-graph-kit-dev" in s[6]
-    assert s[7].count("release-stable") >= 2 and "`v0.2.0`" in s[7]
+    assert "claude plugin marketplace add Lighfe/agent-graph-kit#stable" in s[1]
+    assert "claude plugin marketplace remove agent-graph-kit" in s[1]
+    assert "~/agk-stable-test" in s[1]
+    assert "claude plugin install agk@agent-graph-kit " in s[1]
+    assert "claude plugin marketplace add Lighfe/agent-graph-kit#dev" in s[2]
+    assert "agk@agent-graph-kit-dev" in s[2]
+    assert s[3].count("release-stable") >= 2 and "`v0.2.0`" in s[3] and "`v0.2.1`" in s[3]
 
 
 def _checklist_actions():
@@ -804,16 +810,21 @@ def test_each_checklist_action_is_a_command_a_page_a_click_or_a_value():
         assert text.startswith(ACTION_FORMS), f"{number}{letter}: {text.splitlines()[0]!r}"
 
 
-def test_rollback_ends_with_the_written_down_version():
-    rollback = _checklist_steps()[7]
-    letters = [l for n, l, _ in _checklist_actions() if n == 7]
-    assert letters == list("abcdef")
+def test_rollback_runs_back_and_forward_and_writes_down_the_result():
+    rollback = _checklist_steps()[3]
+    letters = [l for n, l, _ in _checklist_actions() if n == 3]
+    assert letters == list("abcde")
     assert "Write down which one you got." in rollback
+    assert "59ac2264c605c8fc0d895c69790ac2a2763fd912\trefs/heads/stable" in rollback
+    assert "ffb5378d3c939b1f188e512110f393972605089c\trefs/heads/stable" in rollback
+    assert "updated from 0.2.1 to 0.2.0" in rollback
+    assert "already at the latest version (0.2.1)" in rollback
+    assert "-f tag=v0.2.0" in rollback and "-f tag=v0.2.1" in rollback
+    assert rollback.index("-f tag=v0.2.0") < rollback.index("-f tag=v0.2.1")
 
 
 def test_each_click_action_is_one_named_click():
     clicks = [(n, l, t) for n, l, t in _checklist_actions() if t.startswith("Click")]
-    assert clicks, "the checklist has click actions (step 3)"
     for number, letter, text in clicks:
         action = text.split("You should see:")[0]
         assert len(re.findall(r"\*\*[^*]+\*\*", action)) == 1, f"{number}{letter}: {action!r}"
@@ -833,17 +844,18 @@ def test_claude_actions_name_the_exact_output():
         "(ref: stable)",
         "✔ Successfully added marketplace: agent-graph-kit (declared in user settings)",
         'Installing plugin "agk@agent-graph-kit"...✔ Successfully installed plugin: agk@agent-graph-kit (scope: project)',
-        "    Version: 0.2.0",
+        "    Version: 0.2.1",
     ):
-        assert line in s[4], line
+        assert line in s[1], line
     for line in (
         "(ref: dev)",
         "✔ Successfully added marketplace: agent-graph-kit-dev (declared in user settings)",
         'Installing plugin "agk@agent-graph-kit-dev"...✔ Successfully installed plugin: agk@agent-graph-kit-dev (scope: project)',
+        "    Version: 0.2.1",
     ):
-        assert line in s[6], line
-    assert '✔ Plugin "agk" updated from 0.2.0 to ' in s[7]
-    assert "✓ Created workflow_dispatch event for release-stable.yml at main" in s[7]
+        assert line in s[2], line
+    assert '✔ Plugin "agk" updated from 0.2.1 to 0.2.0 ' in s[3]
+    assert "✓ Created workflow_dispatch event for release-stable.yml at main" in s[3]
 
 
 def test_checklist_names_no_output_in_vague_words():
@@ -852,9 +864,17 @@ def test_checklist_names_no_output_in_vague_words():
         assert vague not in text, vague
 
 
-def test_checklist_tags_before_it_pushes_main():
+def test_checklist_has_no_step_for_the_old_plan():
     text = CHECKLIST.read_text(encoding="utf-8")
-    assert text.index("git push origin v0.2.0") < text.index("git push origin main")
+    assert "e2295d7" not in text
+    assert "git tag v0.2.0" not in text
+    assert "git push origin main" not in text
+
+
+def test_checklist_after_part_names_the_result_and_the_test_folders():
+    after = CHECKLIST.read_text(encoding="utf-8").split("## After the checklist")[1]
+    assert "planner" in after and "step 3" in after
+    assert "~/agk-stable-test" in after and "~/agk-dev-test" in after
 
 
 # --- the checklist is for the kit repo only: the plugin does not ship it ------------------------
