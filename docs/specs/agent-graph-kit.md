@@ -461,7 +461,8 @@ The skill `monitor` has an optional stack of four containers: the OTel Collector
 - **Access.** Every port binds to `127.0.0.1` (Grafana 3000 by default). Login user `admin`, with the password in a local 0600 file in the state dir, not in the repo. Anonymous access is off.
 - **Credentials.** No GitHub token and no Claude or Codex credential goes into a container (see `plugin/skills/monitor/compose.yaml`).
 - **RAM.** Budget 1 GB for the whole stack with both boards open during agent work; measured 418 MiB as the sum of the four container peaks (issue #315).
-- **O1.** No hook, script or role reads monitoring data to decide anything.
+- **Alerts.** Two Grafana alert rules are provisioned from [agk-alerts.yaml](../../plugin/skills/monitor/grafana/provisioning/alerting/agk-alerts.yaml) (folder `agk`). `Runaway issue` fires when the tokens of one issue are above a limit (default 23,000,000). `Stuck launch` fires when a launch stays open longer than a limit (default 45 minutes), read from the gauge `agk_launch_open`. `board.py` holds the limits (`ALERT_LIMITS`: `AGK_ALERT_ISSUE_TOKENS` and `AGK_ALERT_STUCK_MINUTES`); `board.py up` writes them into the alert file. The alerts show in Grafana only: there is no contact point, so nothing goes to mail or chat. The evidence is `docs/evidence/327-monitor-alerts.md`.
+- **O1.** No hook, script or role reads monitoring data to decide anything. An alert is monitoring data: no hook, script or role reads it to decide anything.
 - **O2.** A failing monitoring write, a `facts.py` error or a stopped stack never changes a QA result, a retry count, a comment or a hook decision.
 
 ## Stage model
@@ -493,6 +494,21 @@ The kit is installed as a Claude Code plugin `agk` ([plugin/](../../plugin/), li
 - **Project templates**: the files that `/agk:setup` copies into a project, in `plugin/templates/`.
 
 The owner installs it with `claude plugin marketplace add` (channel `stable`) and `claude plugin install agk@agent-graph-kit --scope project`, runs `/agk:setup`, and does the manual steps it reports. `/agk:drift` shows which copied files differ from the lock file and the templates. `/agk:update` is the route for an update; `drift.py --update` and `--accept` are the low-level commands. `drift.py --update` replaces the files that are `newer in the plugin` and removes `dropped` entries from the lock; after a hand merge, `drift.py --accept <path>` records the current template in the lock. The steps are in "Set-up the Agent Graph Kit" in the README. The manual copy of v1 stays as the manual route.
+
+`/agk:setup` also checks whether the superpowers plugin is installed. When it is not, it prints the install command (`claude plugin install superpowers@claude-plugins-official`) as a manual step; it does not install it.
+
+### Release channels
+
+Two channels, set by the workflows [release-dev.yml](../../.github/workflows/release-dev.yml) and [release-stable.yml](../../.github/workflows/release-stable.yml) and the script [scripts/release_channels.py](../../scripts/release_channels.py):
+
+- **`dev`.** `release-dev` runs on a push of `main`. When the plugin version has no tag yet, it runs the tests, sets the tag `v<version>`, creates a pre-release and moves the branch `dev`. On `dev` the marketplace name is `agent-graph-kit-dev`.
+- **`stable`.** `release-stable` is a manual run with a tag as input. The commit of the tag must have passed the workflow `ci`. The run tests that commit, moves the branch `stable` to it (marketplace name `agent-graph-kit`) and makes the release of the tag the latest release.
+- **Rollback.** A run of `release-stable` with an older tag is the rollback.
+- **Agents.** Agents never push, tag or start a workflow. The owner's checklist is [docs/checks/release-channels.md](../checks/release-channels.md).
+
+### Integration tests
+
+The pytest marker `integration` marks a test that runs a real tool or a whole flow (a test that starts a subprocess). It is registered in `tests/conftest.py`.
 
 ## Doc lifecycles
 
