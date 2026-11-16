@@ -88,6 +88,10 @@ QA has no GitHub access. QA works from the checkout, the newest `## Engineer: DO
 - c) An optional dependency group (the QA sandbox does not install it): the criterion names the group with the install command, or is changed to need no group
 - d) A browser check (the fallback QA has no browser, and the Codex sandbox may block it): write a check that needs no browser, or the criterion says QA does not repeat it
 
+When a criterion needs Docker, a running monitoring stack or another live system that the QA sandbox does not have, write the criterion so the engineer records the evidence in a committed file `docs/evidence/<issue>-<name>.md` (the commands, their outputs and the commit they ran on); QA checks that file and the code.
+
+Write into the issue that the newest `## Engineer: DONE` is complete on its own: it does not point to older comments for facts that QA needs.
+
 Do not write a criterion about telling the owner something. A result cannot show it.
 
 ## Permissions
